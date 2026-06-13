@@ -7,3 +7,6 @@ dependencies:
   - uvicorn>=0.30
   - openpyxl>=3.1
   - pillow>=10.0
+  - pip
+  - pip:
+      - httpx2>=0.28

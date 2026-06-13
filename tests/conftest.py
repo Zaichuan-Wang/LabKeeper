@@ -1,10 +1,10 @@
 import os
 import sys
 import sqlite3
-import tempfile
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 os.environ.setdefault("LABKEEPER_ENV", "test")
 os.environ.setdefault("LABKEEPER_ENABLE_DEV_TOOLS", "1")
@@ -39,3 +39,42 @@ def patch_db(tmp_db, monkeypatch):
     monkeypatch.setattr(database, "connect", _connect)
     yield tmp_db
     monkeypatch.setattr(database, "connect", original_connect)
+
+
+@pytest.fixture
+def app_client(tmp_path, monkeypatch):
+    """创建使用临时 SQLite 文件的 FastAPI TestClient。"""
+    import config
+    import database
+
+    db_path = tmp_path / "api-test.sqlite3"
+    options_path = tmp_path / "dropdown_options.json"
+    backup_settings_path = tmp_path / "backup_settings.json"
+
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    monkeypatch.setattr(config, "OPTIONS_CONFIG_PATH", options_path)
+    monkeypatch.setattr(config, "BACKUP_SETTINGS_PATH", backup_settings_path)
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+
+    # backup.py imports DB_PATH/BACKUP_SETTINGS_PATH at module import time, so
+    # patch its module globals too when it has already been loaded.
+    import backup
+    import options_config
+
+    monkeypatch.setattr(backup, "DB_PATH", db_path)
+    monkeypatch.setattr(backup, "BACKUP_DIR", db_path.parent / "backups")
+    monkeypatch.setattr(backup, "BACKUP_SETTINGS_PATH", backup_settings_path)
+    monkeypatch.setattr(options_config, "OPTIONS_CONFIG_PATH", options_path)
+
+    from server import app
+
+    with TestClient(app) as client:
+        yield client
+
+
+@pytest.fixture
+def auth_headers(app_client):
+    response = app_client.post("/api/login", json={"username": "admin", "password": "admin123"})
+    assert response.status_code == 200
+    token = response.json()["token"]
+    return {"Authorization": f"Bearer {token}"}

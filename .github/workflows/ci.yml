@@ -23,7 +23,7 @@ jobs:
           pip install pytest
 
       - name: Backend syntax check
-        run: python -m py_compile backend/server.py backend/registration.py backend/movements.py backend/storage_api.py backend/dev_tools.py
+        run: python -m compileall -q backend tests
 
       - name: Unit tests
         env:
@@ -34,7 +34,9 @@ jobs:
       - name: Frontend syntax check
         run: |
           if command -v node &>/dev/null; then
-            node --check frontend/app.js
+            for file in frontend/*.js; do
+              node --check "$file"
+            done
           else
             echo "Node.js not available, skipping frontend check"
           fi

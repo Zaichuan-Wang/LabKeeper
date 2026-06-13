@@ -33,6 +33,12 @@ DEFAULT_DROPDOWN_SETTINGS = {
     "sample_statuses": ["可用", "停用", "已耗尽"],
 }
 
+FIXED_DROPDOWN_SETTINGS = {
+    "reagent_statuses": DEFAULT_DROPDOWN_SETTINGS["reagent_statuses"],
+    "validation_statuses": DEFAULT_DROPDOWN_SETTINGS["validation_statuses"],
+    "sample_statuses": DEFAULT_DROPDOWN_SETTINGS["sample_statuses"],
+}
+
 
 def clean_options(values: Any) -> list[str]:
     if isinstance(values, str):
@@ -54,6 +60,9 @@ def normalize_dropdown_options(data: Any, fallback: dict[str, list[str]] | None 
     base = fallback or DEFAULT_DROPDOWN_SETTINGS
     clean: dict[str, list[str]] = {}
     for key, defaults in DEFAULT_DROPDOWN_SETTINGS.items():
+        if key in FIXED_DROPDOWN_SETTINGS:
+            clean[key] = clean_options(FIXED_DROPDOWN_SETTINGS[key])
+            continue
         values = source.get(key, base.get(key, defaults))
         clean[key] = clean_options(values) or clean_options(defaults)
     return clean

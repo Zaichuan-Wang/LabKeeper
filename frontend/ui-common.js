@@ -133,9 +133,35 @@ function renderTableHead(columns) {
   return `<thead><tr>${columns.map(column => `<th class="${tableColumnClass(column)}">${esc(tableColumnLabel(column))}</th>`).join('')}</tr></thead>`;
 }
 
+function sanitizeTableHtml(value) {
+  const template = document.createElement('template');
+  template.innerHTML = String(value ?? '');
+  const allowedTags = new Set(['SPAN', 'BUTTON', 'B', 'SMALL', 'DIV']);
+  const allowedAttrs = new Set(['class', 'type', 'disabled', 'title']);
+  const cleanNode = node => {
+    if (node.nodeType === Node.TEXT_NODE) return;
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      node.remove();
+      return;
+    }
+    if (!allowedTags.has(node.tagName)) {
+      node.replaceWith(...Array.from(node.childNodes));
+      return;
+    }
+    Array.from(node.attributes).forEach(attr => {
+      const name = attr.name.toLowerCase();
+      const allowed = allowedAttrs.has(name) || name.startsWith('data-') || name.startsWith('aria-');
+      if (!allowed || name.startsWith('on') || /javascript:/i.test(attr.value)) node.removeAttribute(attr.name);
+    });
+    Array.from(node.childNodes).forEach(cleanNode);
+  };
+  Array.from(template.content.childNodes).forEach(cleanNode);
+  return template.innerHTML;
+}
+
 function renderTableCell(column, row) {
   const value = column.render ? column.render(row[column.key], row) : esc(row[column.key]);
-  return `<td class="${tableColumnClass(column)}">${value}</td>`;
+  return `<td class="${tableColumnClass(column)}">${sanitizeTableHtml(value)}</td>`;
 }
 
 function renderTable(id, columns, rows) {
@@ -153,12 +179,13 @@ function renderTable(id, columns, rows) {
 function renderPagedTable(id, columns, rows, options = {}) {
   const pageSize = Number(options.pageSize || 20);
   const pageKey = options.pageKey || id;
-  const total = rows?.length || 0;
+  const total = Number(options.total ?? rows?.length ?? 0);
   const maxPage = Math.max(1, Math.ceil(total / pageSize));
-  const currentPage = Math.min(Math.max(Number(state.tablePages[pageKey] || 1), 1), maxPage);
+  const currentPage = Math.min(Math.max(Number(options.page || state.tablePages[pageKey] || 1), 1), maxPage);
   state.tablePages[pageKey] = currentPage;
   const start = (currentPage - 1) * pageSize;
-  renderTable(id, columns, (rows || []).slice(start, start + pageSize));
+  const visibleRows = options.serverSide ? (rows || []) : (rows || []).slice(start, start + pageSize);
+  renderTable(id, columns, visibleRows);
   const pager = $(`${id}Pager`);
   if (!pager) return;
   const from = total ? start + 1 : 0;

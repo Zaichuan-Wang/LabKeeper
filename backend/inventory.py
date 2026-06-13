@@ -1,11 +1,19 @@
 ﻿from __future__ import annotations
 
 import sqlite3
+import re
+import math
 from typing import Any
 
 from common import ApiError
 from database import connect
-from storage_inventory import attach_aliquot_totals, descendant_node_ids, node_full_path, normalize_reagent_item, normalize_sample_item
+from storage_inventory import (
+    attach_aliquot_totals,
+    batch_node_paths_and_descendants,
+    descendant_node_ids,
+    normalize_reagent_item,
+    normalize_sample_item,
+)
 import clinical_samples
 import reagents
 
@@ -92,33 +100,120 @@ def _clean_limit(value: str) -> int:
     return max(1, min(limit, 500))
 
 
+def _clean_page(value: str) -> int:
+    try:
+        page = int(value or 1)
+    except ValueError:
+        page = 1
+    return max(1, page)
+
+
+def _pagination(query: dict[str, list[str]]) -> tuple[int, int, int]:
+    page_size = _clean_limit(_query_value(query, "page_size") or _query_value(query, "limit", "80"))
+    page = _clean_page(_query_value(query, "page", "1"))
+    offset = max(0, int(_query_value(query, "offset", "") or ((page - 1) * page_size)))
+    return page, page_size, offset
+
+
+def _fts_query(keyword: str) -> str:
+    terms = re.findall(r"[\w\u4e00-\u9fff]+", keyword, flags=re.UNICODE)
+    terms = [term for term in terms if term.strip()]
+    return " OR ".join(f"{term}*" for term in terms[:8])
+
+
+def _fts_item_ids(conn: sqlite3.Connection, item_type: str, keyword: str) -> list[int] | None:
+    query = _fts_query(keyword)
+    if not query:
+        return []
+    try:
+        rows = conn.execute(
+            """
+            SELECT item_id
+            FROM inventory_search_fts
+            WHERE item_type = ? AND inventory_search_fts MATCH ?
+            LIMIT 2000
+            """,
+            (item_type, query),
+        ).fetchall()
+    except sqlite3.Error:
+        return None
+    return [int(row["item_id"]) for row in rows]
+
+
+def _append_keyword_clause(
+    conn: sqlite3.Connection,
+    item_type: str,
+    keyword: str,
+    like_fields: list[str],
+    path_cache: dict[int, str],
+    desc_cache: dict[int, list[int]],
+    clauses: list[str],
+    params: list[Any],
+) -> None:
+    if not keyword:
+        return
+    keyword_nodes = _keyword_node_ids(conn, keyword, path_cache, desc_cache)
+    node_clause = ""
+    if keyword_nodes:
+        placeholders = ",".join("?" for _ in keyword_nodes)
+        node_clause = f" OR storage_node_id IN ({placeholders})"
+    fts_ids = _fts_item_ids(conn, item_type, keyword)
+    if fts_ids is not None:
+        if fts_ids:
+            placeholders = ",".join("?" for _ in fts_ids)
+            clauses.append(f"(id IN ({placeholders}){node_clause})")
+            params.extend(fts_ids)
+            params.extend(keyword_nodes)
+        elif keyword_nodes:
+            clauses.append(f"(storage_node_id IN ({','.join('?' for _ in keyword_nodes)}))")
+            params.extend(keyword_nodes)
+        else:
+            clauses.append("0 = 1")
+        return
+    like = f"%{keyword}%"
+    field_clause = " OR ".join(f"{field} LIKE ?" for field in like_fields)
+    clauses.append(f"({field_clause}{node_clause})")
+    params.extend([like] * len(like_fields))
+    params.extend(keyword_nodes)
+
+
 def _storage_clause(
     conn: sqlite3.Connection,
     query: dict[str, list[str]],
     clauses: list[str],
     params: list[Any],
+    desc_cache: dict[int, list[int]] | None = None,
 ) -> None:
     storage_node_id = int(_query_value(query, "storage_node_id", "0") or 0)
     if not storage_node_id:
         return
     include_descendants = _query_value(query, "include_descendants", "1") != "0"
-    node_ids = descendant_node_ids(conn, storage_node_id, True) if include_descendants else [storage_node_id]
+    if include_descendants and desc_cache is not None:
+        node_ids = desc_cache.get(storage_node_id, [storage_node_id])
+    else:
+        node_ids = descendant_node_ids(conn, storage_node_id, True) if include_descendants else [storage_node_id]
     placeholders = ",".join("?" for _ in node_ids)
     clauses.append(f"storage_node_id IN ({placeholders})")
     params.extend(node_ids)
 
 
-def _keyword_node_ids(conn: sqlite3.Connection, keyword: str) -> list[int]:
+def _keyword_node_ids(
+    conn: sqlite3.Connection,
+    keyword: str,
+    path_cache: dict[int, str],
+    desc_cache: dict[int, list[int]],
+) -> list[int]:
     if not keyword:
         return []
     lowered = keyword.lower()
     ids: set[int] = set()
     rows = conn.execute("SELECT id, name, location_code, node_type, note FROM storage_nodes ORDER BY id LIMIT 1000").fetchall()
     for row in rows:
-        path = node_full_path(conn, int(row["id"]))
+        node_id = int(row["id"])
+        path = path_cache.get(node_id, "")
         haystack = " ".join(str(value or "") for value in (row["name"], row["location_code"], row["node_type"], row["note"], path)).lower()
         if lowered in haystack:
-            ids.update(descendant_node_ids(conn, int(row["id"]), True))
+            ids.update(desc_cache.get(node_id, [node_id]))
     return sorted(ids)
 
 
@@ -128,7 +223,10 @@ def _search_reagents(
     keyword: str,
     available_only: bool,
     limit: int,
-) -> list[dict[str, Any]]:
+    offset: int,
+    path_cache: dict[int, str],
+    desc_cache: dict[int, list[int]],
+) -> tuple[list[dict[str, Any]], int]:
     clauses: list[str] = []
     params: list[Any] = []
     category = _query_value(query, "category")
@@ -141,44 +239,29 @@ def _search_reagents(
         params.append(status)
     if available_only:
         clauses.append("COALESCE(status, '') IN ('可用', '停用')")
-    if keyword:
-        like = f"%{keyword}%"
-        keyword_nodes = _keyword_node_ids(conn, keyword)
-        node_clause = ""
-        if keyword_nodes:
-            placeholders = ",".join("?" for _ in keyword_nodes)
-            node_clause = f" OR storage_node_id IN ({placeholders})"
-        clauses.append(
-            f"""
-            (
-              name LIKE ? OR code LIKE ? OR source_code LIKE ? OR
-              catalog_no LIKE ? OR brand LIKE ? OR category LIKE ? OR amount LIKE ? OR amount_unit LIKE ? OR
-              note LIKE ? OR position_in_box LIKE ?{node_clause}
-            )
-            """
-        )
-        params.extend([like] * 10)
-        params.extend(keyword_nodes)
+    _append_keyword_clause(
+        conn,
+        "reagent",
+        keyword,
+        ["name", "code", "source_code", "catalog_no", "brand", "category", "amount", "amount_unit", "note", "position_in_box"],
+        path_cache,
+        desc_cache,
+        clauses,
+        params,
+    )
     validation_status = _query_value(query, "validation_status")
     if validation_status:
         clauses.append("validation_status = ?")
         params.append(validation_status)
-    _storage_clause(conn, query, clauses, params)
+    _storage_clause(conn, query, clauses, params, desc_cache)
     sql = "SELECT * FROM reagents"
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
-    sql_limit = min(limit * 10, 1000) if keyword else limit
-    sql += " ORDER BY updated_at DESC, id DESC LIMIT ?"
-    rows = conn.execute(sql, [*params, sql_limit]).fetchall()
-    items = attach_aliquot_totals(conn, [normalize_reagent_item(row, conn) for row in rows])
-    if keyword:
-        lowered = keyword.lower()
-        items = [
-            item for item in items
-            if lowered in str(item.get("storage_location") or "").lower()
-            or any(lowered in str(item.get(key) or "").lower() for key in ("name", "code", "source_code", "catalog_no", "brand", "category", "amount", "amount_unit", "note"))
-        ]
-    return [_with_display_fields(item) for item in items[:limit]]
+    total = int(conn.execute(sql.replace("SELECT *", "SELECT COUNT(*) AS n", 1), params).fetchone()["n"] or 0)
+    sql += " ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?"
+    rows = conn.execute(sql, [*params, limit, offset]).fetchall()
+    items = attach_aliquot_totals(conn, [normalize_reagent_item(row, conn, path_cache) for row in rows])
+    return [_with_display_fields(item) for item in items], total
 
 
 def _search_samples(
@@ -187,7 +270,10 @@ def _search_samples(
     keyword: str,
     available_only: bool,
     limit: int,
-) -> list[dict[str, Any]]:
+    offset: int,
+    path_cache: dict[int, str],
+    desc_cache: dict[int, list[int]],
+) -> tuple[list[dict[str, Any]], int]:
     clauses: list[str] = []
     params: list[Any] = []
     name = _query_value(query, "name")
@@ -204,49 +290,46 @@ def _search_samples(
         params.append(status)
     if available_only:
         clauses.append("status IN ('可用', '停用')")
-    if keyword:
-        like = f"%{keyword}%"
-        keyword_nodes = _keyword_node_ids(conn, keyword)
-        node_clause = ""
-        if keyword_nodes:
-            placeholders = ",".join("?" for _ in keyword_nodes)
-            node_clause = f" OR storage_node_id IN ({placeholders})"
-        clauses.append(f"(code LIKE ? OR name LIKE ? OR category LIKE ? OR amount LIKE ? OR amount_unit LIKE ? OR note LIKE ? OR position_in_box LIKE ?{node_clause})")
-        params.extend([like] * 7)
-        params.extend(keyword_nodes)
-    _storage_clause(conn, query, clauses, params)
+    _append_keyword_clause(
+        conn,
+        "sample",
+        keyword,
+        ["code", "name", "category", "amount", "amount_unit", "note", "position_in_box"],
+        path_cache,
+        desc_cache,
+        clauses,
+        params,
+    )
+    _storage_clause(conn, query, clauses, params, desc_cache)
     sql = "SELECT * FROM clinical_samples"
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
-    sql_limit = min(limit * 10, 1000) if keyword else limit
-    sql += " ORDER BY updated_at DESC, id DESC LIMIT ?"
-    rows = conn.execute(sql, [*params, sql_limit]).fetchall()
-    items = attach_aliquot_totals(conn, [normalize_sample_item(row, conn) for row in rows])
-    if keyword:
-        lowered = keyword.lower()
-        items = [
-            item for item in items
-            if lowered in str(item.get("storage_location") or "").lower()
-            or any(lowered in str(item.get(key) or "").lower() for key in ("code", "name", "category", "amount", "amount_unit", "note", "aliquot_no"))
-        ]
-    return [_with_display_fields(item) for item in items[:limit]]
+    total = int(conn.execute(sql.replace("SELECT *", "SELECT COUNT(*) AS n", 1), params).fetchone()["n"] or 0)
+    sql += " ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?"
+    rows = conn.execute(sql, [*params, limit, offset]).fetchall()
+    items = attach_aliquot_totals(conn, [normalize_sample_item(row, conn, path_cache) for row in rows])
+    return [_with_display_fields(item) for item in items], total
 
 
-def _search_spaces(conn: sqlite3.Connection, keyword: str, limit: int) -> list[dict[str, Any]]:
+def _search_spaces(conn: sqlite3.Connection, keyword: str, limit: int, offset: int, path_cache: dict[int, str]) -> tuple[list[dict[str, Any]], int]:
     params: list[Any] = []
     where = ""
     if keyword:
         like = f"%{keyword}%"
         where = "WHERE name LIKE ? OR location_code LIKE ? OR node_type LIKE ? OR note LIKE ?"
         params.extend([like] * 4)
+    if not keyword:
+        total = int(conn.execute(f"SELECT COUNT(*) AS n FROM storage_nodes {where}", params).fetchone()["n"] or 0)
+    else:
+        total = 0
     rows = conn.execute(
         f"SELECT * FROM storage_nodes {where} ORDER BY sort_order, id LIMIT ?",
-        [*params, min(limit * 10, 1000) if keyword else limit],
+        [*params, 1000 if keyword else limit + offset],
     ).fetchall()
     lowered = keyword.lower()
     items: list[dict[str, Any]] = []
     for row in rows:
-        path = node_full_path(conn, int(row["id"]))
+        path = path_cache.get(int(row["id"]), "")
         haystack = " ".join(str(value or "") for value in (row["name"], row["location_code"], row["node_type"], row["note"], path)).lower()
         if lowered and lowered not in haystack:
             continue
@@ -269,9 +352,9 @@ def _search_spaces(conn: sqlite3.Connection, keyword: str, limit: int) -> list[d
             "updated_at": row["updated_at"],
         }
         items.append(item)
-        if len(items) >= limit:
-            break
-    return items
+    if keyword:
+        total = len(items)
+    return items[offset:offset + limit], total
 
 
 def _with_display_fields(item: dict[str, Any]) -> dict[str, Any]:
@@ -304,18 +387,40 @@ def search(query: dict[str, list[str]]) -> dict[str, Any]:
     item_type = _clean_type(_query_value(query, "type") or _query_value(query, "item_type"))
     keyword = _query_value(query, "keyword")
     available_only = _query_value(query, "available") in {"1", "true", "yes", "on"}
-    limit = _clean_limit(_query_value(query, "limit", "80"))
+    page, page_size, offset = _pagination(query)
     with connect() as conn:
+        path_cache, desc_cache = batch_node_paths_and_descendants(conn)
         items: list[dict[str, Any]] = []
+        total = 0
         if item_type in {"reagent", "all"}:
-            items.extend(_search_reagents(conn, query, keyword, available_only, limit))
+            fetch_offset = 0 if item_type == "all" else offset
+            fetch_limit = offset + page_size if item_type == "all" else page_size
+            reagent_items, reagent_total = _search_reagents(conn, query, keyword, available_only, fetch_limit, fetch_offset, path_cache, desc_cache)
+            items.extend(reagent_items)
+            total += reagent_total
         if item_type in {"sample", "all"}:
-            items.extend(_search_samples(conn, query, keyword, available_only, limit))
+            fetch_offset = 0 if item_type == "all" else offset
+            fetch_limit = offset + page_size if item_type == "all" else page_size
+            sample_items, sample_total = _search_samples(conn, query, keyword, available_only, fetch_limit, fetch_offset, path_cache, desc_cache)
+            items.extend(sample_items)
+            total += sample_total
         if not available_only and item_type in {"space", "all"}:
-            items.extend(_search_spaces(conn, keyword, limit))
+            fetch_offset = 0 if item_type == "all" else offset
+            fetch_limit = offset + page_size if item_type == "all" else page_size
+            space_items, space_total = _search_spaces(conn, keyword, fetch_limit, fetch_offset, path_cache)
+            items.extend(space_items)
+            total += space_total
     items.sort(key=lambda item: (str(item.get("updated_at") or ""), int(item.get("id") or 0)), reverse=True)
-    items = items[:limit]
-    return {"items": items, "count": len(items)}
+    if item_type == "all":
+        items = items[offset:offset + page_size]
+    return {
+        "items": items,
+        "count": len(items),
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": max(1, math.ceil(total / page_size)) if page_size else 1,
+    }
 
 
 def timeline(item_type: str, item_id: int) -> dict[str, Any]:

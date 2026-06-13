@@ -26,9 +26,9 @@
 }
 
 function logout(show = true) {
+  if (state.token) void fetch(`${state.apiBase}/api/logout`, { method: 'POST', credentials: 'include' }).catch(() => {});
   state.token = '';
   state.user = null;
-  localStorage.removeItem('lp_token');
   localStorage.removeItem('lp_user');
   setLoggedIn(false);
   if (show) toast('已退出登录');
@@ -37,9 +37,8 @@ function logout(show = true) {
 async function loginWithCredentials(credentials) {
   $('loginError').textContent = '';
   const data = await api('/api/login', { method: 'POST', body: JSON.stringify(credentials) });
-  state.token = data.token;
+  state.token = 'cookie';
   state.user = data.user;
-  localStorage.setItem('lp_token', state.token);
   localStorage.setItem('lp_user', JSON.stringify(state.user));
   setLoggedIn(true);
   await loadOptions();
@@ -49,7 +48,7 @@ async function loginWithCredentials(credentials) {
 
 async function loadRuntimeConfig() {
   try {
-    const res = await fetch(`${state.apiBase}/api/runtime-config`);
+    const res = await fetch(`${state.apiBase}/api/runtime-config`, { credentials: 'include' });
     if (!res.ok) throw new Error(`runtime config ${res.status}`);
     state.runtime = await res.json();
   } catch (err) {
@@ -82,9 +81,8 @@ function renderDevToolsPanel() {
 async function loginAsDevAdmin() {
   $('loginError').textContent = '';
   const data = await api('/api/dev/login', { method: 'POST', body: JSON.stringify({}) });
-  state.token = data.token;
+  state.token = 'cookie';
   state.user = data.user;
-  localStorage.setItem('lp_token', state.token);
   localStorage.setItem('lp_user', JSON.stringify(state.user));
   setLoggedIn(true);
   await loadOptions();

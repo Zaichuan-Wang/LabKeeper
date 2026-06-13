@@ -892,11 +892,14 @@ async function searchInventory() {
     return;
   }
   const type = inventorySearchType(state.inventoryItemTypeFilter);
+  const pageSize = 20;
+  const page = Math.max(1, Number(state.tablePages.inventoryTable || 1));
   const params = new URLSearchParams({
     keyword: $('inventoryKeyword').value.trim(),
     storage_node_id: $('inventoryStorageNode').value,
     include_descendants: $('inventoryIncludeDescendants').checked ? '1' : '0',
-    limit: '500',
+    page: String(page),
+    page_size: String(pageSize),
   });
   if (type === 'sample') {
     params.set('category', $('inventorySampleType').value);
@@ -912,8 +915,13 @@ async function searchInventory() {
     ? await api(`/api/inventory/search?${params}`)
     : await api(inventoryObjectListPath(type, params));
   state.inventoryRows = data.items;
-  $('inventoryFilterCount').textContent = `${data.count} 条`;
-  renderPagedTable('inventoryTable', inventoryColumns(), data.items, { pageSize: 20 });
+  $('inventoryFilterCount').textContent = `${data.total ?? data.count} 条`;
+  renderPagedTable('inventoryTable', inventoryColumns(), data.items, {
+    pageSize,
+    page: data.page || page,
+    total: data.total ?? data.count,
+    serverSide: true,
+  });
 }
 
 async function submitMovement(e) {

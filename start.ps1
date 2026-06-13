@@ -1,7 +1,8 @@
 ﻿param(
   [string]$PythonPath = "",
   [int]$ApiPort = 8000,
-  [int]$FrontendPort = 5173
+  [int]$FrontendPort = 5173,
+  [switch]$Stop
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,6 +10,52 @@ $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Backend = Join-Path $Root "backend\server.py"
 $Frontend = Join-Path $Root "frontend"
 $EnvFile = Join-Path $Root ".env"
+$PidDir = Join-Path $Root "data\pids"
+
+function Stop-LabKeeper {
+  $stopped = 0
+  $stoppedIds = @{}
+  if (Test-Path $PidDir) {
+    Get-ChildItem -Path $PidDir -Filter "*.pid" -ErrorAction SilentlyContinue | ForEach-Object {
+      $name = $_.BaseName
+      $pidText = (Get-Content -LiteralPath $_.FullName -ErrorAction SilentlyContinue | Select-Object -First 1)
+      $processId = 0
+      if ([int]::TryParse($pidText, [ref]$processId)) {
+        $proc = Get-Process -Id $processId -ErrorAction SilentlyContinue
+        if ($proc) {
+          Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+          Write-Host "已停止 $name (PID $processId)"
+          $stoppedIds[$processId] = $true
+          $stopped += 1
+        }
+      }
+      Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+    }
+  }
+  foreach ($port in @($ApiPort, $FrontendPort)) {
+    $owners = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+      Select-Object -ExpandProperty OwningProcess -Unique
+    foreach ($owner in $owners) {
+      if ($stoppedIds.ContainsKey($owner)) { continue }
+      $proc = Get-Process -Id $owner -ErrorAction SilentlyContinue
+      if ($proc -and @("python", "python3", "pythonw").Contains($proc.ProcessName)) {
+        Stop-Process -Id $owner -Force -ErrorAction SilentlyContinue
+        Write-Host "已停止端口 $port 上的 $($proc.ProcessName) (PID $owner)"
+        $stoppedIds[$owner] = $true
+        $stopped += 1
+      }
+    }
+  }
+  if ($stopped -eq 0) {
+    Write-Host "没有找到由 start.ps1 记录的运行服务。"
+    Write-Host "如果服务仍在运行，请关闭“启动后端”和“启动前端”的 PowerShell 窗口，或手动结束占用端口 $ApiPort / $FrontendPort 的进程。"
+  }
+}
+
+if ($Stop) {
+  Stop-LabKeeper
+  exit 0
+}
 
 if (-not (Test-Path $EnvFile) -and -not $env:LABKEEPER_ENV) {
   $env:LABKEEPER_ENV = "development"
@@ -68,17 +115,22 @@ if (Test-Path $Requirements) {
 }
 
 # ── 启动服务 ──
+New-Item -ItemType Directory -Force -Path $PidDir | Out-Null
+
 Write-Host "启动后端: http://127.0.0.1:$ApiPort"
-Start-Process powershell -ArgumentList @(
+$BackendProcess = Start-Process powershell -PassThru -ArgumentList @(
   "-NoExit", "-Command",
   "cd '$Root'; & '$PythonPath' '$Backend' --host 127.0.0.1 --port $ApiPort"
 )
+$BackendProcess.Id | Set-Content -LiteralPath (Join-Path $PidDir "backend.pid") -Encoding ASCII
 
 Write-Host "启动前端: http://127.0.0.1:$FrontendPort"
-Start-Process powershell -ArgumentList @(
+$FrontendProcess = Start-Process powershell -PassThru -ArgumentList @(
   "-NoExit", "-Command",
   "cd '$Root'; & '$PythonPath' -m http.server $FrontendPort -d '$Frontend'"
 )
+$FrontendProcess.Id | Set-Content -LiteralPath (Join-Path $PidDir "frontend.pid") -Encoding ASCII
 
 Write-Host ""
 Write-Host "打开浏览器: http://127.0.0.1:$FrontendPort" -ForegroundColor Green
+Write-Host "停止服务:   .\start.ps1 -Stop" -ForegroundColor Yellow

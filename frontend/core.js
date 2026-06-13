@@ -1,7 +1,7 @@
 ﻿const state = {
   // ── 会话 ──
   apiBase: getApiBase(),
-  token: localStorage.getItem('lp_token') || '',
+  token: localStorage.getItem('lp_user') ? 'cookie' : '',
   user: JSON.parse(localStorage.getItem('lp_user') || 'null'),
   runtime: { dev_tools_enabled: false, dev_admin_username: '', demo_database_available: false },
   options: null,
@@ -90,8 +90,7 @@ async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   const body = options.body;
   if (!(body instanceof FormData)) headers['Content-Type'] = headers['Content-Type'] || 'application/json';
-  if (state.token) headers.Authorization = `Bearer ${state.token}`;
-  const res = await fetch(`${state.apiBase}${path}`, { ...options, headers });
+  const res = await fetch(`${state.apiBase}${path}`, { ...options, headers, credentials: 'include' });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401) logout(false);
@@ -101,7 +100,7 @@ async function api(path, options = {}) {
 }
 
 async function downloadWithAuth(path, filename = '') {
-  const res = await fetch(`${state.apiBase}${path}`, { headers: { Authorization: `Bearer ${state.token}` } });
+  const res = await fetch(`${state.apiBase}${path}`, { credentials: 'include' });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || `下载失败：${res.status}`);

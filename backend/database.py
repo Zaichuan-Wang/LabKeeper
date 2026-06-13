@@ -42,10 +42,117 @@ def init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_movements_to_storage_node ON movements(to_storage_node_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_storage_nodes_parent ON storage_nodes(parent_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_storage_nodes_type ON storage_nodes(node_type)")
+        _ensure_inventory_search_index(conn)
         _ensure_admin_user(conn)
         _repair_storage_references(conn)
         _ensure_root_storage_node(conn)
         conn.commit()
+
+
+def _ensure_inventory_search_index(conn: sqlite3.Connection) -> None:
+    try:
+        conn.executescript(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS inventory_search_fts USING fts5(
+                item_type UNINDEXED,
+                item_id UNINDEXED,
+                name,
+                code,
+                source_code,
+                catalog_no,
+                brand,
+                category,
+                amount,
+                amount_unit,
+                note,
+                position_in_box,
+                tokenize='unicode61'
+            );
+
+            CREATE TRIGGER IF NOT EXISTS reagents_ai_fts AFTER INSERT ON reagents BEGIN
+                INSERT INTO inventory_search_fts(
+                    rowid, item_type, item_id, name, code, source_code, catalog_no, brand,
+                    category, amount, amount_unit, note, position_in_box
+                )
+                VALUES (
+                    NEW.id, 'reagent', NEW.id, NEW.name, NEW.code, NEW.source_code, NEW.catalog_no, NEW.brand,
+                    NEW.category, NEW.amount, NEW.amount_unit, NEW.note, NEW.position_in_box
+                );
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS reagents_ad_fts AFTER DELETE ON reagents BEGIN
+                DELETE FROM inventory_search_fts WHERE rowid = OLD.id;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS reagents_au_fts AFTER UPDATE ON reagents BEGIN
+                DELETE FROM inventory_search_fts WHERE rowid = OLD.id;
+                INSERT INTO inventory_search_fts(
+                    rowid, item_type, item_id, name, code, source_code, catalog_no, brand,
+                    category, amount, amount_unit, note, position_in_box
+                )
+                VALUES (
+                    NEW.id, 'reagent', NEW.id, NEW.name, NEW.code, NEW.source_code, NEW.catalog_no, NEW.brand,
+                    NEW.category, NEW.amount, NEW.amount_unit, NEW.note, NEW.position_in_box
+                );
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS clinical_samples_ai_fts AFTER INSERT ON clinical_samples BEGIN
+                INSERT INTO inventory_search_fts(
+                    rowid, item_type, item_id, name, code, source_code, catalog_no, brand,
+                    category, amount, amount_unit, note, position_in_box
+                )
+                VALUES (
+                    1000000000 + NEW.id, 'sample', NEW.id, NEW.name, NEW.code, NEW.source_code, '', '',
+                    NEW.category, NEW.amount, NEW.amount_unit, NEW.note, NEW.position_in_box
+                );
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS clinical_samples_ad_fts AFTER DELETE ON clinical_samples BEGIN
+                DELETE FROM inventory_search_fts WHERE rowid = 1000000000 + OLD.id;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS clinical_samples_au_fts AFTER UPDATE ON clinical_samples BEGIN
+                DELETE FROM inventory_search_fts WHERE rowid = 1000000000 + OLD.id;
+                INSERT INTO inventory_search_fts(
+                    rowid, item_type, item_id, name, code, source_code, catalog_no, brand,
+                    category, amount, amount_unit, note, position_in_box
+                )
+                VALUES (
+                    1000000000 + NEW.id, 'sample', NEW.id, NEW.name, NEW.code, NEW.source_code, '', '',
+                    NEW.category, NEW.amount, NEW.amount_unit, NEW.note, NEW.position_in_box
+                );
+            END;
+            """
+        )
+        _rebuild_inventory_search_index(conn)
+    except sqlite3.Error:
+        conn.execute("DROP TABLE IF EXISTS inventory_search_fts")
+
+
+def _rebuild_inventory_search_index(conn: sqlite3.Connection) -> None:
+    conn.execute("DELETE FROM inventory_search_fts")
+    conn.execute(
+        """
+        INSERT INTO inventory_search_fts(
+            rowid, item_type, item_id, name, code, source_code, catalog_no, brand,
+            category, amount, amount_unit, note, position_in_box
+        )
+        SELECT id, 'reagent', id, name, code, source_code, catalog_no, brand,
+               category, amount, amount_unit, note, position_in_box
+        FROM reagents
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO inventory_search_fts(
+            rowid, item_type, item_id, name, code, source_code, catalog_no, brand,
+            category, amount, amount_unit, note, position_in_box
+        )
+        SELECT 1000000000 + id, 'sample', id, name, code, source_code, '', '',
+               category, amount, amount_unit, note, position_in_box
+        FROM clinical_samples
+        """
+    )
 
 
 def _ensure_admin_user(conn: sqlite3.Connection) -> None:

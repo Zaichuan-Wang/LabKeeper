@@ -179,6 +179,22 @@ label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; } strong 
 .mixed-inventory-grid { align-items:stretch; }
 .mixed-inventory-grid .storage-card, .mixed-inventory-grid .reagent-card { min-height:92px; }
 .move-layout { align-items:start; } .move-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } .move-summary { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; } .move-summary div { display:grid; gap:4px; padding:12px; border:1px solid var(--line); border-radius:14px; background:#f8fbf3; } .move-summary span { color:var(--muted); font-size:12px; font-weight:800; } .move-summary b { color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.bulk-panel { display:grid; align-content:start; gap:14px; background:linear-gradient(180deg, rgba(255,255,255,.94), rgba(247,251,243,.88)); }
+.bulk-panel-head { align-items:flex-start; margin-bottom:0; padding-bottom:12px; border-bottom:1px solid rgba(70,89,73,.12); }
+.bulk-panel-head > div { display:grid; gap:4px; }
+.bulk-panel-head span { display:block; text-align:left; }
+.bulk-panel-head > b { flex:0 0 auto; padding:6px 9px; border-radius:999px; background:rgba(47,125,89,.1); color:var(--blue-2); font-size:12px; white-space:nowrap; }
+.bulk-form { gap:12px; }
+.bulk-section { display:grid; gap:10px; padding:12px; border:1px solid rgba(70,89,73,.14); border-radius:14px; background:rgba(255,255,255,.68); }
+.bulk-section-head { display:flex; align-items:center; gap:9px; color:var(--ink); font-size:14px; }
+.bulk-section-head span { width:24px; height:24px; display:grid; place-items:center; border-radius:8px; background:linear-gradient(135deg, var(--blue), var(--blue-2)); color:#fff; font-size:12px; font-weight:900; box-shadow:0 8px 18px rgba(47,125,89,.14); }
+.bulk-section-head b { line-height:1.2; }
+.bulk-field-grid { display:grid; grid-template-columns:minmax(0, 1fr); gap:10px; }
+.bulk-note { margin:0; padding:9px 10px; border-left:3px solid var(--amber); border-radius:10px; background:rgba(255,250,238,.72); color:#77501e; font-size:12px; line-height:1.55; font-weight:800; }
+.bulk-action-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; }
+.bulk-action-grid button, .bulk-submit-row button { min-height:40px; padding:8px 10px; border-radius:10px; }
+.bulk-submit-row { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap:8px; }
+.bulk-panel textarea { min-height:148px; resize:vertical; }
 .head-actions, .detail-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
 .detail-actions { margin-bottom:2px; }
 .workbench-tabs-panel, .inventory-tabs-panel, .admin-tabs-panel { position: sticky; top: 18px; z-index: 5; padding-bottom: 14px; }
@@ -199,6 +215,7 @@ label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; } strong 
 .settings-form { display:grid; gap:16px; }
 .settings-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:14px; align-items:stretch; }
 .settings-card { display:grid; gap:12px; padding:14px; border:1px solid var(--line); border-radius:16px; background:rgba(255,255,255,.7); }
+.fixed-settings-card { background:rgba(248,251,243,.82); }
 .settings-card-head { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
 .settings-card h4 { margin:0 0 4px; font-size:16px; color:var(--ink); }
 .settings-card-head span { color:var(--muted); font-size:12px; }
@@ -206,6 +223,7 @@ label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; } strong 
 .settings-options { display:flex; flex-wrap:wrap; gap:8px; min-height:92px; align-content:flex-start; padding:10px; border:1px solid var(--line); border-radius:14px; background:#fbfdf8; }
 .settings-empty { color:var(--muted); font-size:13px; align-self:center; }
 .option-chip { display:inline-flex; align-items:center; gap:7px; max-width:100%; padding:7px 9px 7px 11px; border-radius:999px; background:#eaf4e9; color:var(--blue-2); font-size:13px; font-weight:800; border:1px solid rgba(47,125,89,.16); }
+.fixed-option-chip { background:#f3f5ef; color:var(--muted); border-color:var(--line); padding-right:11px; }
 .option-chip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .option-chip button { width:22px; height:22px; border-radius:50%; display:grid; place-items:center; flex:0 0 auto; background:rgba(47,125,89,.12); color:var(--blue-2); font-weight:900; line-height:1; }
 .option-chip button:hover { background:rgba(201,75,90,.14); color:var(--red); }

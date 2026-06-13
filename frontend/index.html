@@ -233,27 +233,36 @@
             </div>
             <div class="inventory-tab" data-tab-panel="bulk">
               <div class="panel-grid split">
-                <article class="panel form-panel">
-                  <div class="panel-head"><h3>批量处理</h3><span>导入、编辑、移动和出库</span></div>
-                  <p class="form-note">批量编辑/出库建议先下载现有库存，在 Excel 中只保留要处理的行；编辑时直接修改对应字段，位置只填写“存放空间ID”和“孔位”。空间名称和层级请用“空间对应表”查询。</p>
-                  <form id="bulkForm" class="stack-form">
-                    <div class="grid-form">
-                      <label>操作类型<select name="operation" id="bulkOperation"><option value="import">批量导入</option><option value="edit">批量编辑</option><option value="move">批量移动</option><option value="checkout">批量出库</option></select></label>
-                      <label id="bulkItemTypeLabel">对象类型<select name="item_type" id="bulkItemType"><option value="reagent">试剂/耗材</option><option value="sample">临床标本</option></select></label>
-                      <label id="bulkModeLabel">写入方式<select name="mode"><option value="upsert">新增并更新已有编号</option><option value="insert">只新增</option><option value="update">只更新已有编号</option></select></label>
+                <article class="panel form-panel bulk-panel">
+                  <div class="panel-head bulk-panel-head"><div><h3>批量处理</h3><span>导入、编辑、移动和出库</span></div><b>Excel 工作流</b></div>
+                  <form id="bulkForm" class="stack-form bulk-form">
+                    <section class="bulk-section">
+                      <div class="bulk-section-head"><span>1</span><b>选择处理方式</b></div>
+                      <div class="bulk-field-grid">
+                        <label>操作类型<select name="operation" id="bulkOperation"><option value="import">批量导入</option><option value="edit">批量编辑</option><option value="move">批量移动</option><option value="checkout">批量出库</option></select></label>
+                        <label id="bulkItemTypeLabel">对象类型<select name="item_type" id="bulkItemType"><option value="reagent">试剂/耗材</option><option value="sample">临床标本</option></select></label>
+                        <label id="bulkModeLabel">写入方式<select name="mode"><option value="upsert">新增并更新已有编号</option><option value="insert">只新增</option><option value="update">只更新已有编号</option></select></label>
+                      </div>
+                    </section>
+                    <section class="bulk-section">
+                      <div class="bulk-section-head"><span>2</span><b>准备数据</b></div>
+                      <p class="bulk-note">编辑/出库建议先下载现有库存，只保留要处理的行。位置只填写“存放空间ID”和“孔位”，空间名称用对应表查询。</p>
                       <label>Excel 文件<input name="excel_file" type="file" accept=".xlsx,.xls" /></label>
-                    </div>
-                    <div class="toolbar compact bulk-toolbar">
-                      <button class="ghost" type="button" data-action="bulk-download-template">下载模板</button>
-                      <button class="ghost" type="button" data-action="bulk-download-current">下载现有库存</button>
-                      <button class="ghost" type="button" data-action="bulk-download-storage-map">下载空间对应表</button>
-                      <button class="ghost" type="button" data-action="bulk-load-excel">读取 Excel</button>
-                    </div>
-                    <label>粘贴表格<textarea name="pasted_rows" rows="8" placeholder="可直接从 Excel 复制表头和多行数据粘贴到这里"></textarea></label>
-                    <div class="toolbar compact bulk-toolbar">
-                      <button class="primary" type="submit">预检查</button>
-                      <button id="bulkCommitBtn" class="danger" type="button" disabled>确认提交</button>
-                    </div>
+                      <div class="bulk-action-grid">
+                        <button class="ghost" type="button" data-action="bulk-download-template">下载模板</button>
+                        <button class="ghost" type="button" data-action="bulk-download-current">现有库存</button>
+                        <button class="ghost" type="button" data-action="bulk-download-storage-map">空间对应表</button>
+                        <button class="ghost" type="button" data-action="bulk-load-excel">读取 Excel</button>
+                      </div>
+                    </section>
+                    <section class="bulk-section">
+                      <div class="bulk-section-head"><span>3</span><b>检查并提交</b></div>
+                      <label>粘贴表格<textarea name="pasted_rows" rows="8" placeholder="可直接从 Excel 复制表头和多行数据粘贴到这里"></textarea></label>
+                      <div class="bulk-submit-row">
+                        <button class="primary" type="submit">预检查</button>
+                        <button id="bulkCommitBtn" class="danger" type="button" disabled>确认提交</button>
+                      </div>
+                    </section>
                   </form>
                 </article>
                 <article class="panel">
@@ -282,12 +291,6 @@
     <datalist id="amountUnitOptions"></datalist>
     <div id="toast" class="toast hidden"></div>
     <div id="locationPickerDialog" class="detail-dialog-backdrop location-dialog-backdrop hidden"></div>
-    <script src="./core.js?v=20260613-prefix-datalist"></script>
-    <script src="./ui-common.js?v=20260613-prefix-datalist"></script>
-    <script src="./inventory-ui.js?v=20260613-prefix-datalist"></script>
-    <script src="./registration-page.js?v=20260613-prefix-datalist"></script>
-    <script src="./inventory-page.js?v=20260613-prefix-datalist"></script>
-    <script src="./admin-page.js?v=20260613-prefix-datalist"></script>
-    <script src="./app.js?v=20260613-prefix-datalist"></script>
+    <script type="module" src="./main.js?v=20260613-prefix-datalist"></script>
   </body>
 </html>

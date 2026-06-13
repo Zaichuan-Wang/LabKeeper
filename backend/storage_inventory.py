@@ -144,6 +144,14 @@ def storage_location_text(conn: sqlite3.Connection, node_id: int, position: str 
     return f"{full_path}；{clean_position}" if clean_position else full_path
 
 
+def storage_location_from_path(path_cache: dict[int, str], node_id: int, position: str | None = None) -> str:
+    if not node_id:
+        return ""
+    clean_position = (position or "").strip()
+    full_path = path_cache.get(int(node_id), "")
+    return f"{full_path}；{clean_position}" if clean_position else full_path
+
+
 def descendant_node_ids(conn: sqlite3.Connection, node_id: int, include_self: bool = True) -> list[int]:
     ids = [node_id] if include_self else []
     children = conn.execute("SELECT id FROM storage_nodes WHERE parent_id = ?", (node_id,)).fetchall()
@@ -196,18 +204,28 @@ def batch_node_paths_and_descendants(conn: sqlite3.Connection) -> tuple[dict[int
     return path_cache, descendant_cache
 
 
-def computed_storage_location(conn: sqlite3.Connection, item: dict[str, Any]) -> str:
+def computed_storage_location(
+    conn: sqlite3.Connection,
+    item: dict[str, Any],
+    path_cache: dict[int, str] | None = None,
+) -> str:
     node_id = item.get("storage_node_id")
     if not node_id:
         return "未归位" if occupies_storage(item.get("status")) else ""
+    if path_cache is not None:
+        return storage_location_from_path(path_cache, int(node_id), str(item.get("position_in_box") or "").strip() or None)
     return storage_location_text(conn, int(node_id), str(item.get("position_in_box") or "").strip() or None)
 
 
-def normalize_reagent_item(row: sqlite3.Row, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
+def normalize_reagent_item(
+    row: sqlite3.Row,
+    conn: sqlite3.Connection | None = None,
+    path_cache: dict[int, str] | None = None,
+) -> dict[str, Any]:
     item = row_dict(row) or {}
     source_code = item.get("source_code") or item.get("code") or item.get("id")
     if conn is not None:
-        item["storage_location"] = computed_storage_location(conn, item)
+        item["storage_location"] = computed_storage_location(conn, item, path_cache)
     item.update(
         {
             "item_type": "reagent",
@@ -220,12 +238,16 @@ def normalize_reagent_item(row: sqlite3.Row, conn: sqlite3.Connection | None = N
     return item
 
 
-def normalize_sample_item(row: sqlite3.Row, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
+def normalize_sample_item(
+    row: sqlite3.Row,
+    conn: sqlite3.Connection | None = None,
+    path_cache: dict[int, str] | None = None,
+) -> dict[str, Any]:
     item = row_dict(row) or {}
     name = item.get("name") or "临床标本"
     code = item.get("code") or item.get("id")
     if conn is not None:
-        item["storage_location"] = computed_storage_location(conn, item)
+        item["storage_location"] = computed_storage_location(conn, item, path_cache)
     item.update(
         {
             "item_type": "sample",

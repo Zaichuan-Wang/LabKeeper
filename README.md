@@ -2,6 +2,12 @@
 
 LabKeeper 是给生物实验室和课题组使用的轻量级库存管理系统。它可以在一台普通电脑上本地运行，也可以部署到实验室 Linux 服务器上，让组内成员通过浏览器一起使用。
 
+LabKeeper is a lightweight inventory management system for biological laboratories and research groups. It can run locally on a regular computer, or be deployed on a lab Linux server so that team members can use it through a browser.
+
+> 语言状态 / Language status: 当前系统界面以中文为主，英文界面和完整英文文档仍在开发中。本文档后续内容暂以中文为准。
+>
+> The current application UI is primarily Chinese. The English UI and complete English documentation are still under development. The rest of this README is currently maintained in Chinese.
+
 适合管理：
 
 - 试剂、抗体、耗材、试剂盒
@@ -114,7 +120,13 @@ http://127.0.0.1:5173
 
 #### 5. 停止系统
 
-关闭启动时打开的 PowerShell 窗口即可。
+在项目目录打开 PowerShell，运行：
+
+```powershell
+.\start.ps1 -Stop
+```
+
+如果是旧版本脚本启动的服务，或没有记录到 PID，请关闭脚本打开的“启动后端”和“启动前端”两个 PowerShell 窗口；必要时手动结束占用 `8000` 和 `5173` 端口的 `python` 进程。
 
 ### Linux 服务器测试版
 
@@ -298,7 +310,7 @@ config/      下拉选项配置
 db/          SQLite schema
 data/        运行时数据
 dev_tools/   本机测试和 Demo 数据库
-tests/       单元测试和冒烟测试
+tests/       单元测试和 API 集成测试
 ```
 
 常用检查：

@@ -53,7 +53,13 @@ SECRET = env_value("API_SECRET", "labkeeper-dev-secret-change-me")
 TOKEN_TTL_SECONDS = int(env_value("TOKEN_TTL_SECONDS", str(8 * 60 * 60)))
 EXPIRATION_REMIND_DAYS = int(env_value("EXPIRATION_REMIND_DAYS", "30") or "30")
 _cors_raw = env_value("CORS_ORIGINS", "").strip()
-CORS_ORIGINS = [o.strip() for o in _cors_raw.split(",") if o.strip()] if _cors_raw else ["*"]
+LOCAL_CORS_ORIGINS = [
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+]
+CORS_ORIGINS = [o.strip() for o in _cors_raw.split(",") if o.strip()] if _cors_raw else LOCAL_CORS_ORIGINS
 
 INSECURE_SECRET_VALUES = {
     "",
@@ -62,3 +68,5 @@ INSECURE_SECRET_VALUES = {
 }
 if IS_PRODUCTION and SECRET in INSECURE_SECRET_VALUES:
     raise RuntimeError("生产环境必须设置 LABKEEPER_API_SECRET")
+if IS_PRODUCTION and not _cors_raw:
+    raise RuntimeError("生产环境必须设置 LABKEEPER_CORS_ORIGINS")

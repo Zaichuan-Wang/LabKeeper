@@ -17,24 +17,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-import time
-
 import admin
-import auth
 import backup
 import bulk_operations
-import clinical_samples
 import data_health
 import dev_tools
-import inventory
 import movements
 import reagents
 import registration
 from common import ApiError, get_logger, now_text
-from config import CORS_ORIGINS, DB_PATH
+from config import CORS_ORIGINS
 from database import connect, init_db
+from routers.core import router as core_router
+from routers.inventory import router as inventory_router
+from security import require_admin, require_permission, require_user
 from request_models import (
-    AliquotCreateRequest,
     ArrivalCreateRequest,
     BackupCleanupRequest,
     BackupCreateRequest,
@@ -44,13 +41,9 @@ from request_models import (
     CheckoutCreateRequest,
     DropdownSettingsRequest,
     ExcelImportRequest,
-    InventoryItemCreateRequest,
-    InventoryItemUpdateRequest,
-    LoginRequest,
     MovementCreateRequest,
     OrderCreateRequest,
     OrderUpdateRequest,
-    PasswordChangeRequest,
     StorageNodeCreateRequest,
     StorageNodeUpdateRequest,
     UserCreateRequest,
@@ -78,31 +71,13 @@ app = FastAPI(title="Lab Position API", version="1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
     max_age=86400,
 )
-
-_login_failures: dict[str, list[float]] = {}
-LOGIN_MAX_ATTEMPTS = 5
-LOGIN_WINDOW_SECONDS = 300
-
-
-def _check_login_rate(client_ip: str) -> bool:
-    now = time.monotonic()
-    attempts = _login_failures.get(client_ip, [])
-    attempts = [t for t in attempts if now - t < LOGIN_WINDOW_SECONDS]
-    _login_failures[client_ip] = attempts
-    return len(attempts) < LOGIN_MAX_ATTEMPTS
-
-
-def _record_login_failure(client_ip: str) -> None:
-    _login_failures.setdefault(client_ip, []).append(time.monotonic())
-
-
-def _clear_login_failures(client_ip: str) -> None:
-    _login_failures.pop(client_ip, None)
-
+app.include_router(core_router)
+app.include_router(inventory_router)
 
 @app.exception_handler(ApiError)
 async def api_error_handler(_: Request, exc: ApiError) -> JSONResponse:
@@ -152,145 +127,15 @@ def strict_query_params(request: Request, allowed: set[str]) -> dict[str, list[s
     return query
 
 
-def require_user(request: Request) -> dict[str, Any]:
-    user = auth.read_token(request.headers.get("Authorization"))
-    if user is None:
-        raise ApiError(401, "请先登录")
-    return user
-
-
-def require_admin(user: dict[str, Any]) -> None:
-    if user.get("role") != "admin":
-        raise ApiError(403, "当前账号没有管理员权限")
-
-
-def require_permission(user: dict[str, Any], permission: str) -> None:
-    if user.get("role") == "admin":
-        return
-    if not bool((user.get("permissions") or {}).get(permission)):
-        raise ApiError(403, "当前账号没有该操作权限")
-
-
-@app.get("/api/health")
-def health() -> dict[str, Any]:
-    return {"ok": True, "db": str(DB_PATH), "time": now_text()}
-
-
-@app.get("/api/runtime-config")
-def runtime_config() -> dict[str, Any]:
-    return dev_tools.runtime_config()
-
-
-@app.get("/api/options")
-def options() -> dict[str, Any]:
-    return admin.options()
-
-
-@app.post("/api/login")
-def login(request: Request, data: LoginRequest) -> JSONResponse:
-    client_ip = request.client.host if request.client else "unknown"
-    if not _check_login_rate(client_ip):
-        logger.warning("登录限流：%s", client_ip)
-        raise ApiError(429, "登录尝试过于频繁，请 5 分钟后再试")
-    try:
-        result = auth.login(data.payload())
-        _clear_login_failures(client_ip)
-        logger.info("用户 %s 登录成功", data.payload().get("username", ""))
-        return json_response(result)
-    except ApiError:
-        _record_login_failure(client_ip)
-        raise
-
-
-@app.post("/api/dev/login")
-def dev_login() -> JSONResponse:
-    credentials = dev_tools.dev_admin_credentials()
-    return json_response(auth.login(credentials))
-
-
 @app.post("/api/dev/load-demo-db")
 def dev_load_demo_database(user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
     require_admin(user)
     return json_response(dev_tools.load_demo_database())
 
 
-@app.get("/api/me")
-def me(user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
-    return {"user": user}
-
-
-@app.patch("/api/me/password")
-def change_password(data: PasswordChangeRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
-    return json_response(auth.change_password(data.payload(), user))
-
-
 @app.get("/api/dashboard")
 def dashboard(_: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
     return reagents.dashboard()
-
-
-@app.get("/api/inventory/search")
-def inventory_search_route(request: Request, user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
-    query = query_params(request)
-    purpose = query.get("purpose", ["global"])[0].strip() or "global"
-    if purpose in {"global", "form", "validation"}:
-        require_permission(user, "inventory.search")
-    elif purpose == "movement":
-        require_permission(user, "location.manage")
-    elif purpose == "aliquot":
-        require_permission(user, "inventory.manage")
-    elif purpose == "checkout":
-        pass
-    else:
-        raise ApiError(400, "库存搜索用途不正确")
-    return inventory.search(query)
-
-
-@app.get("/api/inventory/catalog-conflicts")
-def catalog_conflicts(request: Request, _: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
-    query = query_params(request)
-    catalog_no = query.get("catalog_no", [""])[0]
-    name = query.get("name", [""])[0]
-    exclude_id = int(query.get("exclude_id", ["0"])[0] or 0) or None
-    return reagents.catalog_name_conflicts(catalog_no, name, exclude_id)
-
-
-@app.post("/api/inventory/items")
-def create_inventory_item(data: InventoryItemCreateRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
-    require_permission(user, "inventory.manage")
-    return json_response(inventory.create_item(data.payload(), user), 201)
-
-
-@app.get("/api/inventory/items/{item_type}/{item_id}")
-def inventory_item_detail(item_type: str, item_id: int, user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
-    require_permission(user, "inventory.search")
-    return inventory.item_detail(item_type, item_id)
-
-
-@app.get("/api/inventory/timeline")
-def inventory_item_timeline(request: Request, user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
-    require_permission(user, "inventory.search")
-    query = strict_query_params(request, {"item_type", "id"})
-    item_type = query.get("item_type", ["reagent"])[0].strip() or "reagent"
-    item_id = int(query.get("id", ["0"])[0] or 0)
-    if item_type not in {"reagent", "sample"} or not item_id:
-        raise ApiError(400, "库存时间线参数不正确")
-    return inventory.timeline(item_type, item_id)
-
-
-@app.patch("/api/inventory/items/{item_type}/{item_id}")
-def update_inventory_item(item_type: str, item_id: int, data: InventoryItemUpdateRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
-    require_permission(user, "inventory.manage")
-    return json_response(inventory.update_item(item_type, item_id, data.payload(patch=True), user))
-
-
-@app.post("/api/aliquots")
-def create_aliquots(data: AliquotCreateRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
-    require_permission(user, "inventory.manage")
-    payload = data.payload()
-    if data.item_type == "sample":
-        return json_response(clinical_samples.create_aliquots(payload, user), 201)
-    return json_response(reagents.create_reagent_aliquots(payload, user), 201)
 
 
 @app.get("/api/orders")
