@@ -1,5 +1,5 @@
 """空间网格计算核心逻辑测试。"""
-from storage_inventory import (
+from services.storage_inventory import (
     assign_grid_positions,
     coord_list,
     default_grid_for_node,
@@ -154,7 +154,7 @@ class TestNodePath:
             "INSERT INTO storage_nodes (id, parent_id, name, node_type, created_by, updated_by, created_at, updated_at) VALUES (2, 1, '冰箱A', 'space', 1, 1, '2025-01-01', '2025-01-01')"
         )
         conn.commit()
-        from storage_inventory import node_full_path
+        from services.storage_inventory import node_full_path
         assert node_full_path(conn, 2) == "根 / 冰箱A"
         assert node_full_path(conn, 1) == "根"
 
@@ -173,7 +173,7 @@ class TestDescendantNodeIds:
             "INSERT INTO storage_nodes (id, parent_id, name, node_type, created_by, updated_by, created_at, updated_at) VALUES (3, 2, '孙', 'space', 1, 1, '2025-01-01', '2025-01-01')"
         )
         conn.commit()
-        from storage_inventory import descendant_node_ids
+        from services.storage_inventory import descendant_node_ids
         ids = descendant_node_ids(conn, 1, True)
         assert sorted(ids) == [1, 2, 3]
         ids_no_self = descendant_node_ids(conn, 1, False)

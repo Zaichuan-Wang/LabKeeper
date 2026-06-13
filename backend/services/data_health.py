@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from common import now_text, row_dict
-from database import connect
-from storage_inventory import computed_storage_location
+from core.common import now_text, row_dict
+from db.database import connect
+from services.storage_inventory import computed_storage_location
 
 
 EXAMPLE_LIMIT = 20

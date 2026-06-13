@@ -6,13 +6,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
-import admin
-import auth
-import dev_tools
-from common import ApiError, get_logger, now_text
-from config import DB_PATH, IS_PRODUCTION
-from request_models import LoginRequest, PasswordChangeRequest
-from security import AUTH_COOKIE_NAME, require_user
+from services import admin
+from services import auth
+from services import dev_tools
+from core.common import ApiError, get_logger, now_text
+from core.config import DB_PATH, IS_PRODUCTION
+from models.request_models import LoginRequest, PasswordChangeRequest
+from core.security import AUTH_COOKIE_NAME, require_admin, require_user
 
 router = APIRouter()
 logger = get_logger("lab.server")
@@ -49,7 +49,7 @@ def auth_response(result: dict[str, Any], status_code: int = 200) -> JSONRespons
         result["token"],
         max_age=auth.TOKEN_TTL_SECONDS,
         httponly=True,
-        secure=IS_PRODUCTION,
+        secure=False,
         samesite="lax",
         path="/",
     )
@@ -99,6 +99,12 @@ def login(request: Request, data: LoginRequest) -> JSONResponse:
 def dev_login() -> JSONResponse:
     credentials = dev_tools.dev_admin_credentials()
     return auth_response(auth.login(credentials))
+
+
+@router.post("/api/dev/load-demo-db")
+def dev_load_demo_database(user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
+    require_admin(user)
+    return json_response(dev_tools.load_demo_database())
 
 
 @router.post("/api/logout")

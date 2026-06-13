@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any
 
-from config import OPTIONS_CONFIG_PATH
+from core.config import OPTIONS_CONFIG_PATH
 
 
 DEFAULT_DROPDOWN_SETTINGS = {

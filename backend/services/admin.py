@@ -5,12 +5,12 @@ import json
 from io import BytesIO
 from typing import Any
 
-import backup as database_backup
-from common import ApiError, create_audit, now_text, row_dict
-from constants import BOX_SPECS, DEFAULT_USER_PERMISSIONS, NODE_TYPE_LABELS, PERMISSIONS, ROLES
-from database import connect
-from auth import hash_password, user_permissions
-from options_config import load_dropdown_options, save_dropdown_options
+from services import backup as database_backup
+from core.common import ApiError, create_audit, now_text, row_dict
+from core.constants import BOX_SPECS, DEFAULT_USER_PERMISSIONS, NODE_TYPE_LABELS, PERMISSIONS, ROLES
+from db.database import connect
+from services.auth import hash_password, user_permissions
+from services.options_config import load_dropdown_options, save_dropdown_options
 
 
 def options() -> dict[str, Any]:
@@ -234,7 +234,15 @@ def excel_import(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
 
 
 def _table_names(conn: Any) -> list[str]:
-    rows = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()
+    rows = conn.execute(
+        """
+        SELECT name FROM sqlite_master
+        WHERE type = 'table'
+          AND name NOT LIKE 'sqlite_%'
+          AND name NOT IN ('schema_migrations')
+        ORDER BY name
+        """
+    ).fetchall()
     return [str(row["name"]) for row in rows]
 
 

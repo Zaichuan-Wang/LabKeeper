@@ -2,7 +2,7 @@
 import time
 from unittest.mock import patch, MagicMock
 
-from auth import hash_password, verify_password, make_token, read_token
+from services.auth import hash_password, verify_password, make_token, read_token
 
 
 class TestPasswordHashing:
@@ -45,7 +45,7 @@ class TestTokens:
         )
         conn.commit()
         user = {"id": 1, "username": "admin", "display_name": "管理员", "role": "admin", "permissions": {}}
-        with patch("auth.TOKEN_TTL_SECONDS", -10):
+        with patch("services.auth.TOKEN_TTL_SECONDS", -10):
             token = make_token(user)
         assert read_token(f"Bearer {token}") is None
 

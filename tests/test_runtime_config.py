@@ -9,8 +9,8 @@ def reload_config(monkeypatch, **values):
             monkeypatch.delenv(key, raising=False)
     for key, value in values.items():
         monkeypatch.setenv(key, value)
-    sys.modules.pop("config", None)
-    return importlib.import_module("config")
+    sys.modules.pop("core.config", None)
+    return importlib.import_module("core.config")
 
 
 def test_dev_tools_enabled_only_outside_production(monkeypatch):
@@ -62,8 +62,8 @@ def test_production_rejects_placeholder_initial_admin_password(monkeypatch, tmp_
         LABKEEPER_CORS_ORIGINS="https://lab.example.com",
     )
     config.DB_PATH = tmp_path / "prod.sqlite3"
-    sys.modules.pop("database", None)
-    database = importlib.import_module("database")
+    sys.modules.pop("db.database", None)
+    database = importlib.import_module("db.database")
     try:
         database.init_db()
     except RuntimeError as exc:

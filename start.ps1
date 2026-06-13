@@ -73,7 +73,7 @@ if (-not $PythonPath) {
     "C:\ProgramData\miniforge3\envs",
     "C:\ProgramData\miniconda3\envs"
   )
-  $EnvNames = @("labkeeper", "lab_position", "codex")
+  $EnvNames = @("labkeeper", "codex")
   foreach ($root in $CondaRoots) {
     foreach ($name in $EnvNames) {
       $candidate = Join-Path $root "$name\python.exe"

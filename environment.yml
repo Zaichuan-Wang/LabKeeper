@@ -9,4 +9,4 @@ dependencies:
   - pillow>=10.0
   - pip
   - pip:
-      - httpx2>=0.28
+      - httpx2>=2.0

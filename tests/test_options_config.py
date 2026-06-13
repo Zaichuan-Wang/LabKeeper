@@ -1,6 +1,6 @@
 import json
 
-import options_config
+from services import options_config
 
 
 def test_fixed_status_options_keep_required_values_before_custom_values():

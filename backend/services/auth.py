@@ -8,10 +8,10 @@ import os
 import time
 from typing import Any
 
-import database
-from common import ApiError, create_audit, now_text
-from config import SECRET, TOKEN_TTL_SECONDS
-from constants import DEFAULT_USER_PERMISSIONS, PERMISSIONS
+from db import database
+from core.common import ApiError, create_audit, now_text
+from core.config import SECRET, TOKEN_TTL_SECONDS
+from core.constants import DEFAULT_USER_PERMISSIONS, PERMISSIONS
 
 HASH_ITERATIONS = 260_000
 

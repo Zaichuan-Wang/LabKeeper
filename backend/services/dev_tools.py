@@ -5,10 +5,10 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-import backup
-import config
-from common import ApiError, now_text
-from database import connect, init_db
+from services import backup
+from core import config
+from core.common import ApiError, now_text
+from db.database import connect, init_db
 
 
 def runtime_config() -> dict[str, Any]:

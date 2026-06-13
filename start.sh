@@ -74,7 +74,7 @@ find_python() {
   if [ -n "${PYTHON:-}" ] && command -v "$PYTHON" &>/dev/null; then
     echo "$PYTHON"; return
   fi
-  for env in labkeeper lab_position codex; do
+  for env in labkeeper codex; do
     local conda_py="$HOME/miniforge3/envs/$env/bin/python"
     [ -x "$conda_py" ] && echo "$conda_py" && return
     conda_py="$HOME/miniconda3/envs/$env/bin/python"

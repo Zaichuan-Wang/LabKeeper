@@ -9,9 +9,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from common import ApiError, create_audit, get_logger, now_text
-from config import BACKUP_SETTINGS_PATH, DB_PATH
-from database import connect
+from core.common import ApiError, create_audit, get_logger, now_text
+from core.config import BACKUP_SETTINGS_PATH, DB_PATH
+from db.database import connect
 
 logger = get_logger("lab.backup")
 

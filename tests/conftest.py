@@ -30,7 +30,7 @@ def tmp_db(tmp_path):
 @pytest.fixture
 def patch_db(tmp_db, monkeypatch):
     """让 backend.database.connect() 返回临时数据库连接。"""
-    import database
+    from db import database
     original_connect = database.connect
 
     def _connect():
@@ -44,8 +44,8 @@ def patch_db(tmp_db, monkeypatch):
 @pytest.fixture
 def app_client(tmp_path, monkeypatch):
     """创建使用临时 SQLite 文件的 FastAPI TestClient。"""
-    import config
-    import database
+    from core import config
+    from db import database
 
     db_path = tmp_path / "api-test.sqlite3"
     options_path = tmp_path / "dropdown_options.json"
@@ -58,8 +58,8 @@ def app_client(tmp_path, monkeypatch):
 
     # backup.py imports DB_PATH/BACKUP_SETTINGS_PATH at module import time, so
     # patch its module globals too when it has already been loaded.
-    import backup
-    import options_config
+    from services import backup
+    from services import options_config
 
     monkeypatch.setattr(backup, "DB_PATH", db_path)
     monkeypatch.setattr(backup, "BACKUP_DIR", db_path.parent / "backups")

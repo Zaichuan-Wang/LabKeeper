@@ -4,8 +4,8 @@ from typing import Any
 
 from fastapi import Request
 
-import auth
-from common import ApiError
+from services import auth
+from core.common import ApiError
 
 AUTH_COOKIE_NAME = "lp_token"
 

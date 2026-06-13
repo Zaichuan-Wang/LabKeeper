@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from common import ApiError, create_audit, now_text, row_dict, rows_list
-from database import connect
-from storage_inventory import (
+from core.common import ApiError, create_audit, now_text, row_dict, rows_list
+from db.database import connect
+from services.storage_inventory import (
     assign_reagent_to_node,
     assign_sample_to_node,
     default_grid_for_node,

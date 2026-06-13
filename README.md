@@ -139,7 +139,7 @@ http://127.0.0.1:5173
 如果想先在服务器上给几个人试用，也可以先不创建 `.env`，直接运行测试版：
 
 ```bash
-git clone https://github.com/yourname/labkeeper.git
+git clone https://github.com/Zaichuan-Wang/LabKeeper.git
 cd labkeeper
 pip install -r requirements.txt
 ./start.sh --daemon
@@ -201,7 +201,7 @@ db/lab_inventory.sqlite3
 #### 1. 上传项目并安装依赖
 
 ```bash
-git clone https://github.com/yourname/labkeeper.git
+git clone https://github.com/Zaichuan-Wang/LabKeeper.git
 cd labkeeper
 pip install -r requirements.txt
 ```
@@ -395,7 +395,12 @@ http://服务器IP:5173
 项目结构：
 
 ```text
-backend/     后端 API 和业务逻辑
+backend/     后端 API、业务逻辑和数据库入口
+backend/routers/   API 路由入口
+backend/services/  业务逻辑
+backend/models/    请求模型和参数校验
+backend/db/        SQLite 初始化和迁移
+backend/core/      配置、权限和通用工具
 frontend/    前端页面、样式和交互脚本
 config/      下拉选项配置
 db/          SQLite schema
@@ -408,7 +413,7 @@ tests/       单元测试和 API 集成测试
 
 ```bash
 pytest tests/ -v
-python -m py_compile backend/server.py backend/registration.py backend/movements.py backend/storage_api.py
+python -m compileall backend
 LABKEEPER_ENV=test python backend/server.py --check
 node --check frontend/app.js
 ```

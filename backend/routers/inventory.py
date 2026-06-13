@@ -5,12 +5,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
-import clinical_samples
-import inventory
-import reagents
-from common import ApiError
-from request_models import AliquotCreateRequest, InventoryItemCreateRequest, InventoryItemUpdateRequest
-from security import require_permission, require_user
+from services import clinical_samples
+from services import inventory
+from services import reagents
+from core.common import ApiError
+from models.request_models import AliquotCreateRequest, InventoryItemCreateRequest, InventoryItemUpdateRequest
+from core.security import require_permission, require_user
 
 router = APIRouter(prefix="/api")
 

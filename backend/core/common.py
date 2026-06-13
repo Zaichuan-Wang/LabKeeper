@@ -8,6 +8,8 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
+from core.config import ROOT
+
 _logger_configured = False
 
 
@@ -22,7 +24,7 @@ def get_logger(name: str = "lab") -> logging.Logger:
     sh = logging.StreamHandler()
     sh.setFormatter(fmt)
     logger.addHandler(sh)
-    log_dir = Path(__file__).resolve().parents[1] / "data"
+    log_dir = ROOT / "data"
     log_dir.mkdir(parents=True, exist_ok=True)
     fh = RotatingFileHandler(log_dir / "backend.log", maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8")
     fh.setFormatter(fmt)
