@@ -8,10 +8,10 @@ import os
 import time
 from typing import Any
 
+import database
 from common import ApiError, create_audit, now_text
 from config import SECRET, TOKEN_TTL_SECONDS
 from constants import DEFAULT_USER_PERMISSIONS, PERMISSIONS
-from database import connect
 
 HASH_ITERATIONS = 260_000
 
@@ -65,7 +65,7 @@ def read_token(auth_header: str | None) -> dict[str, Any] | None:
         payload = json.loads(_b64url_decode(body).decode("utf-8"))
         if int(payload.get("exp", 0)) < int(time.time()):
             return None
-        with connect() as conn:
+        with database.connect() as conn:
             row = conn.execute("SELECT * FROM users WHERE id = ?", (payload.get("id"),)).fetchone()
         if row is None or int(row["is_active"]) != 1:
             return None
@@ -81,7 +81,7 @@ def login(data: dict[str, Any]) -> dict[str, Any]:
     password = str(data.get("password", ""))
     if not username or not password:
         raise ApiError(400, "请输入用户名和密码")
-    with connect() as conn:
+    with database.connect() as conn:
         row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
         if row is None or int(row["is_active"]) != 1 or not verify_password(password, row["password_hash"]):
             raise ApiError(401, "用户名或密码不正确")
@@ -101,7 +101,7 @@ def change_password(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any
         raise ApiError(400, "旧密码和新密码不能为空")
     if len(new_password) < 6:
         raise ApiError(400, "新密码至少 6 位")
-    with connect() as conn:
+    with database.connect() as conn:
         row = conn.execute("SELECT password_hash FROM users WHERE id = ?", (user["id"],)).fetchone()
         if row is None or not verify_password(old_password, row["password_hash"]):
             raise ApiError(400, "旧密码不正确")

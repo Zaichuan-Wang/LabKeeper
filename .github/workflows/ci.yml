@@ -23,9 +23,12 @@ jobs:
           pip install pytest
 
       - name: Backend syntax check
-        run: python -m py_compile backend/server.py backend/registration.py backend/movements.py backend/validation_images.py 2>/dev/null || python -m py_compile backend/server.py backend/registration.py backend/movements.py
+        run: python -m py_compile backend/server.py backend/registration.py backend/movements.py backend/storage_api.py backend/dev_tools.py
 
       - name: Unit tests
+        env:
+          LABKEEPER_ENV: test
+          LABKEEPER_ENABLE_DEV_TOOLS: "1"
         run: python -m pytest tests/ -v --tb=short -x
 
       - name: Frontend syntax check

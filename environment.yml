@@ -1,4 +1,4 @@
-﻿name: lab_position
+name: labkeeper
 channels:
   - conda-forge
 dependencies:

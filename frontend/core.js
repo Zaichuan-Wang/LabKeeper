@@ -3,6 +3,7 @@
   apiBase: getApiBase(),
   token: localStorage.getItem('lp_token') || '',
   user: JSON.parse(localStorage.getItem('lp_user') || 'null'),
+  runtime: { dev_tools_enabled: false, dev_admin_username: '', demo_database_available: false },
   options: null,
   view: 'dashboard',
   tablePages: {},

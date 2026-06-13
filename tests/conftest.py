@@ -6,6 +6,9 @@ from pathlib import Path
 
 import pytest
 
+os.environ.setdefault("LABKEEPER_ENV", "test")
+os.environ.setdefault("LABKEEPER_ENABLE_DEV_TOOLS", "1")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "db" / "schema.sql"

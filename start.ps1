@@ -8,6 +8,12 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Backend = Join-Path $Root "backend\server.py"
 $Frontend = Join-Path $Root "frontend"
+$EnvFile = Join-Path $Root ".env"
+
+if (-not (Test-Path $EnvFile) -and -not $env:LABKEEPER_ENV) {
+  $env:LABKEEPER_ENV = "development"
+  $env:LABKEEPER_ENABLE_DEV_TOOLS = "1"
+}
 
 # ── 自动查找 Python ──
 if (-not $PythonPath) {
@@ -20,7 +26,7 @@ if (-not $PythonPath) {
     "C:\ProgramData\miniforge3\envs",
     "C:\ProgramData\miniconda3\envs"
   )
-  $EnvNames = @("lab_position", "codex")
+  $EnvNames = @("labkeeper", "lab_position", "codex")
   foreach ($root in $CondaRoots) {
     foreach ($name in $EnvNames) {
       $candidate = Join-Path $root "$name\python.exe"
@@ -48,6 +54,7 @@ if (-not $PythonPath -or -not (Test-Path $PythonPath)) {
 Write-Host "Python:     $PythonPath"
 Write-Host "后端端口:   $ApiPort"
 Write-Host "前端端口:   $FrontendPort"
+Write-Host "运行模式:   $($env:LABKEEPER_ENV)"
 Write-Host ""
 
 # ── 安装依赖（首次运行） ──

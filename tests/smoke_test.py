@@ -73,7 +73,9 @@ def main() -> None:
         OPTIONS_TEST_PATH.unlink()
 
     env = os.environ.copy()
-    env["LAB_POSITION_OPTIONS_CONFIG"] = str(OPTIONS_TEST_PATH)
+    env["LABKEEPER_ENV"] = "test"
+    env["LABKEEPER_ENABLE_DEV_TOOLS"] = "1"
+    env["LABKEEPER_OPTIONS_CONFIG"] = str(OPTIONS_TEST_PATH)
     stdout_log_path = ROOT / "smoke_backend.out.log"
     stderr_log_path = ROOT / "smoke_backend.err.log"
     stdout_log = stdout_log_path.open("w", encoding="utf-8")

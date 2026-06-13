@@ -3,7 +3,14 @@
 import sqlite3
 
 from common import now_text
-from config import DB_PATH, SCHEMA_PATH
+from config import (
+    INITIAL_ADMIN_DISPLAY_NAME,
+    INITIAL_ADMIN_PASSWORD,
+    INITIAL_ADMIN_USERNAME,
+    IS_PRODUCTION,
+    DB_PATH,
+    SCHEMA_PATH,
+)
 
 
 def connect() -> sqlite3.Connection:
@@ -45,6 +52,12 @@ def _ensure_admin_user(conn: sqlite3.Connection) -> None:
     existing = conn.execute("SELECT id FROM users WHERE role = 'admin' LIMIT 1").fetchone()
     if existing is not None:
         return
+    if IS_PRODUCTION:
+        insecure_passwords = {"", "admin123", "change-this-admin-password"}
+        if INITIAL_ADMIN_PASSWORD in insecure_passwords:
+            raise RuntimeError("生产环境首次初始化必须设置安全的 LABKEEPER_INITIAL_ADMIN_PASSWORD")
+    elif not INITIAL_ADMIN_PASSWORD:
+        raise RuntimeError("首次初始化必须设置 LABKEEPER_INITIAL_ADMIN_PASSWORD")
     from auth import hash_password
 
     timestamp = now_text()
@@ -53,7 +66,13 @@ def _ensure_admin_user(conn: sqlite3.Connection) -> None:
         INSERT INTO users (username, display_name, password_hash, role, is_active, created_at, updated_at)
         VALUES (?, ?, ?, 'admin', 1, ?, ?)
         """,
-        ("admin", "管理员", hash_password("admin123"), timestamp, timestamp),
+        (
+            INITIAL_ADMIN_USERNAME.strip() or "admin",
+            INITIAL_ADMIN_DISPLAY_NAME.strip() or (INITIAL_ADMIN_USERNAME.strip() or "admin"),
+            hash_password(INITIAL_ADMIN_PASSWORD),
+            timestamp,
+            timestamp,
+        ),
     )
 
 

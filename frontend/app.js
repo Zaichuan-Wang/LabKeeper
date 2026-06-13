@@ -47,6 +47,59 @@ async function loginWithCredentials(credentials) {
   toast('登录成功');
 }
 
+async function loadRuntimeConfig() {
+  try {
+    const res = await fetch(`${state.apiBase}/api/runtime-config`);
+    if (!res.ok) throw new Error(`runtime config ${res.status}`);
+    state.runtime = await res.json();
+  } catch (err) {
+    state.runtime = { dev_tools_enabled: false, dev_admin_username: '', demo_database_available: false };
+  }
+  renderDevToolsPanel();
+}
+
+function renderDevToolsPanel() {
+  const panel = $('devToolsPanel');
+  if (!panel) return;
+  const enabled = Boolean(state.runtime?.dev_tools_enabled);
+  panel.classList.toggle('hidden', !enabled);
+  if (!enabled) {
+    panel.innerHTML = '';
+    return;
+  }
+  const demoAvailable = Boolean(state.runtime?.demo_database_available);
+  panel.innerHTML = `
+    <p class="form-note">开发工具已启用，仅用于本机测试。</p>
+    <div class="dev-tools-actions">
+      <button id="testAdminLoginBtn" class="ghost dev-login-shortcut" type="button">测试管理员登录</button>
+      <button id="loadDemoDbBtn" class="ghost" type="button" ${demoAvailable ? '' : 'disabled'}>载入 Demo 数据库</button>
+    </div>
+  `;
+  $('testAdminLoginBtn')?.addEventListener('click', guard(loginAsDevAdmin));
+  $('loadDemoDbBtn')?.addEventListener('click', guard(loadDemoDatabase));
+}
+
+async function loginAsDevAdmin() {
+  $('loginError').textContent = '';
+  const data = await api('/api/dev/login', { method: 'POST', body: JSON.stringify({}) });
+  state.token = data.token;
+  state.user = data.user;
+  localStorage.setItem('lp_token', state.token);
+  localStorage.setItem('lp_user', JSON.stringify(state.user));
+  setLoggedIn(true);
+  await loadOptions();
+  switchView('dashboard');
+  toast('已用测试管理员登录');
+}
+
+async function loadDemoDatabase() {
+  if (!confirm('载入 Demo 数据库会替换当前运行数据库，并先自动备份现有数据库。确定继续？')) return;
+  if (!state.token || !state.user || !isAdmin()) await loginAsDevAdmin();
+  const result = await api('/api/dev/load-demo-db', { method: 'POST', body: JSON.stringify({}) });
+  toast(result.message || 'Demo 数据库已载入');
+  await loginAsDevAdmin();
+}
+
 function canUseInventoryTab(tab) {
   if (tab === 'details') return canSearchInventory();
   if (tab === 'manual' || tab === 'bulk') return canManageInventory();
@@ -264,10 +317,6 @@ function wireLocationFields(kind, options = {}) {
 
 function wireEvents() {
   $('loginForm').addEventListener('submit', async e => { e.preventDefault(); try { await loginWithCredentials(formData(e.currentTarget)); } catch (err) { $('loginError').textContent = err.message; } });
-  // DEV_LOGIN_SHORTCUT: remove this listener and the matching button before release.
-  $('testAdminLoginBtn')?.addEventListener('click', guard(async () => {
-    await loginWithCredentials({ username: 'admin', password: 'admin123' });
-  }));
   $('logoutBtn').addEventListener('click', () => logout(true));
   $('refreshBtn').addEventListener('click', loadCurrentView);
   document.querySelectorAll('.nav-item').forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
@@ -811,6 +860,7 @@ async function submitPassword(e) {
 
 async function boot() {
   initSidebarToggle();
+  await loadRuntimeConfig();
   wireEvents();
   setDefaultDates();
   setLoggedIn(Boolean(state.token && state.user));

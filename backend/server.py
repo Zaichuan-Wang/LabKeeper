@@ -25,6 +25,7 @@ import backup
 import bulk_operations
 import clinical_samples
 import data_health
+import dev_tools
 import inventory
 import movements
 import reagents
@@ -175,6 +176,11 @@ def health() -> dict[str, Any]:
     return {"ok": True, "db": str(DB_PATH), "time": now_text()}
 
 
+@app.get("/api/runtime-config")
+def runtime_config() -> dict[str, Any]:
+    return dev_tools.runtime_config()
+
+
 @app.get("/api/options")
 def options() -> dict[str, Any]:
     return admin.options()
@@ -194,6 +200,18 @@ def login(request: Request, data: LoginRequest) -> JSONResponse:
     except ApiError:
         _record_login_failure(client_ip)
         raise
+
+
+@app.post("/api/dev/login")
+def dev_login() -> JSONResponse:
+    credentials = dev_tools.dev_admin_credentials()
+    return json_response(auth.login(credentials))
+
+
+@app.post("/api/dev/load-demo-db")
+def dev_load_demo_database(user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
+    require_admin(user)
+    return json_response(dev_tools.load_demo_database())
 
 
 @app.get("/api/me")

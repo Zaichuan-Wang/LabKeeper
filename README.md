@@ -1,140 +1,234 @@
 # LabKeeper — 实验室库存管理系统
 
-面向课题组（约 30 人规模）的本地 Web 库存管理平台，统一管理试剂、耗材、临床标本和存放空间。
+LabKeeper 是给生物实验室和课题组使用的轻量级库存管理系统。它可以在一台普通电脑上本地运行，也可以部署到实验室 Linux 服务器上，让组内成员通过浏览器一起使用。
 
-- **前端**：原生 HTML/CSS/JavaScript，无打包器
-- **后端**：Python FastAPI
-- **数据库**：SQLite（单文件，易备份迁移）
+适合管理：
 
-## 功能概览
+- 试剂、抗体、耗材、试剂盒
+- 临床标本、冻存管、分装样本
+- 冰箱、液氮罐、抽屉、样本盒和盒内孔位
+- 订购、到货、验证、入库、移动、出库和备份记录
 
-- 统一空间框架：冰箱、柜子、液氮罐、架子、抽屉、样本架、盒子，用行列网格统一管理
-- 试剂/耗材全生命周期：订购 → 到货 → 验证 → 入库 → 移动 → 出库
-- 临床标本：入库、分装、移动、出库，不记录个人身份信息
-- 批量 Excel 导入导出、数据库备份与恢复
-- 角色权限（管理员 / 普通用户）、操作审计、数据健康检查
-- 验证图片上传压缩、库存时间线追溯、误操作回滚
+系统不需要安装数据库服务器，数据保存在一个 SQLite 文件中，便于备份和迁移。
 
-## 快速启动
+## 主要功能
 
-### 前置条件
+- 记录试剂/耗材从订购、到货、验证、入库到出库的完整流程
+- 记录临床标本和分装信息，不保存姓名、身份证号、电话等个人身份信息
+- 用空间树和盒内孔位管理冰箱、液氮罐、抽屉、盒子等位置
+- 支持 Excel 批量导入、批量编辑、批量移动和批量出库
+- 支持管理员和普通用户权限
+- 支持数据库备份、数据健康检查、操作审计和库存时间线
+- 开发测试模式可一键载入 Demo 数据库，正式部署默认关闭测试入口
 
-- Python 3.10+（推荐使用 conda 环境）
-- Node.js（仅用于前端语法检查，运行不依赖）
+## 最简单用法：在自己的 Windows 电脑上运行
 
-### Linux / macOS
+适合一个人先试用，或在实验室电脑上本机管理库存。
 
-```bash
-git clone https://github.com/yourname/labkeeper.git
-cd labkeeper
+### 1. 准备 Python
 
-# 安装依赖
-pip install -r requirements.txt
+电脑需要先安装 Python 3.10 或更高版本。推荐使用 Miniconda / Miniforge，但普通 Python 也可以。
 
-# 启动（默认端口：后端 8000，前端 5173）
-./start.sh
+### 2. 下载项目
 
-# 自定义端口
-./start.sh --api-port 9000 --frontend-port 8080
+从 GitHub 下载本项目，解压到一个固定位置，例如：
 
-# 后台运行
-./start.sh --daemon
-
-# 停止后台服务
-./start.sh --stop
+```text
+D:\LabKeeper
 ```
 
-### Windows
+### 3. 安装依赖
+
+第一次使用前，在项目目录打开 PowerShell，运行：
 
 ```powershell
-git clone https://github.com/yourname/labkeeper.git
-cd labkeeper
-
-# 安装依赖
 pip install -r requirements.txt
+```
 
-# 启动
+如果使用 conda，也可以运行：
+
+```powershell
+conda env create -f environment.yml
+conda activate labkeeper
+```
+
+### 4. 启动系统
+
+在项目文件夹中找到：
+
+```text
+start.ps1
+```
+
+右键点击 `start.ps1`，选择“使用 PowerShell 运行”。
+
+如果系统提示脚本权限问题，可以打开 PowerShell 后进入项目目录运行：
+
+```powershell
 .\start.ps1
-
-# 自定义端口
-.\start.ps1 -ApiPort 9000 -FrontendPort 8080
 ```
 
-启动后访问 `http://127.0.0.1:5173`。
+启动成功后，浏览器访问：
 
-## 默认账号
-
-首次启动会自动创建管理员账号和根空间节点：
-
+```text
+http://127.0.0.1:5173
 ```
+
+默认本机开发账号：
+
+```text
 用户名：admin
 密码：admin123
 ```
 
-**首次部署后请立即修改默认密码。**
+开发模式页面会显示“测试管理员登录”和“载入 Demo 数据库”。正式部署时这些入口默认关闭。
 
-测试阶段登录页保留了"测试管理员登录"按钮，正式上线前搜索 `DEV_LOGIN_SHORTCUT` 并删除对应代码。
+### 5. 停止系统
 
-## 配置
+关闭启动时打开的 PowerShell 窗口即可。
 
-复制 `.env.example` 为 `.env`，按需修改：
+## 实验室共享：部署到 Linux 服务器
+
+适合课题组多人共用。部署后，大家在同一个内网中通过浏览器访问服务器地址。
+
+### 1. 上传项目并安装依赖
+
+```bash
+git clone https://github.com/yourname/labkeeper.git
+cd labkeeper
+pip install -r requirements.txt
+```
+
+也可以用 conda：
+
+```bash
+conda env create -f environment.yml
+conda activate labkeeper
+```
+
+### 2. 创建正式配置
+
+复制配置模板：
 
 ```bash
 cp .env.example .env
 ```
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `LAB_POSITION_API_SECRET` | 签名密钥，**部署前必须修改** | `change-this-secret-...` |
-| `LAB_POSITION_TOKEN_TTL_SECONDS` | 登录令牌有效期（秒） | `28800`（8 小时） |
-| `EXPIRATION_REMIND_DAYS` | 即将到期提醒窗口（天） | `30` |
-| `LAB_POSITION_CORS_ORIGINS` | CORS 允许的源，逗号分隔；留空允许所有 | 空 |
+至少修改这些项目：
 
-## 目录结构
-
+```env
+LABKEEPER_ENV=production
+LABKEEPER_ENABLE_DEV_TOOLS=0
+LABKEEPER_API_SECRET=请换成随机长字符串
+LABKEEPER_INITIAL_ADMIN_PASSWORD=请换成正式管理员密码
 ```
+
+### 3. 启动服务
+
+```bash
+./start.sh --daemon
+```
+
+默认端口：
+
+- 前端页面：`5173`
+- 后端接口：`8000`
+
+同一内网成员访问：
+
+```text
+http://服务器IP:5173
+```
+
+例如服务器 IP 是 `192.168.1.20`，访问：
+
+```text
+http://192.168.1.20:5173
+```
+
+停止后台服务：
+
+```bash
+./start.sh --stop
+```
+
+更正式的长期部署建议使用 nginx 反向代理，并配合服务器防火墙、HTTPS 和定期备份。
+
+## 数据和备份
+
+主要运行数据在：
+
+```text
+db/lab_inventory.sqlite3
+```
+
+管理员可以在系统里的“管理员 > 数据库备份”中创建备份。进行批量导入、空间结构大调整或系统升级前，建议先备份数据库。
+
+开发测试用的 Demo 数据库在：
+
+```text
+dev_tools/demo.sqlite3
+```
+
+`dev_tools` 只用于本机测试和演示，正式部署不要依赖其中的脚本或测试数据。
+
+## 常见问题
+
+### 页面打不开
+
+确认启动窗口没有报错，并访问：
+
+```text
+http://127.0.0.1:5173
+```
+
+如果是服务器部署，请把 `127.0.0.1` 换成服务器 IP。
+
+### 忘记管理员密码
+
+如果是正式数据，请先备份数据库，再由维护人员处理。不要直接删除数据库文件。
+
+### Windows 提示不能运行脚本
+
+可以改为打开 PowerShell，进入项目目录后运行：
+
+```powershell
+.\start.ps1
+```
+
+如仍被系统策略拦截，需要由电脑管理员调整 PowerShell 执行策略。
+
+## 给开发者
+
+项目结构：
+
+```text
 backend/     后端 API 和业务逻辑
 frontend/    前端页面、样式和交互脚本
 config/      下拉选项配置
 db/          SQLite schema
-data/        运行时数据（验证图片、日志等）
+data/        运行时数据
+dev_tools/   本机测试和 Demo 数据库
 tests/       单元测试和冒烟测试
 ```
 
-## 测试
+常用检查：
 
 ```bash
-# 单元测试
 pytest tests/ -v
-
-# 后端语法检查
 python -m py_compile backend/server.py backend/registration.py backend/movements.py backend/storage_api.py
-python backend/server.py --check
-
-# 前端语法检查（需要 Node.js）
+LABKEEPER_ENV=test python backend/server.py --check
 node --check frontend/app.js
 ```
 
-> `tests/smoke_test.py` 会删除并重建数据库，不要作为日常检查运行。
-
-## 部署
-
-参考 `SERVER_MANUAL_UPDATE.md` 中的服务器部署和更新说明。
-
-基本流程：
-
-1. 安装 Python 依赖：`pip install -r requirements.txt`
-2. 创建 `.env` 并设置随机密钥
-3. 启动后端：`python backend/server.py --host 0.0.0.0 --port 8000`
-4. 用 nginx 反向代理前端静态文件和后端 API
-5. 修改默认管理员密码
+`requirements.txt` 保留给普通 Python、CI 和服务器部署；`environment.yml` 给 conda 用户。
 
 ## 文档
 
 | 文件 | 内容 |
 |------|------|
 | `USER_MANUAL.md` | 用户操作手册 |
-| `SERVER_MANUAL_UPDATE.md` | 服务器部署和更新说明 |
+| `dev_tools/README.md` | Demo 数据库和本机测试说明 |
 
 ## 许可证
 

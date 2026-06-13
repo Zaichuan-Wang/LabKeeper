@@ -14,6 +14,11 @@ FRONTEND_DIR="$ROOT/frontend"
 DATA_DIR="$ROOT/data"
 PID_DIR="$DATA_DIR/pids"
 
+if [ ! -f "$ROOT/.env" ] && [ -z "${LABKEEPER_ENV:-}" ]; then
+  export LABKEEPER_ENV=development
+  export LABKEEPER_ENABLE_DEV_TOOLS=1
+fi
+
 API_PORT=8000
 FRONTEND_PORT=5173
 DAEMON=false
@@ -56,7 +61,7 @@ find_python() {
   if [ -n "${PYTHON:-}" ] && command -v "$PYTHON" &>/dev/null; then
     echo "$PYTHON"; return
   fi
-  for env in lab_position codex; do
+  for env in labkeeper lab_position codex; do
     local conda_py="$HOME/miniforge3/envs/$env/bin/python"
     [ -x "$conda_py" ] && echo "$conda_py" && return
     conda_py="$HOME/miniconda3/envs/$env/bin/python"
@@ -72,6 +77,7 @@ find_python() {
 
 PY=$(find_python)
 echo "Python: $PY"
+echo "运行模式: ${LABKEEPER_ENV:-production}"
 mkdir -p "$DATA_DIR" "$PID_DIR"
 
 echo "启动后端: http://127.0.0.1:$API_PORT"
