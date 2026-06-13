@@ -1,31 +1,31 @@
-﻿# ── 环境与密钥 ──
-.env
-__pycache__/
-*.pyc
-*.pyo
-*.sqlite3
+﻿__pycache__/
+*.py[cod]
+
 *.log
-.vscode/
-.idea/
-.DS_Store
+*.out.log
+*.err.log
 
-# ── 数据库 ──
-db/*.sqlite3
+*_deploy_*.zip
+*_deploy_*.sqlite3
 
-# ── 运行时产物 ──
+.env
+.venv/
+node_modules/
+dist/
+build/
+
+db/*
+!db/schema.sql
+archive/
+
 data/pids/
-data/backend.*.log
-data/frontend.*.log
 data/validation_images/
 
-# ── 工具内部配置（不发布） ──
 .claude/
 .qwen/
-archive/
 AGENTS.md
 DATA_QUALITY_GUARD_PLAN.md
 
-# ── 杂项 ──
-node_modules/
-*.orig
-*.zip
+frontend_server.*
+backend_server.*
+smoke_backend.*
