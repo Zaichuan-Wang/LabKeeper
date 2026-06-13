@@ -1,0 +1,438 @@
+﻿function badge(value) {
+  const text = fmt(value);
+  let cls = 'badge';
+  if (['已过期', '不通过', '停用', '已耗尽', '取消'].includes(text)) cls += ' danger';
+  if (['待验证', '未验证', '待复核', '已订购', 'user'].includes(text)) cls += ' warn';
+  return `<span class="${cls}">${esc(text)}</span>`;
+}
+
+function actionButton(label, action, id, cls = 'ghost') {
+  return `<button class="${cls} mini-btn" type="button" data-action="${action}" data-id="${id}">${esc(label)}</button>`;
+}
+
+function amountText(item) {
+  if (!item || item.amount === null || item.amount === undefined || item.amount === '') return '-';
+  return `${esc(item.amount)}${esc(item.amount_unit || '')}`;
+}
+
+function syncMultiRegisterFields(form) {
+  if (!form) return;
+  form.querySelectorAll('[data-multi-register-row]').forEach(row => {
+    const input = row.querySelector('input[name="separate_items"]');
+    const countField = form.elements[row.dataset.countField || 'quantity'];
+    const count = Number(countField?.value || 1);
+    const show = count > 1 && !form.elements.id?.value;
+    row.classList.toggle('hidden', !show);
+    if (input) input.disabled = !show;
+  });
+}
+
+function inventoryColumns() {
+  if (state.inventoryItemTypeFilter === 'all') return allInventoryColumns();
+  if (state.inventoryItemTypeFilter === 'space') return spaceInventoryColumns();
+  if (state.inventoryItemTypeFilter === 'sample') return sampleInventoryColumns();
+  const columns = reagentColumns(false);
+  columns.push({
+    key: 'id',
+    label: '操作',
+    render: (_, r) => [
+      actionButton('详情', 'inventory-row-detail', r.id),
+      canManageInventory() ? actionButton('编辑', 'inventory-row-edit', r.id) : '',
+      inventoryObjectAvailable(r, 'reagent') ? actionButton('出库', 'inventory-row-checkout', r.id, 'danger') : '',
+      inventoryObjectAvailable(r, 'reagent') && canManageLocation() ? actionButton('移动', 'inventory-row-move', r.id) : '',
+    ].filter(Boolean).join(' '),
+  });
+  return columns;
+}
+
+function spaceInventoryColumns() {
+  return [
+    { key: 'code', label: '编号/位置码', render: v => esc(v || '-') },
+    { key: 'name', label: '空间名称', render: (_, r) => esc(r.display_title || r.name || '-') },
+    { key: 'display_subtitle', label: '类型', render: badge },
+    { key: 'display_location', label: '空间路径', render: v => esc(locationText(v)) },
+    {
+      key: 'id',
+      label: '操作',
+      render: (_, r) => actionButton('打开空间', 'inventory-node', r.id),
+    },
+  ];
+}
+
+function allInventoryColumns() {
+  return [
+    { key: 'item_type', label: '对象', render: (_, r) => badge(inventoryObjectTypeLabel(r, 'reagent')) },
+    { key: 'code', label: '编号/样本号', render: (_, r) => esc(inventoryObjectCode(r, r.item_type)) },
+    { key: 'name', label: '名称/类型', render: (_, r) => esc(inventoryObjectName(r, r.item_type, '-')) },
+    { key: 'category', label: '分类', render: (_, r) => badge(r.display_type || r.category || inventoryObjectTypeLabel(r, r.item_type)) },
+    { key: 'quantity', label: '数量/规格', render: (_, r) => inventoryObjectType(r, r.item_type) === 'sample'
+      ? amountText(r)
+      : (r.item_type === 'space' ? '-' : esc(r.quantity)) },
+    { key: 'status', label: '状态', render: badge },
+    { key: 'storage_location', label: '位置', render: v => esc(locationText(v)) },
+    { key: 'updated_at', label: '更新时间' },
+    {
+      key: 'id',
+      label: '操作',
+      render: (_, r) => {
+        if (r.item_type === 'space') return actionButton('打开空间', 'inventory-node', r.id);
+        const type = inventoryObjectType(r, r.item_type);
+        return [
+          actionButton('详情', type === 'sample' ? 'inventory-sample-detail' : 'inventory-row-detail', r.id),
+          canManageInventory() ? actionButton('编辑', type === 'sample' ? 'sample-row-edit' : 'inventory-row-edit', r.id) : '',
+          inventoryObjectAvailable(r, type) && canManageLocation() ? actionButton('移动', type === 'sample' ? 'sample-row-move' : 'inventory-row-move', r.id) : '',
+          inventoryObjectAvailable(r, type) ? actionButton('出库', type === 'sample' ? 'sample-row-checkout' : 'inventory-row-checkout', r.id, 'danger') : '',
+        ].filter(Boolean).join(' ');
+      },
+    },
+  ];
+}
+
+function sampleInventoryColumns() {
+  const columns = sampleColumns(false);
+  columns.push({
+    key: 'id',
+    label: '操作',
+    render: (_, r) => [
+      actionButton('详情', 'inventory-sample-detail', r.id),
+      canManageInventory() ? actionButton('编辑', 'sample-row-edit', r.id) : '',
+      inventoryObjectAvailable(r, 'sample') && canManageLocation() ? actionButton('移动', 'sample-row-move', r.id) : '',
+      inventoryObjectAvailable(r, 'sample') ? actionButton('出库', 'sample-row-checkout', r.id, 'danger') : '',
+    ].filter(Boolean).join(' '),
+  });
+  return columns;
+}
+
+function tableColumnLabel(column) {
+  return String(column?.label || '');
+}
+
+function tableColumnKey(column) {
+  return String(column?.key || '');
+}
+
+function tableColumnClass(column) {
+  const label = tableColumnLabel(column);
+  const key = tableColumnKey(column);
+  const classes = [];
+  if (label === '操作') classes.push('table-col-action');
+  if (label !== '操作' && (label === 'ID' || key === 'id' || key === 'aliquot_no')) classes.push('table-col-id');
+  if (['code', 'object_id', 'catalog_no'].includes(key) || /编号|样本号|货号/.test(label)) classes.push('table-col-code');
+  if (/位置/.test(label) || key.includes('location')) classes.push('table-col-location');
+  if (/时间|日期|有效期|更新时间/.test(label) || /(_at|_date|date)$/.test(key)) classes.push('table-col-date');
+  return classes.join(' ');
+}
+
+function displayTableColumns(columns) {
+  const actionIndex = columns.findIndex(column => tableColumnLabel(column) === '操作');
+  if (actionIndex <= 1) return columns;
+  return [columns[0], columns[actionIndex], ...columns.slice(1, actionIndex), ...columns.slice(actionIndex + 1)];
+}
+
+function renderTableHead(columns) {
+  return `<thead><tr>${columns.map(column => `<th class="${tableColumnClass(column)}">${esc(tableColumnLabel(column))}</th>`).join('')}</tr></thead>`;
+}
+
+function renderTableCell(column, row) {
+  const value = column.render ? column.render(row[column.key], row) : esc(row[column.key]);
+  return `<td class="${tableColumnClass(column)}">${value}</td>`;
+}
+
+function renderTable(id, columns, rows) {
+  const table = $(id);
+  if (!table) return;
+  const visibleColumns = displayTableColumns(columns);
+  table.classList.toggle('has-actions', visibleColumns.some(column => tableColumnLabel(column) === '操作'));
+  if (!rows || rows.length === 0) {
+    table.innerHTML = `${renderTableHead(visibleColumns)}<tbody><tr><td colspan="${visibleColumns.length}">暂无数据</td></tr></tbody>`;
+    return;
+  }
+  table.innerHTML = `${renderTableHead(visibleColumns)}<tbody>${rows.map(row => `<tr>${visibleColumns.map(column => renderTableCell(column, row)).join('')}</tr>`).join('')}</tbody>`;
+}
+
+function renderPagedTable(id, columns, rows, options = {}) {
+  const pageSize = Number(options.pageSize || 20);
+  const pageKey = options.pageKey || id;
+  const total = rows?.length || 0;
+  const maxPage = Math.max(1, Math.ceil(total / pageSize));
+  const currentPage = Math.min(Math.max(Number(state.tablePages[pageKey] || 1), 1), maxPage);
+  state.tablePages[pageKey] = currentPage;
+  const start = (currentPage - 1) * pageSize;
+  renderTable(id, columns, (rows || []).slice(start, start + pageSize));
+  const pager = $(`${id}Pager`);
+  if (!pager) return;
+  const from = total ? start + 1 : 0;
+  const to = Math.min(start + pageSize, total);
+  pager.innerHTML = `
+    <span>${from}-${to} / ${total}</span>
+    <button class="ghost mini-btn" type="button" data-action="table-page" data-table="${esc(pageKey)}" data-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>上一页</button>
+    <button class="ghost mini-btn" type="button" data-action="table-page" data-table="${esc(pageKey)}" data-page="${currentPage + 1}" ${currentPage >= maxPage ? 'disabled' : ''}>下一页</button>
+  `;
+}
+
+function fillSelect(select, values, placeholder = '') {
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = placeholder ? `<option value="">${placeholder}</option>` : '';
+  values.forEach(value => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+  if ([...select.options].some(o => o.value === current)) select.value = current;
+}
+
+function fillSelectObjects(select, items, { placeholder = '', valueKey = 'id', label = item => item.name } = {}) {
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = placeholder ? `<option value="">${placeholder}</option>` : '';
+  items.forEach(item => {
+    const option = document.createElement('option');
+    option.value = item[valueKey];
+    option.textContent = label(item);
+    select.appendChild(option);
+  });
+  if ([...select.options].some(o => o.value === current)) select.value = current;
+}
+
+function fillDatalist(list, values) {
+  if (!list) return;
+  list.innerHTML = '';
+  values.forEach(value => {
+    const option = document.createElement('option');
+    option.value = value;
+    list.appendChild(option);
+  });
+}
+
+function nodeLabel(node) { return node.path || node.name; }
+
+function nodeById(id) { return state.storageNodes.find(node => Number(node.id) === Number(id)); }
+
+const DEFAULT_ROOT_STORAGE_NODE_ID = '1';
+const VIRTUAL_UNPLACED_NODE_ID = '-1';
+
+function isVirtualUnplacedId(id) { return String(id || '') === VIRTUAL_UNPLACED_NODE_ID; }
+
+function isVirtualUnplacedNode(nodeOrId) {
+  if (typeof nodeOrId === 'object') return Boolean(nodeOrId?.is_virtual_unplaced) || isVirtualUnplacedId(nodeOrId?.id);
+  return isVirtualUnplacedId(nodeOrId);
+}
+
+function selectableStorageNodes() {
+  return state.storageNodes;
+}
+
+function parentStorageNodes() { return state.storageNodes; }
+
+function rootStorageNode() {
+  return nodeById(DEFAULT_ROOT_STORAGE_NODE_ID)
+    || state.storageNodes.find(node => node.parent_id === null || node.parent_id === undefined)
+    || state.storageNodes[0];
+}
+
+function currentOptions(key) { return state.options?.[key] || []; }
+
+function isBox(node) { return node?.node_type === 'box'; }
+
+function isUnframedNode(node) {
+  return Boolean(node && !isBox(node) && Number(node.rows || 1) === 1 && Number(node.cols || 1) === 1);
+}
+
+function numberOrDefault(value, fallback) { return value === null || value === undefined || value === '' ? fallback : Number(value); }
+
+function storageContext(node) {
+  if (!node?.path) return '';
+  const parts = String(node.path).split(' / ');
+  if (parts[parts.length - 1] === node.name) parts.pop();
+  return parts.join(' / ');
+}
+
+function storageParentName(node) {
+  if (!node?.path) return '';
+  const parts = String(node.path).split(' / ');
+  if (parts.length <= 1) return '';
+  return parts[parts.length - 2] || '';
+}
+
+function metaLine(text) {
+  return text ? `<span class="tree-meta">${esc(text)}</span>` : '';
+}
+
+function coordList(rows, cols) {
+  const items = [];
+  for (let r = 0; r < rows; r += 1) {
+    const row = String.fromCharCode('A'.charCodeAt(0) + r);
+    for (let c = 1; c <= cols; c += 1) items.push(`${row}${c}`);
+  }
+  return items;
+}
+
+function positionOptionsForNode(node) {
+  if (isBox(node)) return coordList(Number(node.rows || 9), Number(node.cols || 9));
+  if (!node || isUnframedNode(node)) return [];
+  return coordList(Number(node.rows || 1), Number(node.cols || 1));
+}
+
+function fillPositionSelect(select, nodeId, current = '') {
+  if (!select) return;
+  if (!select.options) {
+    select.value = current || '';
+    return;
+  }
+  const node = nodeById(nodeId);
+  const coords = positionOptionsForNode(node);
+  select.innerHTML = '<option value="">无</option>';
+  coords.forEach(coord => {
+    const option = document.createElement('option');
+    option.value = coord;
+    option.textContent = coord;
+    select.appendChild(option);
+  });
+  if (current && [...select.options].some(o => o.value === current)) select.value = current;
+}
+
+async function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function loadOptions() {
+  state.options = await api('/api/options');
+  fillSelect($('reagentCategory'), currentOptions('categories'), '全部类型');
+  fillSelect($('reagentStatus'), currentOptions('reagent_statuses'), '全部状态');
+  fillSelect($('reagentValidationStatus'), currentOptions('validation_statuses'), '全部验证');
+  fillSelect($('inventoryCategory'), currentOptions('categories'), '全部类型');
+  fillSelect($('inventoryStatus'), currentOptions('reagent_statuses'), '全部状态');
+  fillSelect($('inventoryValidationStatus'), currentOptions('validation_statuses'), '全部验证');
+  fillSelect($('inventorySampleType'), currentOptions('sample_names'), '全部样本类型');
+  fillSelect($('inventorySampleStatus'), currentOptions('sample_statuses'), '全部状态');
+  document.querySelectorAll('select[name="category"]').forEach(sel => fillSelect(sel, currentOptions('categories'), sel.closest('#orderForm') ? '请选择' : ''));
+  document.querySelectorAll('select[name="status"]').forEach(sel => {
+    if (!sel.closest('#sampleForm') && !sel.closest('#sampleEditForm')) fillSelect(sel, currentOptions('reagent_statuses'));
+  });
+  document.querySelectorAll('#sampleForm select[name="status"], #sampleEditForm select[name="status"]').forEach(sel => fillSelect(sel, currentOptions('sample_statuses')));
+  document.querySelectorAll('#sampleForm select[name="category"], #sampleEditForm select[name="category"]').forEach(sel => fillSelect(sel, currentOptions('sample_names')));
+  document.querySelectorAll('select[name="validation_status"], select[name="result"]').forEach(sel => fillSelect(sel, currentOptions('validation_statuses')));
+  document.querySelectorAll('select[name="method"]').forEach(sel => fillSelect(sel, currentOptions('validation_methods')));
+  document.querySelectorAll('input[name="brand"]').forEach(input => input.setAttribute('list', 'brandOptions'));
+  fillDatalist($('brandOptions'), currentOptions('brands'));
+  fillDatalist($('samplePrefixOptions'), currentOptions('sample_prefixes'));
+  fillDatalist($('amountUnitOptions'), currentOptions('amount_units'));
+  document.querySelectorAll('select[name="role"]').forEach(sel => fillSelectObjects(
+    sel,
+    Object.entries(state.options.roles || {}).map(([value, label]) => ({ value, label })),
+    { valueKey: 'value', label: item => item.label }
+  ));
+  document.querySelectorAll('select[name="node_type"]').forEach(sel => fillSelectObjects(
+    sel,
+    Object.entries(state.options.node_type_labels || {}).map(([value, label]) => ({ value, label })),
+    { valueKey: 'value', label: item => item.label }
+  ));
+  fillSelect($('boxSpec'), Object.keys(state.options.box_specs || {}), '自定义');
+  setDefaultDropdownValues();
+  syncUserPermissionFields?.();
+  fillSettingsForms();
+}
+
+function setDefaultDropdownValues() {
+  const reagentForm = $('reagentForm');
+  if (reagentForm && !reagentForm.elements.id.value) {
+    reagentForm.elements.category.value = currentOptions('categories').includes('其他') ? '其他' : currentOptions('categories')[0] || '';
+    reagentForm.elements.status.value = currentOptions('reagent_statuses').includes('可用') ? '可用' : currentOptions('reagent_statuses')[0] || '';
+    reagentForm.elements.validation_status.value = currentOptions('validation_statuses').includes('未验证') ? '未验证' : currentOptions('validation_statuses')[0] || '';
+    if (reagentForm.elements.separate_items) reagentForm.elements.separate_items.checked = true;
+  }
+  const sampleForm = $('sampleForm');
+  if (sampleForm) {
+    sampleForm.elements.tube_count.value ||= 1;
+    if (sampleForm.elements.separate_items) sampleForm.elements.separate_items.checked = true;
+    sampleForm.elements.category.value ||= currentOptions('sample_names')[0] || '';
+    sampleForm.elements.status.value ||= currentOptions('sample_statuses').includes('可用') ? '可用' : currentOptions('sample_statuses')[0] || '';
+  }
+  const sampleEditForm = $('sampleEditForm');
+  if (sampleEditForm && !sampleEditForm.elements.id.value) {
+    sampleEditForm.elements.category.value ||= currentOptions('sample_names')[0] || '';
+    sampleEditForm.elements.status.value ||= currentOptions('sample_statuses').includes('可用') ? '可用' : currentOptions('sample_statuses')[0] || '';
+  }
+  const aliquotForm = $('aliquotForm');
+  if (aliquotForm) aliquotForm.elements.tube_count.value ||= 1;
+  document.querySelectorAll('form').forEach(syncMultiRegisterFields);
+}
+
+async function loadStorageTree() {
+  const data = await api('/api/storage/tree');
+  state.storageNodes = data.items;
+  const normalNodes = parentStorageNodes();
+  const rootNode = rootStorageNode();
+  if (!state.selectedNodeId && rootNode) state.selectedNodeId = rootNode.id;
+  document.querySelectorAll('select[name="storage_node_id"]').forEach(sel => {
+    fillSelectObjects(sel, selectableStorageNodes(), { placeholder: '未归位', label: nodeLabel });
+  });
+  document.querySelectorAll('#inventoryStorageNode').forEach(sel => {
+    fillSelectObjects(sel, selectableStorageNodes(), { placeholder: '全部空间', label: nodeLabel });
+  });
+  document.querySelectorAll('#nodeForm select[name="parent_id"]').forEach(sel => {
+    fillSelectObjects(sel, normalNodes, { placeholder: '未归位', label: nodeLabel });
+  });
+  return data;
+}
+
+function reagentColumns(showActions = false) {
+  const columns = [
+    { key: 'code', label: '编号' },
+    { key: 'name', label: '名称' },
+    { key: 'category', label: '类型', render: badge },
+    { key: 'brand', label: '品牌' },
+    { key: 'catalog_no', label: '货号' },
+    { key: 'quantity', label: '数量', render: v => esc(v) },
+    { key: 'status', label: '状态', render: badge },
+    { key: 'validation_status', label: '验证', render: badge },
+    { key: 'storage_location', label: '位置', render: v => esc(locationText(v)) },
+    { key: 'expiration_date', label: '有效期' },
+  ];
+  if (showActions) columns.push({
+    key: 'id',
+    label: '操作',
+    render: (_, r) => [
+      actionButton('编辑', 'edit-reagent', r.id),
+      actionButton('详情', 'detail-reagent', r.id),
+      inventoryObjectAvailable(r, 'reagent') && canManageLocation() ? actionButton('移动', 'inventory-row-move', r.id) : '',
+      inventoryObjectAvailable(r, 'reagent') ? actionButton('出库', 'inventory-row-checkout', r.id, 'danger') : '',
+    ].filter(Boolean).join(' '),
+  });
+  return columns;
+}
+
+function sampleColumns(showActions = false) {
+  const columns = [
+    { key: 'code', label: '系统编号', render: v => esc(v || '-') },
+    { key: 'name', label: '样本号', render: v => esc(v || '-') },
+    { key: 'category', label: '样本类型', render: badge },
+    { key: 'amount', label: '规格', render: (_, r) => amountText(r) },
+    { key: 'status', label: '状态', render: badge },
+    { key: 'storage_location', label: '位置', render: v => esc(locationText(v)) },
+    { key: 'entry_date', label: '入库日期' },
+  ];
+  if (showActions) columns.push({
+    key: 'id',
+    label: '操作',
+    render: (_, r) => [
+      actionButton('详情', 'detail-sample', r.id),
+      canManageInventory() ? actionButton('编辑', 'sample-row-edit', r.id) : '',
+      inventoryObjectAvailable(r, 'sample') && canManageLocation() ? actionButton('移动', 'sample-row-move', r.id) : '',
+      inventoryObjectAvailable(r, 'sample') ? actionButton('出库', 'sample-row-checkout', r.id, 'danger') : '',
+    ].filter(Boolean).join(' '),
+  });
+  return columns;
+}
+
+function miniRows(rows, keys) {
+  if (!rows || !rows.length) return '<p class="muted">暂无记录</p>';
+  return `<div class="mini-rows">${rows.map(row => `<div>${keys.map(k => `<span>${esc(row[k])}</span>`).join('')}</div>`).join('')}</div>`;
+}

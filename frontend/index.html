@@ -1,0 +1,295 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>实验室库存管理系统</title>
+    <link rel="stylesheet" href="./styles.css?v=20260613-prefix-datalist" />
+  </head>
+  <body>
+    <div id="shell" class="shell">
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <div class="brand"><div class="brand-mark">LAB</div><div class="brand-text"><p class="eyebrow">实验室库存系统</p><h1>库存管理</h1></div></div>
+          <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="收起侧边栏" title="收起侧边栏">‹</button>
+        </div>
+        <nav class="nav">
+          <button class="nav-item active" data-view="dashboard" data-short="台">工作台</button>
+          <button class="nav-item" data-view="registration" data-short="登">登记入库</button>
+          <button class="nav-item" data-view="history" data-short="流">流转记录</button>
+          <button class="nav-item" data-view="inventory" data-short="库">库存空间</button>
+          <button class="nav-item" data-view="password" data-short="密">账号密码</button>
+          <button class="nav-item admin-only" data-view="admin" data-short="管">管理员</button>
+        </nav>
+      </aside>
+      <main class="main">
+        <header class="topbar">
+          <div><p class="eyebrow">实验室库存管理平台</p><h2 id="viewTitle">工作台</h2></div>
+          <div id="userPanel" class="user-panel hidden"><span id="userName"></span><button id="refreshBtn" class="ghost">刷新</button><button id="logoutBtn" class="danger">退出</button></div>
+        </header>
+        <section id="loginView" class="login-card">
+          <div class="login-copy"><p class="eyebrow">库存 · 登记 · 验证 · 特殊关注</p><h2>实验室库存管理平台</h2><p>统一管理订购登记、到货入库、验证记录、库存位置、特殊关注和权限配置，让实验室库存流转更清晰可追溯。</p></div>
+          <form id="loginForm" class="form-card">
+            <label>用户名<input name="username" autocomplete="username" placeholder="请输入用户名" /></label>
+            <label>密码<input name="password" type="password" autocomplete="current-password" placeholder="请输入密码" /></label>
+            <button class="primary" type="submit">登录</button>
+            <!-- DEV_LOGIN_SHORTCUT: remove this button before release. -->
+            <button id="testAdminLoginBtn" class="ghost dev-login-shortcut" type="button">测试管理员登录</button>
+            <!-- /DEV_LOGIN_SHORTCUT -->
+            <p id="loginError" class="error"></p>
+          </form>
+        </section>
+        <section id="appView" class="hidden">
+          <section id="dashboard" class="view active-view">
+            <div id="metricGrid" class="metric-grid"></div>
+            <div class="panel-grid three"><article class="panel"><div class="panel-head"><h3>试剂分类</h3><span>Top 8</span></div><div id="categoryBars" class="pill-cloud"></div></article><article class="panel"><div class="panel-head"><h3>库存状态</h3><span>试剂和标本</span></div><div id="statusPills" class="pill-cloud"></div></article><article class="panel"><div class="panel-head"><h3>空间结构</h3><span>实时</span></div><div id="spacePills" class="pill-cloud"></div></article></div>
+            <article class="panel workbench-tabs-panel">
+              <div class="panel-head"><h3>特殊关注</h3><span>过期、到货和验证待办</span></div>
+              <div class="tabbar" role="tablist" aria-label="特殊关注">
+                <button class="tab-btn active" type="button" data-tab-scope="expiration" data-tab="overdue">已过期 <span id="overdueCount"></span></button>
+                <button class="tab-btn" type="button" data-tab-scope="expiration" data-tab="upcoming">即将到期 <span id="upcomingCount"></span></button>
+                <button class="tab-btn" type="button" data-tab-scope="expiration" data-tab="pending">未到货 <span id="pendingOrderCount"></span></button>
+                <button class="tab-btn" type="button" data-tab-scope="expiration" data-tab="unvalidated">未验证抗体 <span id="unvalidatedAntibodyCount"></span></button>
+              </div>
+            </article>
+            <div class="workbench-tab active-tab" data-tab-scope="expiration" data-tab-panel="overdue">
+              <article class="panel critical"><div class="panel-head"><h3>已过期</h3><span>已超过有效期</span></div><div class="table-wrap"><table id="overdueTable"></table></div><div id="overdueTablePager" class="table-pager"></div></article>
+            </div>
+            <div class="workbench-tab" data-tab-scope="expiration" data-tab-panel="upcoming">
+              <article class="panel warm"><div class="panel-head"><h3>即将到期</h3><span id="upcomingWindowText"></span></div><div class="toolbar compact"><label>关注窗口<input id="expirationDays" type="range" min="1" max="180" value="30" /></label><span id="expirationDaysText" class="stat-chip">30 天</span><button id="refreshExpiration" class="primary">刷新</button></div><div class="table-wrap"><table id="upcomingTable"></table></div><div id="upcomingTablePager" class="table-pager"></div></article>
+            </div>
+            <div class="workbench-tab" data-tab-scope="expiration" data-tab-panel="pending">
+              <article class="panel warm"><div class="panel-head"><h3>未到货</h3><span>订购后尚未入库</span></div><div class="table-wrap"><table id="pendingOrderTable"></table></div><div id="pendingOrderTablePager" class="table-pager"></div></article>
+            </div>
+            <div class="workbench-tab" data-tab-scope="expiration" data-tab-panel="unvalidated">
+              <article class="panel critical"><div class="panel-head"><h3>未验证抗体</h3><span>未验证或待复核</span></div><div class="table-wrap"><table id="unvalidatedAntibodyTable"></table></div><div id="unvalidatedAntibodyTablePager" class="table-pager"></div></article>
+            </div>
+          </section>
+          <section id="registration" class="view">
+            <article class="panel workbench-tabs-panel">
+              <div class="panel-head"><h3>登记入库</h3><span>订购、到货、验证、标本入库和分装</span></div>
+              <div class="tabbar" role="tablist" aria-label="登记入库">
+                <button class="tab-btn active" type="button" data-tab-scope="registration" data-tab="orders">订购</button>
+                <button class="tab-btn" type="button" data-tab-scope="registration" data-tab="arrivals">到货</button>
+                <button class="tab-btn" type="button" data-tab-scope="registration" data-tab="validations">验证</button>
+                <button class="tab-btn inventory-manage-only" type="button" data-tab-scope="registration" data-tab="samples">标本入库</button>
+                <button class="tab-btn inventory-manage-only" type="button" data-tab-scope="registration" data-tab="aliquots">分装</button>
+              </div>
+            </article>
+            <div class="workbench-tab active-tab" data-tab-scope="registration" data-tab-panel="orders">
+              <article class="panel form-panel"><div class="panel-head"><h3>订购登记</h3><span>记录需要采购的试剂信息</span></div><form id="orderForm" class="grid-form"><details class="form-assist full"><summary>从已有试剂带入</summary><div class="grid-form compact-assist"><label>查找已有试剂<input id="repeatOrderSearch" placeholder="名称 / 编号 / 货号 / 品牌" /></label><label>已有试剂<select id="repeatOrderSelect"></select></label><div id="repeatOrderSummary" class="summary-box slim full"></div><button class="ghost" type="button" data-action="repeat-order-fill">带入订购登记</button></div></details><label>名称<input name="name" required /></label><label>类型<select name="category"></select></label><label>品牌/厂家<input name="brand" /></label><label>货号<input name="catalog_no" /></label><label>规格量<input name="amount" type="number" step="0.001" /></label><label>规格单位<input name="amount_unit" list="amountUnitOptions" /></label><label>数量<input name="quantity" type="number" step="1" min="1" value="1" /></label><label>价格<input name="price" type="number" step="0.01" /></label><label class="full">用途/备注<textarea name="reason" rows="3"></textarea></label><button class="primary" type="submit">保存订购登记</button></form></article>
+            </div>
+            <div class="workbench-tab" data-tab-scope="registration" data-tab-panel="arrivals">
+              <article class="panel form-panel"><div class="panel-head"><h3>到货入库</h3><span>到货后生成库存记录</span></div><div id="arrivalOrderSummary" class="summary-box"></div><form id="arrivalForm" class="grid-form"><label>关联订购登记<select name="order_id"></select></label><label>到货日期<input name="entry_date" type="date" /></label><label>到货数量<input name="arrival_quantity" type="number" min="1" step="1" value="1" /></label><label data-multi-register-row data-count-field="arrival_quantity" class="check-row full"><span>多件分别登记<small>勾选时每件生成独立库存编号，并从选定起始孔位开始连续放置；不勾选时保存为 1 条库存记录，数量记录为到货数量，只占 1 个位置/孔位。</small></span><input name="separate_items" type="checkbox" checked /></label><label>有效期<input name="expiration_date" type="date" /></label><label>初始存放空间<select name="storage_node_id"></select></label><label>盒内孔位<select name="position_in_box"><option value="">无</option></select></label><div id="arrivalStoragePicker" class="location-picker full"></div><label class="full">备注<textarea name="note" rows="3"></textarea></label><button class="primary" type="submit">登记到货入库</button></form></article>
+            </div>
+            <div class="workbench-tab" data-tab-scope="registration" data-tab-panel="validations">
+              <article class="panel form-panel"><div class="panel-head"><h3>验证登记</h3><span>按货号记录验证结果</span></div><form id="validationForm" class="grid-form"><label class="full">查找试剂<input id="validationReagentSearch" placeholder="输入名称 / 编号 / 货号 / 品牌 / 位置" /></label><label class="full">参考试剂<select name="item_id"></select></label><label>货号<input name="catalog_no" required /></label><label>验证日期<input name="validation_date" type="date" /></label><label>方法<select name="method"></select></label><label id="validationOtherLabel" class="hidden">其他方法<input name="method_other" /></label><label>结果<select name="result"></select></label><label>验证图片<input name="image_file" type="file" accept="image/png,image/jpeg,image/webp,image/tiff" /></label><label class="full">说明<textarea name="description" rows="3"></textarea></label><button class="primary" type="submit">保存验证记录</button></form></article>
+            </div>
+            <div class="workbench-tab" data-tab-scope="registration" data-tab-panel="samples">
+              <article class="panel form-panel"><div class="panel-head"><h3>标本入库</h3><span>只记录样本号、类型、规格、状态和位置，不填写姓名、身份证号、电话等个人身份信息</span></div><form id="sampleForm" class="grid-form"><label>样本号前缀<input name="code_prefix" list="samplePrefixOptions" placeholder="可不填，或选择/输入前缀" /></label><label>样本号后缀<input name="sample_number" /></label><label>冻存管数<input name="tube_count" type="number" min="1" step="1" value="1" /></label><label data-multi-register-row data-count-field="tube_count" class="check-row full"><span>多件分别登记<small>勾选时每支冻存管生成独立系统编号，并从选定起始孔位开始连续放置；不勾选时保存为 1 条标本记录，冻存管数记录为数量，只占 1 个位置/孔位。</small></span><input name="separate_items" type="checkbox" checked /></label><label>样本类型<select name="category"></select></label><label>规格量<input name="amount" type="number" step="0.001" /></label><label>规格单位<input name="amount_unit" list="amountUnitOptions" /></label><label>状态<select name="status"></select></label><label>入库日期<input name="entry_date" type="date" /></label><label>存放空间<select name="storage_node_id"></select></label><label>起始孔位<select name="position_in_box"><option value="">无</option></select></label><div id="sampleStoragePicker" class="location-picker full"></div><label class="full">备注<textarea name="note" rows="2"></textarea></label><button class="primary" type="submit">保存标本</button></form></article>
+            </div>
+            <div class="workbench-tab" data-tab-scope="registration" data-tab-panel="aliquots">
+              <article class="panel form-panel"><div class="panel-head"><h3>分装</h3><span>支持临床标本和试剂/耗材</span></div><form id="aliquotForm" class="grid-form"><label>分装类型<select name="item_type"><option value="sample">临床标本</option><option value="reagent">试剂/耗材</option></select></label><label class="full">查找库存<input id="aliquotSourceSearch" placeholder="样本号 / 系统编号 / 试剂名称 / 位置" /></label><label class="full">来源库存<select name="source_item_id"></select></label><div id="aliquotSourceSummary" class="source-location-box full"></div><label>新增管数<input name="tube_count" type="number" min="1" step="1" value="1" /></label><label data-aliquot-reagent-field>每管数量<input name="quantity" type="number" min="0" step="0.001" /></label><label>存放空间<select name="storage_node_id"></select></label><label>起始孔位<select name="position_in_box"><option value="">无</option></select></label><div id="aliquotStoragePicker" class="location-picker full"></div><label class="full">备注<textarea name="note" rows="2"></textarea></label><button class="primary" type="submit">保存分装</button></form></article>
+            </div>
+          </section>
+          <section id="history" class="view">
+            <article class="panel workbench-tabs-panel">
+              <div class="panel-head"><h3>流转记录</h3><span>订购、到货、验证、出库和移动</span></div>
+              <div class="tabbar" role="tablist" aria-label="流转记录">
+                <button class="tab-btn active" type="button" data-tab-scope="history" data-tab="orders">订购</button>
+                <button class="tab-btn" type="button" data-tab-scope="history" data-tab="arrivals">到货</button>
+                <button class="tab-btn" type="button" data-tab-scope="history" data-tab="validations">验证</button>
+                <button class="tab-btn" type="button" data-tab-scope="history" data-tab="checkouts">出库</button>
+                <button class="tab-btn" type="button" data-tab-scope="history" data-tab="movements">移动</button>
+              </div>
+            </article>
+            <div class="workbench-tab active-tab" data-tab-scope="history" data-tab-panel="orders">
+              <article class="panel"><div class="panel-head"><h3>最近订购登记</h3><span id="historyOrderCount"></span></div><div class="table-wrap compact"><table id="historyOrderTable"></table></div><div id="historyOrderTablePager" class="table-pager"></div></article>
+            </div>
+            <div class="workbench-tab" data-tab-scope="history" data-tab-panel="arrivals">
+              <article class="panel"><div class="panel-head"><h3>最近到货记录</h3><span id="historyArrivalCount"></span></div><div class="table-wrap compact"><table id="historyArrivalTable"></table></div><div id="historyArrivalTablePager" class="table-pager"></div></article>
+            </div>
+            <div class="workbench-tab" data-tab-scope="history" data-tab-panel="validations">
+              <article class="panel"><div class="panel-head"><h3>验证记录</h3><span id="historyValidationCount"></span></div><div class="table-wrap compact"><table id="historyValidationTable"></table></div><div id="historyValidationTablePager" class="table-pager"></div></article>
+            </div>
+            <div class="workbench-tab" data-tab-scope="history" data-tab-panel="checkouts">
+              <article class="panel"><div class="panel-head"><h3>出库记录</h3><span id="historyCheckoutCount"></span></div><div class="table-wrap compact"><table id="historyCheckoutTable"></table></div><div id="historyCheckoutTablePager" class="table-pager"></div></article>
+            </div>
+            <div class="workbench-tab" data-tab-scope="history" data-tab-panel="movements">
+              <article class="panel"><div class="panel-head"><h3>移动记录</h3><span id="historyMovementCount"></span></div><div class="table-wrap compact"><table id="historyMovementTable"></table></div><div id="historyMovementTablePager" class="table-pager"></div></article>
+            </div>
+          </section>
+          <section id="admin" class="view">
+            <article class="panel admin-tabs-panel">
+              <div class="panel-head"><h3>管理员</h3><span>系统维护</span></div>
+              <div class="tabbar" role="tablist" aria-label="管理员">
+                <button class="tab-btn active" type="button" data-tab-scope="admin" data-tab="users">用户</button>
+                <button class="tab-btn" type="button" data-tab-scope="admin" data-tab="settings">选项</button>
+                <button class="tab-btn" type="button" data-tab-scope="admin" data-tab="maintenance">系统维护</button>
+              </div>
+            </article>
+            <div class="workbench-tab active-tab" data-tab-scope="admin" data-tab-panel="users">
+              <div class="panel-grid split">
+                <article class="panel form-panel">
+                  <div class="panel-head"><h3 id="userFormTitle">新增用户</h3><button id="newUserBtn" class="ghost" type="button">切换新增</button></div>
+                  <form id="userForm" class="stack-form user-form">
+                    <input type="hidden" name="id" />
+                    <label>用户名<input name="username" /></label>
+                    <label>显示姓名<input name="display_name" /></label>
+                    <label>角色<select name="role"></select></label>
+                    <label class="check-row"><span>启用账号</span><input name="is_active" type="checkbox" checked /></label>
+                    <section id="userPermissionFields" class="permission-fields" aria-labelledby="userPermissionTitle">
+                      <div class="permission-head">
+                        <h4 id="userPermissionTitle">普通用户权限</h4>
+                        <span>管理员自动拥有全部权限</span>
+                      </div>
+                      <label class="permission-row">
+                        <span><b>库存维护</b><small>新建、编辑、分装、批量导入/编辑/移动/出库库存。</small></span>
+                        <input name="perm_inventory_manage" type="checkbox" />
+                      </label>
+                      <label class="permission-row">
+                        <span><b>位置维护</b><small>新建、编辑、删除空间，以及调整空间层级和格位。</small></span>
+                        <input name="perm_location_manage" type="checkbox" />
+                      </label>
+                      <label class="permission-row">
+                        <span><b>明细搜索</b><small>查看库存明细、筛选查询和打开试剂/标本详情。</small></span>
+                        <input name="perm_inventory_search" type="checkbox" />
+                      </label>
+                      <p id="adminPermissionHint" class="form-note hidden">当前角色为管理员，权限无需单独勾选。</p>
+                    </section>
+                    <button class="primary" type="submit">保存用户</button>
+                  </form>
+                </article>
+                <article class="panel"><div class="panel-head"><h3>用户列表</h3><span id="userCount"></span></div><div class="table-wrap"><table id="userTable"></table></div><div id="userTablePager" class="table-pager"></div></article>
+              </div>
+            </div>
+            <div class="workbench-tab" data-tab-scope="admin" data-tab-panel="settings">
+              <article class="panel"><div class="panel-head"><h3>选项配置</h3><span id="settingsGroupCount"></span></div><form id="settingsForm" class="settings-form"><div id="settingsCards" class="settings-grid"></div><div class="settings-actions"><button class="primary" type="submit">保存选项配置</button></div></form></article>
+            </div>
+            <div class="workbench-tab" data-tab-scope="admin" data-tab-panel="maintenance">
+              <article class="panel">
+                <div class="panel-head"><h3>数据健康</h3><span id="dataHealthCheckedAt">尚未检查</span></div>
+                <div id="dataHealthSummary" class="metric-grid"></div>
+                <div id="dataHealthItems" class="health-list"></div>
+              </article>
+              <div class="panel-grid three backup-admin-grid">
+                <article class="panel form-panel">
+                  <div class="panel-head"><h3>手动备份</h3><span>一致快照</span></div>
+                  <p class="danger-note">备份会使用 SQLite 一致快照并做完整性检查。恢复仍需按部署文档人工停服务替换数据库。</p>
+                  <form id="backupForm" class="stack-form"><label>备份原因<input name="reason" value="manual" /></label><button class="primary" type="submit">立即备份</button></form>
+                  <div id="backupCreateResult" class="detail-panel"></div>
+                </article>
+                <article class="panel form-panel">
+                  <div class="panel-head"><h3>定期备份</h3><span id="backupScheduleStatus">未启用</span></div>
+                  <form id="backupSettingsForm" class="stack-form">
+                    <label class="check-row"><span>启用定期备份</span><input name="enabled" type="checkbox" /></label>
+                    <label>备份间隔（小时）<input name="interval_hours" type="number" min="1" max="720" value="24" /></label>
+                    <label>自动清理多久前的备份（天）<input name="retention_days" type="number" min="1" max="3650" value="30" /></label>
+                    <label class="check-row"><span>定期备份后自动清理过期备份</span><input name="cleanup_on_schedule" type="checkbox" checked /></label>
+                    <button class="primary" type="submit">保存备份策略</button>
+                  </form>
+                  <div id="backupSettingsMeta" class="backup-policy-meta"></div>
+                </article>
+                <article class="panel form-panel">
+                  <div class="panel-head"><h3>过期清理</h3><span>按时间删除</span></div>
+                  <p class="danger-note">清理只会删除备份目录中符合命名规则的数据库备份文件。删除后请从其他备份介质恢复。</p>
+                  <form id="backupCleanupForm" class="stack-form"><label>删除多少天前的备份<input name="days" type="number" min="1" max="3650" value="30" /></label><button class="danger" type="submit">清理过期备份</button></form>
+                  <div id="backupCleanupResult" class="detail-panel"></div>
+                </article>
+                <article class="panel">
+                  <div class="panel-head"><h3>最近备份</h3><span id="backupCount"></span></div>
+                  <div class="table-wrap compact"><table id="backupTable"></table></div>
+                  <div id="backupTablePager" class="table-pager"></div>
+                </article>
+              </div>
+              <div class="panel-grid split"><article class="panel form-panel"><div class="panel-head"><h3>应急 Excel 导出</h3><span id="excelTableCount">底层表</span></div><form id="excelExportForm" class="stack-form"><label>数据表<select name="table"></select></label><label>导出类型<select name="mode"><option value="data">导出数据</option><option value="template">下载模板</option></select></label><label>行数上限<input name="limit" type="number" min="0" value="0" /></label><button class="primary" type="submit">下载 Excel</button></form></article><article class="panel form-panel high-risk-panel"><div class="panel-head"><h3>应急数据库表导入</h3><span class="badge danger">高危操作</span></div><p class="danger-note">直接写入底层数据库表，仅用于突发修复、迁移或备份恢复。日常试剂/标本维护请使用“库存空间”的“批量处理”。</p><form id="excelImportForm" class="stack-form"><label>导入范围<select name="scope"><option value="single">导入到单个表</option><option value="workbook">按工作表名批量导入</option></select></label><label>目标表<select name="table"></select></label><label>写入模式<select name="mode"><option value="append">新增行</option><option value="upsert">按主键更新/插入</option></select></label><label>Excel 文件<input name="excel_file" type="file" accept=".xlsx,.xls" /></label><button class="danger" type="submit">确认高危导入</button></form><div id="excelImportResult" class="detail-panel"></div></article></div>
+            </div>
+          </section>
+          <section id="password" class="view">
+            <article class="panel form-panel narrow"><div class="panel-head"><h3>更改密码</h3><span>个人账号</span></div><form id="passwordForm" class="stack-form"><label>旧密码<input name="old_password" type="password" required /></label><label>新密码<input name="new_password" type="password" required /></label><label>再次输入新密码<input name="new_password2" type="password" required /></label><button class="primary" type="submit">更新密码</button></form></article>
+          </section>
+          <section id="inventory" class="view">
+            <article class="panel inventory-tabs-panel">
+              <div class="panel-head"><h3>库存空间</h3><span>空间、明细、编辑、出库、移动和维护</span></div>
+              <div class="tabbar" role="tablist" aria-label="库存空间">
+                <button class="tab-btn active" type="button" data-tab="overview">空间总览</button>
+                <button class="tab-btn inventory-search-only" type="button" data-tab="details">明细查询</button>
+                <button class="tab-btn inventory-manage-only" type="button" data-tab="manual">手动新建/编辑</button>
+                <button class="tab-btn inventory-manage-only" type="button" data-tab="bulk">批量处理</button>
+                <button class="tab-btn" type="button" data-tab="checkout">出库登记</button>
+                <button class="tab-btn location-manage-only" type="button" data-tab="move">库存移动</button>
+              </div>
+            </article>
+            <div class="inventory-tab active-tab" data-tab-panel="overview">
+              <article class="panel"><div class="panel-head"><h3>空间概览</h3><span id="inventoryOverviewCount"></span></div><div id="inventoryWorkbench" class="inventory-workbench"></div></article>
+            </div>
+            <div class="inventory-tab" data-tab-panel="details">
+              <article class="panel"><div class="panel-head"><h3>筛选和明细表</h3><span id="inventoryFilterCount"></span></div><div class="toolbar wide inventory-filterbar"><select id="inventoryItemType"><option value="all">全部库存</option><option value="reagent">试剂/耗材</option><option value="sample">临床标本</option><option value="space">空间</option></select><input id="inventoryKeyword" placeholder="关键词：名称 / 编号 / 货号 / 样本号 / 盒号 / 孔位 / 空间路径" /><select id="inventoryCategory" data-filter-kind="reagent"><option value="">全部类型</option></select><select id="inventoryStatus" data-filter-kind="reagent"><option value="">全部状态</option></select><select id="inventoryValidationStatus" data-filter-kind="reagent"><option value="">全部验证</option></select><select id="inventorySampleType" class="hidden" data-filter-kind="sample"><option value="">全部样本类型</option></select><select id="inventorySampleStatus" class="hidden" data-filter-kind="sample"><option value="">全部状态</option></select><select id="inventoryStorageNode"></select><label class="inline-check"><input id="inventoryIncludeDescendants" type="checkbox" checked />包含下级</label><button id="inventorySearchBtn" class="primary">查询</button></div><div class="table-wrap inventory-table-wrap"><table id="inventoryTable"></table></div><div id="inventoryTablePager" class="table-pager"></div></article>
+            </div>
+            <div class="inventory-tab" data-tab-panel="manual">
+              <article class="panel manual-mode-panel"><div class="panel-head"><h3>手动新建/编辑</h3><span>按对象类型切换表单</span></div><div class="manual-switch" role="tablist" aria-label="手动编辑类型"><button class="seg-btn active" type="button" data-manual-mode="reagent">试剂/耗材</button><button class="seg-btn" type="button" data-manual-mode="sample">临床标本</button></div><p class="muted">如需编辑已有记录，请从“空间总览”点选库存，或在“明细查询”里点击“编辑”。这里不重复显示试剂列表。</p></article>
+              <div class="manual-edit-layout">
+                <article class="panel form-panel manual-pane active-manual-pane" data-manual-panel="reagent"><div class="panel-head"><h3 id="reagentFormTitle">新建试剂/耗材</h3><button id="newReagentBtn" class="ghost" type="button">新建试剂/耗材</button></div><form id="reagentForm" class="grid-form"><input type="hidden" name="id" /><label>编号<input name="code" /></label><label>名称<input name="name" required /></label><label>类型<select name="category"></select></label><label>品牌/厂家<input name="brand" /></label><label>货号<input name="catalog_no" /></label><label>规格量<input name="amount" type="number" step="0.001" /></label><label>规格单位<input name="amount_unit" list="amountUnitOptions" /></label><label>数量<input name="quantity" type="number" step="0.01" value="1" /></label><label data-multi-register-row data-count-field="quantity" class="check-row full"><span>多件分别登记<small>勾选时每件生成独立库存编号，并从选定起始孔位开始连续放置；不勾选时保存为 1 条库存记录，数量记录为多件，只占 1 个位置/孔位。</small></span><input name="separate_items" type="checkbox" checked /></label><label>状态<select name="status"></select></label><label>验证状态<select name="validation_status"></select></label><label>存放空间<select name="storage_node_id"></select></label><label>盒内孔位<select name="position_in_box"><option value="">无</option></select></label><div id="reagentStoragePicker" class="location-picker full"></div><label>有效期<input name="expiration_date" type="date" /></label><p id="reagentStorageState" class="form-note full"></p><label class="full">备注<textarea name="note" rows="2"></textarea></label><button class="primary" type="submit">保存试剂/耗材</button></form><div id="reagentDetail" class="detail-panel"></div></article>
+                <article class="panel form-panel manual-pane" data-manual-panel="sample"><div class="panel-head"><h3 id="sampleEditTitle">编辑临床标本</h3><span>从空间总览或明细查询选择</span></div><form id="sampleEditForm" class="grid-form"><input type="hidden" name="id" /><label>系统编号<input name="code" /></label><label>样本号<input name="name" /></label><label>样本类型<select name="category"></select></label><label>规格量<input name="amount" type="number" step="0.001" /></label><label>规格单位<input name="amount_unit" list="amountUnitOptions" /></label><label>状态<select name="status"></select></label><label>入库日期<input name="entry_date" type="date" /></label><label>存放空间<select name="storage_node_id"></select></label><label>盒内孔位<select name="position_in_box"><option value="">无</option></select></label><div id="sampleEditStoragePicker" class="location-picker full"></div><label class="full">备注<textarea name="note" rows="2"></textarea></label><button class="primary" type="submit">保存标本修改</button></form></article>
+              </div>
+            </div>
+            <div class="inventory-tab" data-tab-panel="bulk">
+              <div class="panel-grid split">
+                <article class="panel form-panel">
+                  <div class="panel-head"><h3>批量处理</h3><span>导入、编辑、移动和出库</span></div>
+                  <p class="form-note">批量编辑/出库建议先下载现有库存，在 Excel 中只保留要处理的行；编辑时直接修改对应字段，位置只填写“存放空间ID”和“孔位”。空间名称和层级请用“空间对应表”查询。</p>
+                  <form id="bulkForm" class="stack-form">
+                    <div class="grid-form">
+                      <label>操作类型<select name="operation" id="bulkOperation"><option value="import">批量导入</option><option value="edit">批量编辑</option><option value="move">批量移动</option><option value="checkout">批量出库</option></select></label>
+                      <label id="bulkItemTypeLabel">对象类型<select name="item_type" id="bulkItemType"><option value="reagent">试剂/耗材</option><option value="sample">临床标本</option></select></label>
+                      <label id="bulkModeLabel">写入方式<select name="mode"><option value="upsert">新增并更新已有编号</option><option value="insert">只新增</option><option value="update">只更新已有编号</option></select></label>
+                      <label>Excel 文件<input name="excel_file" type="file" accept=".xlsx,.xls" /></label>
+                    </div>
+                    <div class="toolbar compact bulk-toolbar">
+                      <button class="ghost" type="button" data-action="bulk-download-template">下载模板</button>
+                      <button class="ghost" type="button" data-action="bulk-download-current">下载现有库存</button>
+                      <button class="ghost" type="button" data-action="bulk-download-storage-map">下载空间对应表</button>
+                      <button class="ghost" type="button" data-action="bulk-load-excel">读取 Excel</button>
+                    </div>
+                    <label>粘贴表格<textarea name="pasted_rows" rows="8" placeholder="可直接从 Excel 复制表头和多行数据粘贴到这里"></textarea></label>
+                    <div class="toolbar compact bulk-toolbar">
+                      <button class="primary" type="submit">预检查</button>
+                      <button id="bulkCommitBtn" class="danger" type="button" disabled>确认提交</button>
+                    </div>
+                  </form>
+                </article>
+                <article class="panel">
+                  <div class="panel-head"><h3>预检查结果</h3><span id="bulkResultCount">尚未检查</span></div>
+                  <div id="bulkSummary" class="detail-panel"></div>
+                  <div class="table-wrap compact"><table id="bulkPreviewTable"></table></div>
+                  <div id="bulkPreviewTablePager" class="table-pager"></div>
+                </article>
+              </div>
+            </div>
+            <div class="inventory-tab" data-tab-panel="checkout">
+              <article class="panel form-panel"><div class="panel-head"><h3>出库登记</h3><span>试剂 / 耗材 / 临床标本</span></div><form id="checkoutForm" class="stack-form"><div id="checkoutSummary" class="move-summary"></div><div class="grid-form move-fields"><label>出库类型<select name="item_type" id="checkoutType"><option value="reagent">试剂/耗材</option><option value="sample">临床标本</option></select></label><label>关键词<input name="keyword" placeholder="名称 / 编号 / 样本号 / 位置" /></label><label class="full">出库对象<select name="item_id" id="checkoutItemSelect"></select></label></div><label>原因<input name="reason" value="出库" /></label><label>备注<textarea name="note" rows="3"></textarea></label><button class="primary" type="submit">确认出库</button></form></article>
+            </div>
+            <div class="inventory-tab" data-tab-panel="move">
+              <article class="panel form-panel move-layout"><div class="panel-head"><h3>移动库存</h3><span>试剂 / 临床标本</span></div><form id="movementForm" class="stack-form"><div id="moveSummary" class="move-summary"></div><div class="grid-form move-fields"><label>库存类型<select name="item_type"><option value="reagent">试剂</option><option value="sample">临床标本</option></select></label><label>关键词<input name="keyword" placeholder="名称 / 编号 / 样本号 / 位置" /></label><label class="full">库存对象<select name="item_id"></select></label><input type="hidden" name="to_storage_node_id" /><input type="hidden" name="position_in_box" /><div id="movementStoragePicker" class="location-picker full"></div></div><label>原因<input name="reason" value="库存移动" /></label><label>备注<textarea name="note" rows="2"></textarea></label><button class="primary" type="submit">确认移动</button></form></article>
+            </div>
+            <div class="inventory-tab" data-tab-panel="spaces">
+              <article class="panel form-panel"><div class="panel-head"><h3 id="spaceFormTitle">空间编辑</h3><span>从空间总览选择新建入口</span></div><form id="nodeForm" class="grid-form"><input type="hidden" name="id" /><input type="hidden" name="grid_row" /><input type="hidden" name="grid_col" /><label>父级<select name="parent_id"></select></label><label>名称<input name="name" required /></label><label>类型<select name="node_type"></select></label><label>位置码<input name="location_code" /></label><label id="boxSpecLabel">盒子规格<select id="boxSpec"><option value="">自定义</option></select></label><label><span id="rowsLabel">框架行数</span><input name="rows" type="number" min="1" max="50" value="1" /></label><label><span id="colsLabel">框架列数</span><input name="cols" type="number" min="1" max="50" value="1" /></label><div class="full frame-setting-row"><button id="unframedSpaceBtn" class="ghost" type="button">设为无框架</button><span id="spaceFrameHelp">行和列都为 1 时，该空间按无框架处理；不显示行列框架。库存明细请到“明细查询”查看，盒内孔位仍在空间总览中显示。</span></div><label class="full">备注<textarea name="note" rows="2"></textarea></label><button class="primary" type="submit">保存空间</button><button id="deleteSpaceBtn" class="danger hidden" type="button">删除空间</button></form></article>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+    <datalist id="brandOptions"></datalist>
+    <datalist id="samplePrefixOptions"></datalist>
+    <datalist id="amountUnitOptions"></datalist>
+    <div id="toast" class="toast hidden"></div>
+    <div id="locationPickerDialog" class="detail-dialog-backdrop location-dialog-backdrop hidden"></div>
+    <script src="./core.js?v=20260613-prefix-datalist"></script>
+    <script src="./ui-common.js?v=20260613-prefix-datalist"></script>
+    <script src="./inventory-ui.js?v=20260613-prefix-datalist"></script>
+    <script src="./registration-page.js?v=20260613-prefix-datalist"></script>
+    <script src="./inventory-page.js?v=20260613-prefix-datalist"></script>
+    <script src="./admin-page.js?v=20260613-prefix-datalist"></script>
+    <script src="./app.js?v=20260613-prefix-datalist"></script>
+  </body>
+</html>

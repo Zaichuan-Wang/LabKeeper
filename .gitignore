@@ -1,0 +1,29 @@
+﻿# ── 环境与密钥 ──
+.env
+__pycache__/
+*.pyc
+*.pyo
+*.sqlite3
+*.log
+.vscode/
+.idea/
+.DS_Store
+
+# ── 数据库 ──
+db/*.sqlite3
+
+# ── 运行时产物 ──
+data/pids/
+data/backend.*.log
+data/frontend.*.log
+data/validation_images/
+
+# ── 工具内部配置（不发布） ──
+.claude/
+.qwen/
+archive/
+
+# ── 杂项 ──
+node_modules/
+*.orig
+*.zip

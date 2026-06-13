@@ -1,0 +1,78 @@
+﻿{
+  "categories": [
+    "抗体",
+    "试剂盒",
+    "耗材",
+    "细胞因子",
+    "培养基",
+    "缓冲液",
+    "染料",
+    "酶",
+    "其他"
+  ],
+  "brands": [
+    "Sigma-Aldrich",
+    "Thermo Fisher",
+    "Abcam",
+    "CST",
+    "BioLegend",
+    "BD Biosciences",
+    "Invitrogen",
+    "R&D Systems",
+    "Gibco",
+    "Corning",
+    "碧云天",
+    "索莱宝",
+    "翌圣生物"
+  ],
+  "reagent_statuses": [
+    "已订购",
+    "可用",
+    "停用",
+    "已耗尽"
+  ],
+  "validation_statuses": [
+    "未验证",
+    "通过",
+    "不通过",
+    "待复核"
+  ],
+  "validation_methods": [
+    "WB",
+    "荧光",
+    "流式",
+    "IHC",
+    "ELISA",
+    "qPCR",
+    "其他"
+  ],
+  "sample_prefixes": [
+    "SMP"
+  ],
+  "sample_names": [
+    "血清",
+    "血浆",
+    "全血",
+    "细胞悬液",
+    "组织",
+    "灌洗液",
+    "尿液",
+    "其他",
+    "细胞",
+    "匀浆"
+  ],
+  "amount_units": [
+    "mL",
+    "uL",
+    "L",
+    "g",
+    "mg",
+    "ug",
+    "ng"
+  ],
+  "sample_statuses": [
+    "可用",
+    "停用",
+    "已耗尽"
+  ]
+}

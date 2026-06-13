@@ -1,0 +1,10 @@
+{
+  "enabled": false,
+  "interval_hours": 24,
+  "retention_days": 30,
+  "cleanup_on_schedule": true,
+  "last_run_at": "",
+  "last_success_at": "",
+  "last_error": "",
+  "next_run_at": ""
+}
