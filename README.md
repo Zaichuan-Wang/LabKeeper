@@ -253,7 +253,94 @@ http://192.168.1.20:5173
 ./start.sh --stop
 ```
 
-更正式的长期部署建议使用 nginx 反向代理，并配合服务器防火墙、HTTPS 和定期备份。
+#### 4. 使用 nginx 反向代理（推荐）
+
+直接使用 `./start.sh --daemon` 启动的前端是 Python 内置的 HTTP 服务器，适合个人测试，不适合多人长期使用。正式部署建议使用 nginx 反向代理，好处是：
+
+- **静态文件性能更好**：nginx 处理前端页面、图片等静态资源比 Python HTTP 服务器快得多
+- **统一入口**：前端页面和后端 API 通过同一个端口访问，不需要开放多个端口
+- **支持 HTTPS**：后续可以方便地加上 SSL 证书，实现加密访问
+- **更稳定**：nginx 是专业的 Web 服务器，适合长期运行
+
+##### 安装 nginx
+
+```bash
+sudo apt install nginx
+```
+
+##### 创建站点配置
+
+```bash
+sudo tee /etc/nginx/sites-available/labkeeper << 'EOF'
+server {
+    listen 20829;
+    server_name _;
+
+    root /home/wangzc/LabKeeper/frontend;
+    index index.html;
+
+    client_max_body_size 20m;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+EOF
+```
+
+> 把 `/home/wangzc/LabKeeper` 换成你的实际项目路径。端口 `20829` 可以改成你想要的端口。
+
+##### 启用站点并启动 nginx
+
+```bash
+sudo ln -s /etc/nginx/sites-available/labkeeper /etc/nginx/sites-enabled/
+sudo nginx -t          # 检查配置是否正确
+sudo nginx             # 启动 nginx
+```
+
+##### 用 start.sh 一键管理
+
+`start.sh` 支持 `--nginx` 参数，会自动管理 nginx 的启停：
+
+```bash
+# 启动后端 + nginx（不启动 Python 前端服务器）
+./start.sh --daemon --nginx
+
+# 停止所有服务（含 nginx）
+./start.sh --stop
+```
+
+也可以指定 nginx 端口：
+
+```bash
+./start.sh --daemon --nginx --nginx-port 8080
+```
+
+##### 更新 CORS 配置
+
+使用 nginx 后，需要更新 `.env` 中的 CORS 设置，把 nginx 的地址加进去：
+
+```env
+LABKEEPER_CORS_ORIGINS=http://127.0.0.1:20829,http://服务器IP:20829
+```
+
+然后重启后端服务使配置生效。
+
+##### 访问
+
+同一内网成员通过 nginx 端口访问：
+
+```text
+http://服务器IP:20829
+```
+
+nginx 会自动把前端页面和 `/api/` 请求分别处理，对外只有一个端口。
 
 ## 数据和备份
 
