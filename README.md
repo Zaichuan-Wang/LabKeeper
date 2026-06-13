@@ -17,6 +17,14 @@ LabKeeper is a lightweight inventory management system for biological laboratori
 
 系统不需要安装数据库服务器，数据保存在一个 SQLite 文件中，便于备份和迁移。
 
+## 在线试用
+
+无需安装，直接在浏览器访问：
+
+```text
+http://sw2-dynamic.xiyoucloud.pro:20829/
+```
+
 ## 推荐使用流程
 
 建议按这个顺序使用：
@@ -126,8 +134,6 @@ http://127.0.0.1:5173
 .\start.ps1 -Stop
 ```
 
-如果是旧版本脚本启动的服务，或没有记录到 PID，请关闭脚本打开的“启动后端”和“启动前端”两个 PowerShell 窗口；必要时手动结束占用 `8000` 和 `5173` 端口的 `python` 进程。
-
 ### Linux 服务器测试版
 
 如果想先在服务器上给几个人试用，也可以先不创建 `.env`，直接运行测试版：
@@ -224,56 +230,25 @@ LABKEEPER_API_SECRET=请换成随机长字符串
 LABKEEPER_INITIAL_ADMIN_PASSWORD=请换成正式管理员密码
 ```
 
-#### 3. 启动服务
+#### 3. 安装 nginx
 
-```bash
-./start.sh --daemon
-```
-
-默认端口：
-
-- 前端页面：`5173`
-- 后端接口：`8000`
-
-同一内网成员访问：
-
-```text
-http://服务器IP:5173
-```
-
-例如服务器 IP 是 `192.168.1.20`，访问：
-
-```text
-http://192.168.1.20:5173
-```
-
-停止后台服务：
-
-```bash
-./start.sh --stop
-```
-
-#### 4. 使用 nginx 反向代理（推荐）
-
-直接使用 `./start.sh --daemon` 启动的前端是 Python 内置的 HTTP 服务器，适合个人测试，不适合多人长期使用。正式部署建议使用 nginx 反向代理，好处是：
+正式部署使用 nginx 反向代理，好处是：
 
 - **静态文件性能更好**：nginx 处理前端页面、图片等静态资源比 Python HTTP 服务器快得多
 - **统一入口**：前端页面和后端 API 通过同一个端口访问，不需要开放多个端口
 - **支持 HTTPS**：后续可以方便地加上 SSL 证书，实现加密访问
 - **更稳定**：nginx 是专业的 Web 服务器，适合长期运行
 
-##### 安装 nginx
-
 ```bash
 sudo apt install nginx
 ```
 
-##### 创建站点配置
+#### 4. 创建 nginx 站点配置
 
 ```bash
 sudo tee /etc/nginx/sites-available/labkeeper << 'EOF'
 server {
-    listen 20829;
+    listen 5173;
     server_name _;
 
     root /home/wangzc/LabKeeper/frontend;
@@ -294,53 +269,59 @@ server {
 EOF
 ```
 
-> 把 `/home/wangzc/LabKeeper` 换成你的实际项目路径。端口 `20829` 可以改成你想要的端口。
+> 把 `/home/wangzc/LabKeeper` 换成你的实际项目路径。
 
-##### 启用站点并启动 nginx
+#### 5. 启用站点并更新 CORS
 
 ```bash
 sudo ln -s /etc/nginx/sites-available/labkeeper /etc/nginx/sites-enabled/
 sudo nginx -t          # 检查配置是否正确
-sudo nginx             # 启动 nginx
 ```
 
-##### 用 start.sh 一键管理
+更新 `.env` 中的 CORS 设置，把 nginx 的地址加进去：
 
-`start.sh` 支持 `--nginx` 参数，会自动管理 nginx 的启停：
+```env
+LABKEEPER_CORS_ORIGINS=http://127.0.0.1:5173,http://服务器IP:5173
+```
+
+#### 6. 启动服务
 
 ```bash
-# 启动后端 + nginx（不启动 Python 前端服务器）
 ./start.sh --daemon --nginx
+```
 
-# 停止所有服务（含 nginx）
+`--nginx` 参数会启动后端并自动管理 nginx，不启动 Python 内置前端服务器。
+
+停止所有服务（含 nginx）：
+
+```bash
 ./start.sh --stop
 ```
 
-也可以指定 nginx 端口：
-
-```bash
-./start.sh --daemon --nginx --nginx-port 8080
-```
-
-##### 更新 CORS 配置
-
-使用 nginx 后，需要更新 `.env` 中的 CORS 设置，把 nginx 的地址加进去：
-
-```env
-LABKEEPER_CORS_ORIGINS=http://127.0.0.1:20829,http://服务器IP:20829
-```
-
-然后重启后端服务使配置生效。
-
-##### 访问
+#### 7. 访问
 
 同一内网成员通过 nginx 端口访问：
 
 ```text
-http://服务器IP:20829
+http://服务器IP:5173
 ```
 
 nginx 会自动把前端页面和 `/api/` 请求分别处理，对外只有一个端口。
+
+#### 自定义端口
+
+如果需要更换前端端口（例如改为 `8080`），需要同时修改以下三处：
+
+1. **nginx 配置文件** `/etc/nginx/sites-available/labkeeper` 中的 `listen 5173` 改为 `listen 8080`
+2. **`.env`** 中的 `LABKEEPER_CORS_ORIGINS` 里的端口改为 `8080`
+3. 启动时加上 `--nginx-port` 参数：`./start.sh --daemon --nginx --nginx-port 8080`
+
+修改后重启服务使配置生效：
+
+```bash
+./start.sh --stop
+./start.sh --daemon --nginx --nginx-port 8080
+```
 
 ## 数据和备份
 
@@ -364,13 +345,17 @@ dev_tools/demo.sqlite3
 
 ### 页面打不开
 
-确认启动窗口没有报错，并访问：
+Windows 本机访问：
 
 ```text
 http://127.0.0.1:5173
 ```
 
-如果是服务器部署，请把 `127.0.0.1` 换成服务器 IP。
+Linux 服务器访问（使用 nginx）：
+
+```text
+http://服务器IP:5173
+```
 
 ### 忘记管理员密码
 
