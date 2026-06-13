@@ -517,19 +517,23 @@ http://127.0.0.1:5173/
 
 ### 14.1 本机启动
 
-在 PowerShell 中进入项目目录：
+进入项目目录后运行启动脚本：
 
-```powershell
-cd D:\lab\lab_position
+```bash
+# Linux / macOS
+./start.sh
+
+# Windows PowerShell
 .\start.ps1
 ```
 
-脚本会启动：
+可以自定义端口：
 
-- 后端服务：`http://127.0.0.1:8000`
-- 前端页面：`http://127.0.0.1:5173`
+```bash
+./start.sh --api-port 9000 --frontend-port 8080
+```
 
-打开浏览器访问前端页面即可使用。
+启动后访问 `http://127.0.0.1:5173`（或你指定的前端端口）。
 
 ### 14.2 默认管理员
 
