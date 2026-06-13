@@ -177,14 +177,20 @@ function syncUserPermissionFields() {
 const SETTINGS_GROUPS = [
   { key: 'categories', title: '试剂类型', scope: '试剂登记', note: '用于订购、入库和筛选。' },
   { key: 'brands', title: '品牌/厂家', scope: '试剂登记', note: '用于订购和新建试剂时快速选择常用品牌，也可以临时手动输入。' },
-  { key: 'reagent_statuses', title: '试剂状态', scope: '库存状态', fixed: true, note: '系统固定状态，用于判断是否占位、是否到货和是否耗尽，不能删除或改名。' },
-  { key: 'validation_statuses', title: '验证状态', scope: '验证登记', fixed: true, note: '系统固定状态，用于验证结果和待办统计，不能删除或改名。' },
+  { key: 'reagent_statuses', title: '试剂状态', scope: '库存状态', fixed: true, note: '内置状态用于判断是否占位、是否到货和是否耗尽，不能删除或改名；可按实验室习惯添加新状态。' },
+  { key: 'validation_statuses', title: '验证状态', scope: '验证登记', fixed: true, note: '内置状态用于验证结果和待办统计，不能删除或改名；可添加补充状态。' },
   { key: 'validation_methods', title: '验证方法', scope: '验证登记', note: '用于记录实验验证方式。' },
   { key: 'sample_prefixes', title: '样本号前缀', scope: '临床标本', note: '用于登记时快速拼接样本号，例如 SMP；表单里可选择建议项，也可以临时手动输入。' },
   { key: 'sample_names', title: '样本类型', scope: '临床标本', note: '用于临床标本入库和筛选，例如血清、组织、灌洗液。' },
   { key: 'amount_units', title: '规格单位', scope: '试剂/标本', note: '用于规格量的常用单位，也可以在表单里临时手动输入。' },
-  { key: 'sample_statuses', title: '标本状态', scope: '临床标本', fixed: true, note: '系统固定状态，用于判断标本是否占位和是否耗尽，不能删除或改名。' },
+  { key: 'sample_statuses', title: '标本状态', scope: '临床标本', fixed: true, note: '内置状态用于判断标本是否占位和是否耗尽，不能删除或改名；可按实验室习惯添加新状态。' },
 ];
+
+const FIXED_OPTION_VALUES = {
+  reagent_statuses: ['已订购', '可用', '停用', '已耗尽'],
+  validation_statuses: ['未验证', '通过', '不通过', '待复核'],
+  sample_statuses: ['可用', '停用', '已耗尽'],
+};
 
 function fillSettingsForms() {
   if (!state.options) return;
@@ -197,17 +203,21 @@ function fillSettingsForms() {
     return `
       <article class="settings-card${fixed ? ' fixed-settings-card' : ''}" data-settings-key="${esc(group.key)}" data-settings-fixed="${fixed ? '1' : '0'}">
         <div class="settings-card-head">
-          <div><h4>${esc(group.title)}</h4><span>${esc(group.scope)} · <b data-settings-count>${values.length}</b> 项${fixed ? ' · 系统固定' : ''}</span></div>
+          <div><h4>${esc(group.title)}</h4><span>${esc(group.scope)} · <b data-settings-count>${values.length}</b> 项${fixed ? ' · 含内置项' : ''}</span></div>
         </div>
         <p class="settings-note">${esc(group.note)}</p>
-        <div class="settings-options">${values.map(value => renderSettingsChip(value, { fixed })).join('') || '<span class="settings-empty">暂无选项</span>'}</div>
+        <div class="settings-options">${values.map(value => renderSettingsChip(value, { fixed: isFixedOption(group.key, value) })).join('') || '<span class="settings-empty">暂无选项</span>'}</div>
         <div class="settings-add-row">
-          <input data-settings-input="${esc(group.key)}" placeholder="${fixed ? '系统固定，不可新增' : '输入新选项'}" autocomplete="off" ${fixed ? 'disabled' : ''} />
-          <button class="ghost" type="button" data-action="settings-add" data-id="${esc(group.key)}" ${fixed ? 'disabled' : ''}>添加</button>
+          <input data-settings-input="${esc(group.key)}" placeholder="输入新选项" autocomplete="off" />
+          <button class="ghost" type="button" data-action="settings-add" data-id="${esc(group.key)}">添加</button>
         </div>
       </article>
     `;
   }).join('');
+}
+
+function isFixedOption(key, value) {
+  return (FIXED_OPTION_VALUES[key] || []).includes(value);
 }
 
 function renderSettingsChip(value, { fixed = false } = {}) {
@@ -230,7 +240,6 @@ function refreshSettingsCard(card) {
 
 function addSettingsOption(key) {
   const card = document.querySelector(`.settings-card[data-settings-key="${CSS.escape(key)}"]`);
-  if (card?.dataset.settingsFixed === '1') return;
   const input = document.querySelector(`[data-settings-input="${CSS.escape(key)}"]`);
   const options = card?.querySelector('.settings-options');
   const value = input?.value.trim();
@@ -252,7 +261,7 @@ function removeSettingsOption(button) {
   const card = button.closest('.settings-card');
   const chip = button.closest('.option-chip');
   if (!card || !chip) return;
-  if (card.dataset.settingsFixed === '1') return;
+  if (isFixedOption(card.dataset.settingsKey, chip.dataset.value)) return;
   chip.remove();
   refreshSettingsCard(card);
 }
@@ -260,7 +269,6 @@ function removeSettingsOption(button) {
 function settingsPayload() {
   return Object.fromEntries(SETTINGS_GROUPS.map(group => {
     const card = document.querySelector(`.settings-card[data-settings-key="${CSS.escape(group.key)}"]`);
-    if (group.fixed) return [group.key, state.options[group.key] || []];
     return [group.key, card ? settingsValuesFor(card) : state.options[group.key] || []];
   }));
 }

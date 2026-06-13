@@ -5,7 +5,7 @@
 #   ./start.sh --api-port 9000        # 自定义后端端口
 #   ./start.sh --frontend-port 8080   # 自定义前端端口
 #   ./start.sh --nginx                # 使用 nginx 反向代理（跳过内置前端服务）
-#   ./start.sh --nginx-port 20829     # 指定 nginx 监听端口（默认 20829）
+#   ./start.sh --nginx-port 5173      # nginx 对外端口提示（需与 nginx 配置一致）
 #   ./start.sh --daemon               # 后台运行，输出到 data/*.log
 #   ./start.sh --stop                 # 停止所有后台进程（含 nginx）
 set -euo pipefail
@@ -24,7 +24,7 @@ fi
 API_PORT=8000
 FRONTEND_PORT=5173
 NGINX=false
-NGINX_PORT=20829
+NGINX_PORT=5173
 DAEMON=false
 STOP=false
 
@@ -42,7 +42,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --api-port PORT        后端 API 端口（默认 8000）"
       echo "  --frontend-port PORT   前端页面端口（默认 5173，--nginx 时忽略）"
       echo "  --nginx                使用 nginx 反向代理，不启动内置前端服务"
-      echo "  --nginx-port PORT      nginx 监听端口（默认 20829）"
+      echo "  --nginx-port PORT      nginx 对外端口提示（默认 5173，需与 nginx 配置一致）"
       echo "  --daemon               后台运行，日志写入 data/*.log"
       echo "  --stop                 停止所有后台进程（含 nginx）"
       exit 0 ;;

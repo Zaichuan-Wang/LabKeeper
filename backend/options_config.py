@@ -60,10 +60,12 @@ def normalize_dropdown_options(data: Any, fallback: dict[str, list[str]] | None 
     base = fallback or DEFAULT_DROPDOWN_SETTINGS
     clean: dict[str, list[str]] = {}
     for key, defaults in DEFAULT_DROPDOWN_SETTINGS.items():
-        if key in FIXED_DROPDOWN_SETTINGS:
-            clean[key] = clean_options(FIXED_DROPDOWN_SETTINGS[key])
-            continue
         values = source.get(key, base.get(key, defaults))
+        if key in FIXED_DROPDOWN_SETTINGS:
+            required = clean_options(FIXED_DROPDOWN_SETTINGS[key])
+            custom = [value for value in clean_options(values) if value not in required]
+            clean[key] = required + custom
+            continue
         clean[key] = clean_options(values) or clean_options(defaults)
     return clean
 
