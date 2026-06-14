@@ -10,7 +10,6 @@ from services.storage_inventory import (
     batch_node_paths_and_descendants,
     clean_node_dimension,
     clean_positive_int,
-    coord_list,
     default_grid_for_node,
     descendant_node_ids,
     get_node,
@@ -32,6 +31,12 @@ from services.storage_inventory import (
 
 VIRTUAL_UNPLACED_NODE_ID = -1
 DEFAULT_ROOT_STORAGE_NODE_ID = 1
+
+
+def normalize_node_item(item: dict[str, Any]) -> dict[str, Any]:
+    item["node_type"] = "space"
+    item["type_label"] = NODE_TYPE_LABELS["space"]
+    return item
 
 
 def is_virtual_unplaced_id(node_id: Any) -> bool:
@@ -97,9 +102,8 @@ def storage_tree() -> dict[str, Any]:
         path_cache, desc_cache = batch_node_paths_and_descendants(conn)
         items = []
         for row in rows:
-            item = row_dict(row) or {}
+            item = normalize_node_item(row_dict(row) or {})
             nid = int(item["id"])
-            item["type_label"] = NODE_TYPE_LABELS.get(item["node_type"], item["node_type"])
             item["path"] = path_cache.get(nid, "")
             item["direct_items"] = counts.get(nid, 0)
             item["total_items"] = sum(counts.get(i, 0) for i in desc_cache.get(nid, [nid]))
@@ -112,9 +116,8 @@ def storage_child_items(conn: Any, rows: list[Any], direct_counts: dict[int, int
     for row in rows:
         if int(row["parent_id"] or 0) != int(node_id):
             continue
-        item = row_dict(row) or {}
+        item = normalize_node_item(row_dict(row) or {})
         nid = int(item["id"])
-        item["type_label"] = NODE_TYPE_LABELS.get(item["node_type"], item["node_type"])
         item["path"] = path_cache.get(nid, "") if path_cache else node_full_path(conn, nid)
         item["children"] = len(conn.execute("SELECT id FROM storage_nodes WHERE parent_id = ?", (item["id"],)).fetchall())
         ids = desc_cache.get(nid, [nid]) if desc_cache else descendant_node_ids(conn, nid, True)
@@ -167,9 +170,8 @@ def storage_visual(
             "is_virtual_unplaced": True,
         }]
         for row in rows:
-            item = row_dict(row) or {}
+            item = normalize_node_item(row_dict(row) or {})
             nid = int(item["id"])
-            item["type_label"] = NODE_TYPE_LABELS.get(item["node_type"], item["node_type"])
             item["depth"] = depth_for(nid)
             item["selected"] = not selected_virtual and nid == int(node_id or 0)
             item["path"] = path_cache.get(nid, "")
@@ -221,7 +223,6 @@ def storage_visual(
                 "tree": tree,
                 "children": unplaced_spaces,
                 "frame_items": [],
-                "wells": [],
                 "direct_items": direct_items,
                 "items": direct_items[:80],
                 "selected_well": "",
@@ -245,27 +246,17 @@ def storage_visual(
         for item in tree:
             item["selected"] = int(item["id"]) == int(node_id or 0)
 
-        current_grid_rows, current_grid_cols = default_grid_for_node(current["node_type"], current["rows"], current["cols"])
-        is_framed = current["node_type"] == "box" or not (current_grid_rows == 1 and current_grid_cols == 1)
+        current_grid_rows, current_grid_cols = default_grid_for_node("space", current["rows"], current["cols"])
+        is_framed = not (current_grid_rows == 1 and current_grid_cols == 1)
         child_items = storage_child_items(conn, children, direct_counts, node_id, path_cache, desc_cache)
         positioned_children = [item for item in child_items if not item["is_unplaced"]]
         max_child_position = assign_grid_positions(positioned_children, current_grid_cols)
         frame_items = []
-        if current["node_type"] != "box" and is_framed:
+        if is_framed:
             frame_items = [item for item in direct_items if item.get("position_in_box")]
 
-        wells = []
         selected_item = None
-        if current["node_type"] == "box":
-            rows_count = int(current["rows"] or 9)
-            cols_count = int(current["cols"] or 9)
-            occupied = occupied_positions(conn, node_id)
-            for coord in coord_list(rows_count, cols_count):
-                item = occupied.get(coord)
-                if coord == selected_well:
-                    selected_item = item
-                wells.append({"coord": coord, "occupied": bool(item), "selected": coord == selected_well, "item": item})
-        elif selected_well:
+        if selected_well:
             selected_item = next((item for item in frame_items if item.get("position_in_box") == selected_well), None)
 
         if selected_item_data is None and selected_item:
@@ -288,9 +279,8 @@ def storage_visual(
             ).fetchall()
 
         grid_capacity = max(current_grid_rows * current_grid_cols, max_child_position)
-        occupied_slots = sum(1 for well in wells if well["occupied"]) if wells else len(child_items) + len(frame_items)
-        current_item = row_dict(current) or {}
-        current_item["type_label"] = NODE_TYPE_LABELS.get(current["node_type"], current["node_type"])
+        occupied_slots = len(child_items) + len(frame_items)
+        current_item = normalize_node_item(row_dict(current) or {})
         current_item["path"] = path_cache.get(node_id, "")
         return {
             "current": current_item,
@@ -298,13 +288,12 @@ def storage_visual(
             "tree": tree,
             "children": child_items,
             "frame_items": frame_items,
-            "wells": wells,
             "direct_items": direct_items,
             "items": all_items,
             "selected_well": selected_well,
             "selected_item": selected_item_data,
             "selected_validations": rows_list(selected_validations),
-            "stats": {"nodes": len(rows), "children": len(children), "direct": direct_item_count, "total": total_item_count, "occupied": occupied_slots, "capacity": len(wells) if wells else grid_capacity},
+            "stats": {"nodes": len(rows), "children": len(children), "direct": direct_item_count, "total": total_item_count, "occupied": occupied_slots, "capacity": grid_capacity},
         }
 
 

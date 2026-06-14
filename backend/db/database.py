@@ -280,7 +280,22 @@ def _ensure_root_storage_node(conn: sqlite3.Connection) -> None:
 
 
 def _repair_known_inconsistencies(conn: sqlite3.Connection) -> None:
+    _normalize_legacy_storage_nodes(conn)
     _repair_storage_references(conn)
+
+
+def _normalize_legacy_storage_nodes(conn: sqlite3.Connection) -> None:
+    cursor = conn.execute(
+        """
+        UPDATE storage_nodes
+        SET node_type = 'space',
+            rows = COALESCE(rows, 9),
+            cols = COALESCE(cols, 9)
+        WHERE node_type = 'box'
+        """
+    )
+    if cursor.rowcount:
+        logger.info("已将 %s 个历史盒子节点转换为普通带框架空间", cursor.rowcount)
 
 
 def _repair_storage_references(conn: sqlite3.Connection) -> None:

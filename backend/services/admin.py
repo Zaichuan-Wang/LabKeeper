@@ -6,7 +6,7 @@ from typing import Any
 
 from services import backup as database_backup
 from core.common import ApiError, clean_int_range, create_audit, now_text, row_dict
-from core.constants import BOX_SPECS, DEFAULT_USER_PERMISSIONS, NODE_TYPE_LABELS, PERMISSIONS, ROLES
+from core.constants import DEFAULT_USER_PERMISSIONS, NODE_TYPE_LABELS, PERMISSIONS, ROLES
 from db.database import connect
 from services.auth import hash_password, user_permissions
 from services.excel_utils import clean_excel_cell, excel_export_cell, parse_excel_data_url
@@ -21,7 +21,6 @@ def options() -> dict[str, Any]:
     return {
         **dropdowns,
         "node_type_labels": NODE_TYPE_LABELS,
-        "box_specs": BOX_SPECS,
         "roles": ROLES,
         "permissions": PERMISSIONS,
         "default_user_permissions": DEFAULT_USER_PERMISSIONS,

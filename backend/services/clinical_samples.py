@@ -14,7 +14,7 @@ from services.storage_inventory import (
     normalize_sample_item,
     occupies_storage,
     release_sample_storage,
-    sequential_box_positions,
+    sequential_frame_positions,
 )
 
 SAMPLE_CODE_PREFIX = "SP"
@@ -109,7 +109,7 @@ def insert_sample_tubes(
         values["source_code"] = values["code"]
     first_aliquot = next_aliquot_no(conn, values["source_code"])
     if node_id and occupies_storage(values["status"]) and (tube_count > 1 or auto_find_from_start):
-        positions = sequential_box_positions(conn, node_id, tube_count, start_position)
+        positions = sequential_frame_positions(conn, node_id, tube_count, start_position)
     elif node_id and occupies_storage(values["status"]):
         positions = [start_position]
     else:

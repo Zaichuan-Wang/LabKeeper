@@ -54,8 +54,6 @@ def assign_grid_positions(items: list[dict[str, Any]], cols: int) -> int:
 def default_grid_for_node(node_type: str, rows: int | None, cols: int | None) -> tuple[int, int]:
     if rows and cols:
         return int(rows), int(cols)
-    if node_type == "box":
-        return int(rows or 9), int(cols or 9)
     return int(rows or 1), int(cols or 1)
 
 
@@ -70,8 +68,7 @@ def clean_positive_int(value: Any, maximum: int = 50) -> int | None:
 
 
 def clean_node_dimension(node_type: str, field: str, value: Any) -> int | None:
-    maximum = 26 if node_type == "box" and field == "rows" else 50
-    return clean_positive_int(value, maximum)
+    return clean_positive_int(value, 50)
 
 
 def coord_list(rows: int, cols: int) -> list[str]:
@@ -87,14 +84,12 @@ def position_options_for_node(node: sqlite3.Row | dict[str, Any] | None) -> list
     if node is None:
         return []
     rows, cols = default_grid_for_node(str(node["node_type"]), node["rows"], node["cols"])
-    if str(node["node_type"]) == "box":
-        return coord_list(rows, cols)
     if rows == 1 and cols == 1:
         return []
     return [grid_label(index, cols) for index in range(1, rows * cols + 1)]
 
 
-def sequential_box_positions(
+def sequential_frame_positions(
     conn: sqlite3.Connection,
     node_id: int | None,
     count: int,
@@ -511,8 +506,6 @@ def validate_storage_parent(conn: sqlite3.Connection, node_type: str, parent_id:
     parent = get_node(conn, parent_id)
     if parent is None:
         raise ApiError(400, "父级空间不存在")
-    if parent["node_type"] == "box":
-        raise ApiError(400, "盒子已是末端空间，不能在盒子下继续新建空间")
 
 
 def assign_inventory_item_to_node(

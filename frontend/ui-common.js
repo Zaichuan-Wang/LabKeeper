@@ -262,10 +262,8 @@ function rootStorageNode() {
 
 function currentOptions(key) { return state.options?.[key] || []; }
 
-function isBox(node) { return node?.node_type === 'box'; }
-
 function isUnframedNode(node) {
-  return Boolean(node && !isBox(node) && Number(node.rows || 1) === 1 && Number(node.cols || 1) === 1);
+  return Boolean(node && Number(node.rows || 1) === 1 && Number(node.cols || 1) === 1);
 }
 
 function storageContext(node) {
@@ -296,7 +294,6 @@ function coordList(rows, cols) {
 }
 
 function positionOptionsForNode(node) {
-  if (isBox(node)) return coordList(Number(node.rows || 9), Number(node.cols || 9));
   if (!node || isUnframedNode(node)) return [];
   return coordList(Number(node.rows || 1), Number(node.cols || 1));
 }
@@ -360,7 +357,6 @@ async function loadOptions() {
     Object.entries(state.options.node_type_labels || {}).map(([value, label]) => ({ value, label })),
     { valueKey: 'value', label: item => item.label }
   ));
-  fillSelect($('boxSpec'), Object.keys(state.options.box_specs || {}), '自定义');
   setDefaultDropdownValues();
   syncUserPermissionFields?.();
   fillSettingsForms();

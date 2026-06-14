@@ -13,7 +13,7 @@ from core.constants import STATUS_AVAILABLE, STATUS_DISABLED, STATUS_ORDERED, VA
 from db.database import connect
 from services.storage_inventory import (
     assign_reagent_to_node,
-    sequential_box_positions,
+    sequential_frame_positions,
     storage_location_text,
 )
 
@@ -164,7 +164,7 @@ def create_arrival(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
         arrival_count = clean_arrival_count(data.get("arrival_quantity"), order["quantity"])
         separate_items = bool(data.get("separate_items", True))
         row_count = arrival_count if separate_items else 1
-        positions = sequential_box_positions(conn, storage_node_id, row_count, position) if storage_node_id and row_count > 1 else [position if storage_node_id else None] * row_count
+        positions = sequential_frame_positions(conn, storage_node_id, row_count, position) if storage_node_id and row_count > 1 else [position if storage_node_id else None] * row_count
         reagent_ids: list[int] = []
         arrival_rows: list[dict[str, Any]] = []
         source_code = None

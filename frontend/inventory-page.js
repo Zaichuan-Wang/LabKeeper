@@ -149,11 +149,11 @@ function syncInventoryFilterVisibility() {
   const keyword = $('inventoryKeyword');
   if (keyword) {
     keyword.placeholder = type === 'all'
-      ? '关键词：名称 / 编号 / 货号 / 样本号 / 盒号 / 孔位 / 空间路径'
+      ? '关键词：名称 / 编号 / 货号 / 样本号 / 孔位 / 空间路径'
       : (type === 'sample'
         ? '关键词：系统编号 / 样本号 / 样本类型 / 管号 / 位置 / 备注'
         : (type === 'space'
-          ? '关键词：空间名称 / 盒号 / 位置码 / 空间路径'
+          ? '关键词：空间名称 / 位置码 / 空间路径'
           : '关键词：名称 / 编号 / 货号 / 品牌 / 位置'));
   }
 }
@@ -180,7 +180,7 @@ function renderMoveSummary() {
     : '未归位';
   summary.innerHTML = `
     <div><span>待移动</span><b>${esc(inventoryObjectName(item, state.moveItemType))}</b>${metaLine(`${typeLabel} · ${locationText(item?.storage_location)}`)}</div>
-    <div><span>移动到</span><b>${esc(targetPosition)}</b>${metaLine(target ? (isBox(target) ? '盒内孔位可从下方选择' : '目标空间本身或下级空间') : '清空具体空间')}</div>
+    <div><span>移动到</span><b>${esc(targetPosition)}</b>${metaLine(target ? '目标空间本身或下级空间' : '清空具体空间')}</div>
   `;
 }
 
@@ -503,32 +503,23 @@ async function setPickerWell(kind, well) {
 function updateNodeDimensionLabels() {
   const form = $('nodeForm');
   if (!form) return;
-  const type = form.elements.node_type.value;
-  const boxLabel = $('boxSpecLabel');
-  if (boxLabel) boxLabel.classList.toggle('hidden', type !== 'box');
-  $('rowsLabel').textContent = type === 'box' ? '孔位行数' : '框架行数';
-  $('colsLabel').textContent = type === 'box' ? '孔位列数' : '框架列数';
+  $('rowsLabel').textContent = '框架行数';
+  $('colsLabel').textContent = '框架列数';
   form.elements.rows.min = '1';
   form.elements.cols.min = '1';
-  form.elements.rows.max = type === 'box' ? '26' : '50';
+  form.elements.rows.max = '50';
   form.elements.cols.max = '50';
   const unframedButton = $('unframedSpaceBtn');
-  if (unframedButton) unframedButton.classList.toggle('hidden', type === 'box');
+  if (unframedButton) unframedButton.classList.remove('hidden');
   const help = $('spaceFrameHelp');
   if (help) {
-    help.textContent = type === 'box'
-      ? '盒子按孔位管理；1x1 表示一个孔位，不按无框架处理。'
-      : '行和列都为 1 时，该空间按无框架处理；不显示行列框架。库存明细请到“明细查询”查看，盒内孔位仍在空间总览中显示。';
+    help.textContent = '行和列都为 1 时，该空间按无框架处理；行列大于 1 时显示统一空间框架和格位。';
   }
 }
 
 function setSpaceUnframed() {
   const form = $('nodeForm');
   if (!form) return;
-  if (form.elements.node_type.value === 'box') {
-    toast('盒子按孔位管理，不设置为无框架');
-    return;
-  }
   form.elements.rows.value = 1;
   form.elements.cols.value = 1;
   updateNodeDimensionLabels();
@@ -668,7 +659,7 @@ async function startNewReagentAt(nodeId = state.selectedNodeId, well = '') {
 
 function positionActionButtons({ nodeId, well = '', row = '', col = '', node }) {
   const isVirtualUnplaced = isVirtualUnplacedNode(node || nodeId);
-  const childButton = canManageLocation() && row && col && !isBox(node) && !isVirtualUnplaced
+  const childButton = canManageLocation() && row && col && !isVirtualUnplaced
     ? `<button class="ghost mini-btn" type="button" data-action="new-child-space" data-id="${nodeId}" data-row="${esc(row)}" data-col="${esc(col)}">新建下级空间</button>`
     : '';
   const createButtons = !canManageInventory()
@@ -839,13 +830,11 @@ function applySelectedStorage(target) {
 }
 
 function defaultSpaceLayout(nodeType) {
-  if (nodeType === 'box') return { rows: 9, cols: 9 };
   return { rows: 1, cols: 1 };
 }
 
 function defaultChildType(parent) {
-  if (!parent) return 'space';
-  return parent.node_type === 'space' ? 'space' : 'box';
+  return 'space';
 }
 
 function fillSpaceForm(current, mode = 'edit', options = {}) {
@@ -857,18 +846,13 @@ function fillSpaceForm(current, mode = 'edit', options = {}) {
     let parentId = mode === 'new-root'
       ? (options.parentId || rootStorageNode()?.id || DEFAULT_ROOT_STORAGE_NODE_ID)
       : (options.parentId || state.selectedNodeId || '');
-    let parent = nodeById(parentId);
-    if (parent?.node_type === 'box') {
-      parentId = parent.parent_id || '';
-      parent = nodeById(parentId);
-      toast('盒子是末端空间，已切换到它的父级下新建');
-    }
+    const parent = nodeById(parentId);
     const nodeType = defaultChildType(parent);
     const layout = defaultSpaceLayout(nodeType);
     $('spaceFormTitle').textContent = mode === 'new-root' ? '新建空间' : '新建下级空间';
     form.elements.parent_id.value = parentId;
     form.elements.node_type.value = nodeType;
-    form.elements.name.value = mode === 'new-root' ? '新空间' : (nodeType === 'box' ? '新盒子' : '新空间');
+    form.elements.name.value = '新空间';
     form.elements.rows.value = layout.rows;
     form.elements.cols.value = layout.cols;
     form.elements.grid_row.value = options.gridRow || '';

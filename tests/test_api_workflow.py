@@ -35,11 +35,11 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
         ),
         201,
     )["item"]
-    box = api_ok(
+    frame_space = api_ok(
         app_client.post(
             "/api/storage/nodes",
             headers=auth_headers,
-            json={"parent_id": rack["id"], "name": "Box-A", "node_type": "box", "rows": 9, "cols": 9},
+            json={"parent_id": rack["id"], "name": "Frame-A", "node_type": "space", "rows": 9, "cols": 9},
         ),
         201,
     )["item"]
@@ -67,7 +67,7 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
                 "amount": 0.5,
                 "amount_unit": "mL",
                 "status": "可用",
-                "storage_node_id": box["id"],
+                "storage_node_id": frame_space["id"],
                 "position_in_box": "A1",
             },
         ),
@@ -90,15 +90,15 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
                 "quantity": 1,
                 "status": "可用",
                 "validation_status": "未验证",
-                "storage_node_id": box["id"],
+                "storage_node_id": frame_space["id"],
                 "position_in_box": "B1",
             },
         ),
         201,
     )["item"]
 
-    box_visual = api_ok(app_client.get(f"/api/storage/visual?node_id={box['id']}", headers=auth_headers))
-    occupied = {well["coord"]: well["item"]["code"] for well in box_visual["wells"] if well["occupied"]}
+    frame_visual = api_ok(app_client.get(f"/api/storage/visual?node_id={frame_space['id']}", headers=auth_headers))
+    occupied = {item["position_in_box"]: item["code"] for item in frame_visual["frame_items"]}
     assert sample_items[0]["code"] in occupied["A1"]
     assert reagent["code"] in occupied["B1"]
 
@@ -112,7 +112,7 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
                 "category": "组织",
                 "tube_count": 1,
                 "status": "可用",
-                "storage_node_id": box["id"],
+                "storage_node_id": frame_space["id"],
                 "position_in_box": "A9",
             },
         ),
@@ -120,7 +120,7 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
     )["item"]
     shrink_result = api_ok(
         app_client.patch(
-            f"/api/storage/nodes/{box['id']}",
+            f"/api/storage/nodes/{frame_space['id']}",
             headers=auth_headers,
             json={"cols": 8},
         )
@@ -129,11 +129,11 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
     shrink_detail = api_ok(
         app_client.get(f"/api/inventory/items/sample/{shrink_sample['id']}", headers=auth_headers)
     )["item"]
-    assert shrink_detail["storage_node_id"] == box["id"]
+    assert shrink_detail["storage_node_id"] == frame_space["id"]
     assert shrink_detail["position_in_box"] in ("", None)
-    box_visual = api_ok(app_client.get(f"/api/storage/visual?node_id={box['id']}", headers=auth_headers))
+    frame_visual = api_ok(app_client.get(f"/api/storage/visual?node_id={frame_space['id']}", headers=auth_headers))
     direct_ids_without_position = {
-        item["id"] for item in box_visual["direct_items"]
+        item["id"] for item in frame_visual["direct_items"]
         if item["item_type"] == "sample" and not item.get("position_in_box")
     }
     assert shrink_sample["id"] in direct_ids_without_position
@@ -282,7 +282,7 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
     )
     assert denied_move.status_code == 403
 
-    occupied_delete = app_client.delete(f"/api/storage/nodes/{box['id']}", headers=auth_headers)
+    occupied_delete = app_client.delete(f"/api/storage/nodes/{frame_space['id']}", headers=auth_headers)
     assert occupied_delete.status_code == 400
 
     limited_order = api_ok(

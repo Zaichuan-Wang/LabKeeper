@@ -299,7 +299,7 @@ def _search_spaces(conn: sqlite3.Connection, keyword: str, limit: int, offset: i
             "node_type": row["node_type"],
             "status": "",
             "display_title": row["name"],
-            "display_subtitle": "盒子" if row["node_type"] == "box" else "普通空间",
+            "display_subtitle": "普通空间",
             "display_location": path,
             "storage_location": path,
             "matched_fields": _matched_fields(keyword, {

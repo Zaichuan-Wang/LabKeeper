@@ -21,7 +21,7 @@ from services.storage_inventory import (
     occupies_storage,
     reagent_should_leave_storage,
     release_reagent_storage,
-    sequential_box_positions,
+    sequential_frame_positions,
 )
 
 
@@ -77,8 +77,8 @@ def dashboard() -> dict[str, Any]:
             """
             SELECT
               COUNT(*) AS storage_nodes,
-              SUM(CASE WHEN node_type = 'box' THEN 1 ELSE 0 END) AS box_nodes,
-              SUM(CASE WHEN node_type != 'box' AND COALESCE(rows, 1) = 1 AND COALESCE(cols, 1) = 1 THEN 1 ELSE 0 END) AS unframed_spaces
+              SUM(CASE WHEN COALESCE(rows, 1) = 1 AND COALESCE(cols, 1) = 1 THEN 1 ELSE 0 END) AS unframed_spaces,
+              SUM(CASE WHEN NOT (COALESCE(rows, 1) = 1 AND COALESCE(cols, 1) = 1) THEN 1 ELSE 0 END) AS framed_spaces
             FROM storage_nodes
             """
         ).fetchone()
@@ -107,8 +107,8 @@ def dashboard() -> dict[str, Any]:
             "upcoming": upcoming_count,
             "remind_days": EXPIRATION_REMIND_DAYS,
             "storage_nodes": int(storage_stats["storage_nodes"] or 0),
-            "box_nodes": int(storage_stats["box_nodes"] or 0),
             "unframed_spaces": int(storage_stats["unframed_spaces"] or 0),
+            "framed_spaces": int(storage_stats["framed_spaces"] or 0),
         },
         "category_breakdown": rows_list(category_rows),
         "status_breakdown": rows_list(status_rows),
@@ -226,7 +226,7 @@ def create_reagent(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
     start_position = str(data.get("position_in_box", "")).strip() or None
     with connect() as conn:
         if separate_items and item_count > 1:
-            positions = sequential_box_positions(conn, node_id, item_count, start_position) if node_id else [None] * item_count
+            positions = sequential_frame_positions(conn, node_id, item_count, start_position) if node_id else [None] * item_count
             items = []
             source_code = str(values.get("source_code") or "").strip() or None
             for index in range(item_count):
@@ -334,7 +334,7 @@ def create_reagent_aliquots(data: dict[str, Any], user: dict[str, Any]) -> dict[
             raise ApiError(409, "只有已入库的试剂/耗材可以分装")
         source_code = str(source["source_code"] or source["code"] or source["id"])
         first_aliquot = _next_reagent_aliquot_no(conn, source_code)
-        positions = sequential_box_positions(conn, node_id, aliquot_count, start_position) if node_id else [None] * aliquot_count
+        positions = sequential_frame_positions(conn, node_id, aliquot_count, start_position) if node_id else [None] * aliquot_count
         note = str(data.get("note", "")).strip()
         quantity = safe_float(data.get("quantity"), source["quantity"] if source["quantity"] not in (None, "") else 1)
         inserted_ids: list[int] = []

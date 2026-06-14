@@ -69,9 +69,6 @@ class TestDefaultGridForNode:
     def test_explicit(self):
         assert default_grid_for_node("space", 3, 5) == (3, 5)
 
-    def test_box_default(self):
-        assert default_grid_for_node("box", None, None) == (9, 9)
-
     def test_space_default(self):
         assert default_grid_for_node("space", None, None) == (1, 1)
 
@@ -100,14 +97,11 @@ class TestCleanPositiveInt:
 
 
 class TestCleanNodeDimension:
-    def test_box_rows_max(self):
-        assert clean_node_dimension("box", "rows", 30) == 26
-
-    def test_box_cols_max(self):
-        assert clean_node_dimension("box", "cols", 60) == 50
-
     def test_space_max(self):
         assert clean_node_dimension("space", "rows", 60) == 50
+
+    def test_space_cols_max(self):
+        assert clean_node_dimension("space", "cols", 60) == 50
 
 
 class TestOccupiesStorage:

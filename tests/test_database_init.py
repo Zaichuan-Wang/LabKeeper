@@ -77,3 +77,24 @@ def test_init_db_uses_lightweight_indexes(monkeypatch, tmp_path):
     assert "idx_reagents_updated" in names
     assert "idx_reagents_storage_status_updated" in names
     assert "idx_validations_catalog_date" in names
+
+
+def test_init_db_normalizes_legacy_box_nodes(monkeypatch, tmp_path):
+    config, database = _fresh_database(monkeypatch, tmp_path)
+
+    database.init_db()
+    with sqlite3.connect(config.DB_PATH) as conn:
+        conn.execute(
+            """
+            INSERT INTO storage_nodes
+                (parent_id, name, node_type, rows, cols, created_at, updated_at)
+            VALUES (1, 'Legacy Box', 'box', NULL, 12, '2026-01-01 00:00:00', '2026-01-01 00:00:00')
+            """
+        )
+        conn.commit()
+
+    database.init_db()
+
+    with sqlite3.connect(config.DB_PATH) as conn:
+        row = conn.execute("SELECT node_type, rows, cols FROM storage_nodes WHERE name = 'Legacy Box'").fetchone()
+    assert row == ("space", 9, 12)

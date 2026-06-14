@@ -1,9 +1,6 @@
 ﻿function renderInventoryWorkbench(data) {
-  const isBoxView = isBox(data.current);
   const grid = data.grid || { rows: data.current.rows || 1, cols: data.current.cols || 3, capacity: 0 };
-  const capacityText = isBox(data.current) && data.stats.capacity
-    ? `孔位 ${data.stats.occupied}/${data.stats.capacity}`
-    : (grid.is_framed === false ? '无框架' : `框架 ${grid.rows}x${grid.cols}`);
+  const capacityText = grid.is_framed === false ? '无框架' : `框架 ${grid.rows}x${grid.cols}`;
   const statText = `下级 ${data.stats.children} · 直接 ${data.stats.direct} · 总计 ${data.stats.total} · ${capacityText}`;
   const isVirtualUnplaced = isVirtualUnplacedNode(data.current);
   const deleteAction = isAdmin() ? `<button class="danger" type="button" data-action="delete-current-space" data-id="${data.current.id}">删除当前</button>` : '';
@@ -14,7 +11,7 @@
               <div class="overview-action-menu"><button class="ghost" type="button" data-action="edit-current-space" data-id="${data.current.id}">编辑当前</button><button class="ghost" type="button" data-action="new-child-space" data-id="${data.current.id}">新建下级</button><button class="ghost" type="button" data-action="new-root-space">新建空间</button>${deleteAction}</div>
             </details>`;
   $('inventoryWorkbench').innerHTML = `
-    <div class="inventory-shell overview-shell ${isBoxView ? 'box-overview-shell' : ''}">
+    <div class="inventory-shell overview-shell">
           <aside class="inventory-tree">${renderOverviewNavigation(data)}</aside>
       <main class="inventory-main">
         <div class="storage-hero compact-hero">
@@ -153,7 +150,7 @@ function renderInventoryItemCard(r) {
 
 function renderStorageOverviewCard(c) {
   const dragAttrs = `data-drag-type="storage-node" data-drag-id="${c.id}" draggable="${canManageLocation() ? 'true' : 'false'}"`;
-  const dropAttrs = isBox(c) ? '' : `data-drop-storage-parent="${c.id}"`;
+  const dropAttrs = `data-drop-storage-parent="${c.id}"`;
   return `<button class="reagent-card item-space" data-action="inventory-node" data-id="${c.id}" data-drop-node="${c.id}" ${dropAttrs} ${dragAttrs}><b>${esc(c.name)}</b><span>空间 · ${c.total ?? 0}件</span></button>`;
 }
 
@@ -171,9 +168,6 @@ function renderPickerInventoryCard(item) {
 
 function renderInventoryCenter(data) {
   const unplaced = data.grid?.is_framed === false ? '' : renderUnplacedInventory(data);
-  if (isBox(data.current)) {
-    return `${unplaced}<section class="overview-section"><div class="section-head well-section-head"><h4>盒内孔位</h4><div class="well-head-tools"><span>${data.stats.occupied}/${data.stats.capacity} 已占用</span>${renderWellLegend()}</div></div><div class="well-grid overview-well-grid" style="--cols:${data.current.cols || 9}">${data.wells.map(w => renderInventoryWellCell(w, data.current.id)).join('')}</div></section>`;
-  }
   return `${unplaced}${renderContainerGrid(data)}`;
 }
 
@@ -240,7 +234,7 @@ function renderUnplacedInventory(data) {
     : '<p class="muted compact-empty">无未归位库存</p>';
   const storageDrop = globalUnplaced
     ? ' data-drop-storage-parent="" data-drop-unplaced="1"'
-    : (isBox(data.current) ? '' : ` data-drop-storage-parent="${data.current.id}"`);
+    : ` data-drop-storage-parent="${data.current.id}"`;
   const sectionTitle = globalUnplaced ? '未归位' : '未指定格位';
   return `<section class="overview-section unplaced-section ${cards.length ? '' : 'is-empty'}" data-drop-node="${data.current.id}"${storageDrop}><div class="section-head"><h4>${sectionTitle}</h4></div>${body}</section>`;
 }
@@ -256,69 +250,6 @@ function renderPickerUnplacedSection(data, kind) {
     ? `<div class="card-list compact-card-list">${cards.join('')}</div>`
     : `<p class="muted compact-empty">${emptyText}</p>`;
   return `<section class="overview-section unplaced-section ${cards.length ? '' : 'is-empty'}"><div class="section-head"><h4>${sectionTitle}</h4></div>${body}</section>`;
-}
-
-function renderWellLegend() {
-  return `<div class="well-legend" aria-label="孔位颜色说明"><span class="legend-item item-reagent"><i></i>试剂</span><span class="legend-item item-sample"><i></i>临床标本</span><span class="legend-item item-empty"><i></i>空孔位</span></div>`;
-}
-
-function renderInventoryWellCell(well, nodeId) {
-  const dropAttrs = `data-drop-node="${nodeId}" data-drop-well="${esc(well.coord)}"`;
-  const item = well.item;
-  if (!item) {
-    return renderWellCell(well, 'position-actions', `${dropAttrs} data-node-id="${nodeId}" data-well="${esc(well.coord)}" data-label="空孔位 ${esc(well.coord)}"`);
-  }
-  const itemType = inventoryItemType(item);
-  const dragAttrs = `data-drag-type="${esc(itemType)}" data-drag-id="${item.id}" draggable="${canManageLocation() ? 'true' : 'false'}"`;
-  return renderWellCell(well, 'inventory-well', `${dropAttrs} ${dragAttrs} data-type="${esc(itemType)}" data-item-id="${item.id}"`);
-}
-
-function renderWellCell(well, action, extraAttrs = '') {
-  const item = well.item;
-  const code = item ? inventoryDisplayName(item) : '';
-  const itemType = item ? inventoryItemType(item) : '';
-  const name = item && itemType === 'sample' ? (item.category || '') : '';
-  const summary = itemType === 'reagent' ? compactReagentName(code) : code;
-  const sample = item
-    ? `<span class="sample"><span class="sample-code">${esc(summary)}</span>${name ? `<span class="sample-name">${esc(name)}</span>` : ''}</span>`
-    : '<span class="sample empty-sample"></span>';
-  const tooltipBelow = /^A\d+$/i.test(String(well.coord || '')) ? 'tooltip-below' : '';
-  const label = item ? `${well.coord} ${inventoryTypeLabel(item)} ${code}` : `${well.coord} 空孔位`;
-  const tooltip = renderWellTooltipText(well, item);
-  const tooltipAttr = tooltip ? ` data-tooltip="${esc(tooltip)}"` : '';
-  return `<button class="well ${well.occupied ? 'occupied' : ''} ${item ? inventoryItemClass(item) : ''} ${well.selected ? 'selected' : ''} ${tooltipBelow}" data-action="${action}" ${extraAttrs} data-id="${esc(well.coord)}" aria-label="${esc(label)}"${tooltipAttr}><span class="coord">${esc(well.coord)}</span>${sample}</button>`;
-}
-
-function compactReagentName(name) {
-  const clean = String(name || '').trim();
-  if (!clean) return '';
-  return clean.replace(/^Anti[- ]human\s+/i, '').replace(/^Recombinant\s+human\s+/i, '');
-}
-
-function renderWellTooltipText(well, item) {
-  if (!item) return '';
-  const type = inventoryItemType(item);
-  const measure = inventoryMeasureText(item);
-  const rows = type === 'sample'
-    ? [
-        ['孔位', well.coord],
-        ['类型', inventoryTypeLabel(type)],
-        ['系统编号', item.code],
-        ['样本号', item.name],
-        ['样本类型', item.category],
-        ['规格', measure],
-        ['状态', item.status],
-      ]
-    : [
-        ['孔位', well.coord],
-        ['类型', inventoryTypeLabel(type)],
-        ['名称', item.name || item.display_name],
-        ['分类', item.category],
-        ['数量', measure],
-        ['状态', item.status],
-        ['有效期', item.expiration_date],
-      ];
-  return [inventoryDisplayName(item), ...rows.filter(([, value]) => hasValue(value)).map(([label, value]) => `${label}：${value}`)].join('\n');
 }
 
 function renderContainerGrid(data) {
@@ -348,7 +279,7 @@ function renderContainerGrid(data) {
     const row = gridCellRow(index, Number(grid.cols || 1));
     const col = gridCellCol(index, Number(grid.cols || 1));
     cells.push(child
-      ? `<button class="frame-cell occupied item-space" data-action="inventory-node" data-id="${child.id}" data-drop-node="${child.id}" ${isBox(child) ? '' : `data-drop-storage-parent="${child.id}"`} data-drag-type="storage-node" data-drag-id="${child.id}" draggable="${canManageLocation() ? 'true' : 'false'}"><span class="coord">${esc(label)}</span><b>${esc(child.name)}</b><small>空间 · ${child.total || 0} 件</small></button>`
+      ? `<button class="frame-cell occupied item-space" data-action="inventory-node" data-id="${child.id}" data-drop-node="${child.id}" data-drop-storage-parent="${child.id}" data-drag-type="storage-node" data-drag-id="${child.id}" draggable="${canManageLocation() ? 'true' : 'false'}"><span class="coord">${esc(label)}</span><b>${esc(child.name)}</b><small>空间 · ${child.total || 0} 件</small></button>`
       : item
         ? renderFrameInventoryCell(item, label)
         : `<button class="frame-cell empty" type="button" data-action="position-actions" data-node-id="${data.current.id}" data-well="${esc(label)}" data-row="${row}" data-col="${col}" data-label="框架空位 ${esc(label)}" data-drop-node="${data.current.id}" data-drop-well="${esc(label)}" data-drop-storage-parent="${data.current.id}" data-drop-row="${row}" data-drop-col="${col}"><span class="coord">${esc(label)}</span><b>空位</b><small>拖入空间 / 样本 / 试剂</small></button>`);
@@ -421,16 +352,6 @@ function renderPickerCenter(data, kind) {
   if (isVirtualUnplacedNode(data.current)) {
     return renderPickerUnplacedSection(data, kind);
   }
-  if (data.wells.length) {
-    const unplaced = renderPickerUnplacedSection(data, kind);
-    const wells = `<section class="overview-section"><div class="section-head well-section-head"><h4>盒内孔位</h4><div class="well-head-tools"><span>${data.stats.occupied}/${data.stats.capacity} 已占用</span>${renderWellLegend()}</div></div><div class="well-grid" style="--cols:${data.current.cols || 9}">${data.wells.map(w => {
-      const selectable = !w.occupied || w.selected;
-      const action = selectable ? 'picker-well' : 'picker-occupied-well';
-      const disabledAttr = selectable ? '' : ' aria-disabled="true"';
-      return renderWellCell(w, action, `data-kind="${esc(kind)}"${disabledAttr}`);
-    }).join('')}</div></section>`;
-    return `${unplaced}${wells}`;
-  }
   const grid = data.grid || { rows: data.current.rows || 1, cols: data.current.cols || 3, capacity: 0 };
   if (grid.is_framed === false) {
     const children = data.children || [];
@@ -455,7 +376,7 @@ function renderPickerCenter(data, kind) {
       ? `<button class="frame-cell occupied item-space" data-action="picker-node" data-kind="${kind}" data-id="${child.id}"><span class="coord">${esc(label)}</span><b>${esc(child.name)}</b><small>空间 · ${child.total || 0} 件</small></button>`
       : item
         ? `<button class="frame-cell occupied ${inventoryItemClass(item)}" type="button" data-action="picker-occupied-well" data-kind="${esc(kind)}" data-id="${esc(label)}"><span class="coord">${esc(label)}</span><b>${esc(inventoryDisplayName(item))}</b><small>${esc(inventorySubtypeText(item))}</small></button>`
-      : `<div class="frame-cell empty"><span class="coord">${esc(label)}</span><b>空位</b></div>`);
+      : `<button class="frame-cell empty" type="button" data-action="picker-well" data-kind="${esc(kind)}" data-id="${esc(label)}"><span class="coord">${esc(label)}</span><b>空位</b></button>`);
   }
   const used = positionedChildren.length + (data.frame_items || []).length;
   return `${unplaced}<section class="overview-section"><div class="section-head"><h4>空间框架</h4><div class="section-actions"><span>${used}/${capacity} 已使用</span></div></div><div class="frame-grid" style="--cols:${grid.cols || 3}">${cells.join('')}</div></section>`;

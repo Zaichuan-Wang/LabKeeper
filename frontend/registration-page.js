@@ -88,10 +88,10 @@ function selectedRepeatOrderItem() {
 }
 
 function renderRepeatOrderSummary() {
-  const box = $('repeatOrderSummary');
-  if (!box) return;
+  const summaryBox = $('repeatOrderSummary');
+  if (!summaryBox) return;
   const item = selectedRepeatOrderItem();
-  box.innerHTML = item
+  summaryBox.innerHTML = item
     ? `<b>${esc(item.name || item.code || '试剂/耗材')}</b><span>${esc(item.category || '其他')} · ${esc(item.brand || '无品牌')} · ${esc(item.catalog_no || '无货号')} · ${amountText(item)}</span>`
     : '<span>选择已有试剂后，可带入名称、类型、品牌、货号和规格。</span>';
 }
@@ -304,11 +304,11 @@ function selectedAliquotSourceItem() {
 }
 
 function renderAliquotSourceSummary() {
-  const box = $('aliquotSourceSummary');
-  if (!box) return;
+  const summaryBox = $('aliquotSourceSummary');
+  if (!summaryBox) return;
   const item = selectedAliquotSourceItem();
   if (!item) {
-    box.innerHTML = '';
+    summaryBox.innerHTML = '';
     return;
   }
   const code = inventoryObjectCode(item, item.item_type);
@@ -317,7 +317,7 @@ function renderAliquotSourceSummary() {
   const wellText = item.position_in_box
     ? `来源孔位：${esc(item.position_in_box)}；带入后会以该孔位为起点寻找空位。`
     : '来源没有具体孔位；带入后会使用同一空间。';
-  box.innerHTML = `
+  summaryBox.innerHTML = `
     <div class="source-location-head">
       <b>${esc(code)} · ${esc(name)}</b>
       <button class="ghost mini-btn" type="button" data-action="aliquot-use-source-location">带入来源位置</button>

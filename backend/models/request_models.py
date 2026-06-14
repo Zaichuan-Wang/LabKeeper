@@ -147,7 +147,7 @@ class CheckoutCreateRequest(ApiRequest):
 class StorageNodeCreateRequest(ApiRequest):
     parent_id: OptionalInt = None
     name: str = ""
-    node_type: Literal["space", "box"] = "space"
+    node_type: Literal["space"] = "space"
     location_code: str = ""
     rows: OptionalInt = None
     cols: OptionalInt = None
@@ -160,7 +160,7 @@ class StorageNodeCreateRequest(ApiRequest):
 class StorageNodeUpdateRequest(ApiRequest):
     parent_id: OptionalInt = None
     name: str | None = None
-    node_type: Literal["space", "box"] | None = None
+    node_type: Literal["space"] | None = None
     location_code: str | None = None
     rows: OptionalInt = None
     cols: OptionalInt = None
