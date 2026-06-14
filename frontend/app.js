@@ -66,12 +66,11 @@ function renderDevToolsPanel() {
     panel.innerHTML = '';
     return;
   }
-  const demoAvailable = Boolean(state.runtime?.demo_database_available);
   panel.innerHTML = `
     <p class="form-note">开发工具已启用，仅用于本机测试。</p>
     <div class="dev-tools-actions">
       <button id="testAdminLoginBtn" class="ghost dev-login-shortcut" type="button">测试管理员登录</button>
-      <button id="loadDemoDbBtn" class="ghost" type="button" ${demoAvailable ? '' : 'disabled'}>载入 Demo 数据库</button>
+      <button id="loadDemoDbBtn" class="ghost" type="button" >载入 Demo 数据库</button>
     </div>
   `;
   $('testAdminLoginBtn')?.addEventListener('click', guard(loginAsDevAdmin));

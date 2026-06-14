@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +36,7 @@ def load_demo_database() -> dict[str, Any]:
     demo_db_path = config.DEMO_DB_PATH
     db_path = config.DB_PATH
     if not demo_db_path.exists():
-        raise ApiError(404, "Demo 数据库不存在，请先运行 dev_tools/build_demo_db.py")
+        _build_demo_database()
     _assert_sqlite_ok(demo_db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     backup.stop_scheduler()
@@ -66,6 +68,21 @@ def _assert_sqlite_ok(path: Path) -> None:
             conn.close()
     if not row or row[0] != "ok":
         raise ApiError(500, "Demo 数据库完整性检查失败")
+
+
+def _build_demo_database() -> None:
+    """Auto-generate demo.sqlite3 by running dev_tools/build_demo_db.py"""
+    build_script = config.ROOT / "dev_tools" / "build_demo_db.py"
+    if not build_script.exists():
+        raise ApiError(500, "构建脚本不存在: dev_tools/build_demo_db.py")
+    result = subprocess.run(
+        [sys.executable, str(build_script)],
+        capture_output=True,
+        text=True,
+        cwd=str(config.ROOT),
+    )
+    if result.returncode != 0:
+        raise ApiError(500, f"生成 Demo 数据库失败: {result.stderr.strip()}")
 
 
 def _backup_current_database(db_path: Path) -> Path | None:
