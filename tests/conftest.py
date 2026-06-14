@@ -58,9 +58,11 @@ def app_client(tmp_path, monkeypatch):
 
     # backup.py imports DB_PATH/BACKUP_SETTINGS_PATH at module import time, so
     # patch its module globals too when it has already been loaded.
+    from services import auth
     from services import backup
     from services import options_config
 
+    monkeypatch.setattr(auth.database, "DB_PATH", db_path)
     monkeypatch.setattr(backup, "DB_PATH", db_path)
     monkeypatch.setattr(backup, "BACKUP_DIR", db_path.parent / "backups")
     monkeypatch.setattr(backup, "BACKUP_SETTINGS_PATH", backup_settings_path)

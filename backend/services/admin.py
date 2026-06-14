@@ -1,6 +1,5 @@
 ﻿from __future__ import annotations
 
-import base64
 import json
 from io import BytesIO
 from typing import Any
@@ -10,7 +9,11 @@ from core.common import ApiError, clean_int_range, create_audit, now_text, row_d
 from core.constants import BOX_SPECS, DEFAULT_USER_PERMISSIONS, NODE_TYPE_LABELS, PERMISSIONS, ROLES
 from db.database import connect
 from services.auth import hash_password, user_permissions
+from services.excel_utils import clean_excel_cell, excel_export_cell, parse_excel_data_url
 from services.options_config import load_dropdown_options, save_dropdown_options
+
+
+INTERNAL_TABLE_NAMES = {"schema_migrations"}
 
 
 def options() -> dict[str, Any]:
@@ -181,7 +184,7 @@ def excel_export(query: dict[str, list[str]]) -> tuple[bytes, str, str]:
                     sql += " ORDER BY id"
                 rows = conn.execute(sql + " LIMIT ?", (limit,)).fetchall() if limit > 0 else conn.execute(sql).fetchall()
                 for row in rows:
-                    ws.append([row[col] for col in columns])
+                    ws.append([excel_export_cell(row[col]) for col in columns])
             for idx, column in enumerate(columns, 1):
                 ws.column_dimensions[get_column_letter(idx)].width = max(12, min(32, len(column) + 4))
     buffer = BytesIO()
@@ -203,7 +206,7 @@ def excel_import(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     sheet_name = str(data.get("sheet", "")).strip()
     if mode not in {"append", "upsert"}:
         raise ApiError(400, "导入模式不正确")
-    raw, _ = _parse_excel_data_url(file_data)
+    raw, _ = parse_excel_data_url(file_data)
     wb = load_workbook(BytesIO(raw), data_only=True)
     summary: list[dict[str, Any]] = []
     with connect() as conn:
@@ -239,11 +242,14 @@ def _table_names(conn: Any) -> list[str]:
         SELECT name FROM sqlite_master
         WHERE type = 'table'
           AND name NOT LIKE 'sqlite_%'
-          AND name NOT IN ('schema_migrations')
         ORDER BY name
         """
     ).fetchall()
-    return [str(row["name"]) for row in rows]
+    return [name for row in rows if _is_excel_user_table(name := str(row["name"]))]
+
+
+def _is_excel_user_table(name: str) -> bool:
+    return name not in INTERNAL_TABLE_NAMES
 
 
 def _table_columns(conn: Any, table: str) -> list[str]:
@@ -260,38 +266,6 @@ def _required_columns(conn: Any, table: str) -> list[str]:
 
 def _primary_key_columns(conn: Any, table: str) -> list[str]:
     return [str(row["name"]) for row in conn.execute(f'PRAGMA table_info("{table}")').fetchall() if int(row["pk"]) > 0]
-
-
-def _parse_excel_data_url(value: str) -> tuple[bytes, str]:
-    if not value.startswith("data:") or "," not in value:
-        raise ApiError(400, "Excel 文件数据格式不正确")
-    header, payload = value.split(",", 1)
-    mime = header.removeprefix("data:").split(";", 1)[0].lower()
-    allowed = {
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
-        "application/vnd.ms-excel": ".xls",
-        "application/octet-stream": ".xlsx",
-    }
-    if mime not in allowed:
-        raise ApiError(400, "只支持 Excel 文件")
-    try:
-        body = base64.b64decode(payload)
-    except Exception as exc:
-        raise ApiError(400, "Excel 文件数据无法解析") from exc
-    if len(body) > 24 * 1024 * 1024:
-        raise ApiError(400, "Excel 文件不能超过 24MB")
-    return body, allowed[mime]
-
-
-def _clean_excel_cell(value: Any) -> Any:
-    if value is None:
-        return None
-    if hasattr(value, "isoformat"):
-        return value.isoformat()
-    if isinstance(value, str):
-        text = value.strip()
-        return text if text != "" else None
-    return value
 
 
 def _quote_ident(value: str) -> str:
@@ -324,7 +298,7 @@ def _import_sheet(conn: Any, table: str, sheet: Any, mode: str) -> dict[str, Any
     result = {"success": 0, "inserted": 0, "updated": 0, "skipped": 0, "failed": []}
     timestamp = now_text()
     for row_index, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
-        record = {col: _clean_excel_cell(row[idx]) for idx, col in enumerate(headers) if col in allowed_columns and idx < len(row)}
+        record = {col: clean_excel_cell(row[idx], blank_as_none=True) for idx, col in enumerate(headers) if col in allowed_columns and idx < len(row)}
         record = {key: value for key, value in record.items() if value is not None}
         if not record:
             result["skipped"] += 1

@@ -18,7 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from services import backup
 from core.common import ApiError, get_logger
 from core.config import CORS_ORIGINS, DB_PATH
-from db.database import connect, init_db
+from db.database import compact_database, connect, init_db
 from routers.admin import router as admin_router
 from routers.bulk import router as bulk_router
 from routers.core import router as core_router
@@ -97,14 +97,26 @@ def run_check() -> None:
     print(json.dumps(result, ensure_ascii=False))
 
 
+def run_compact() -> None:
+    result = compact_database()
+    result["ok"] = True
+    result["db"] = str(DB_PATH)
+    logger.info("数据库压缩完成：%s", json.dumps(result, ensure_ascii=False))
+    print(json.dumps(result, ensure_ascii=False))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="LabKeeper backend API")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--check", action="store_true", help="初始化并检查数据库后退出")
+    parser.add_argument("--compact", action="store_true", help="初始化、清理旧索引并压缩 SQLite 文件后退出")
     args = parser.parse_args()
     if args.check:
         run_check()
+        return
+    if args.compact:
+        run_compact()
         return
     init_db()
     import uvicorn

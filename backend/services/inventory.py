@@ -1,7 +1,6 @@
 ﻿from __future__ import annotations
 
 import sqlite3
-import re
 import math
 from typing import Any
 
@@ -112,31 +111,6 @@ def _pagination(query: dict[str, list[str]]) -> tuple[int, int, int]:
     return page, page_size, offset
 
 
-def _fts_query(keyword: str) -> str:
-    terms = re.findall(r"[\w\u4e00-\u9fff]+", keyword, flags=re.UNICODE)
-    terms = [term for term in terms if term.strip()]
-    return " OR ".join(f"{term}*" for term in terms[:8])
-
-
-def _fts_item_ids(conn: sqlite3.Connection, item_type: str, keyword: str) -> list[int] | None:
-    query = _fts_query(keyword)
-    if not query:
-        return []
-    try:
-        rows = conn.execute(
-            """
-            SELECT item_id
-            FROM inventory_search_fts
-            WHERE item_type = ? AND inventory_search_fts MATCH ?
-            LIMIT 2000
-            """,
-            (item_type, query),
-        ).fetchall()
-    except sqlite3.Error:
-        return None
-    return [int(row["item_id"]) for row in rows]
-
-
 def _append_keyword_clause(
     conn: sqlite3.Connection,
     item_type: str,
@@ -154,19 +128,6 @@ def _append_keyword_clause(
     if keyword_nodes:
         placeholders = ",".join("?" for _ in keyword_nodes)
         node_clause = f" OR storage_node_id IN ({placeholders})"
-    fts_ids = _fts_item_ids(conn, item_type, keyword)
-    if fts_ids is not None:
-        if fts_ids:
-            placeholders = ",".join("?" for _ in fts_ids)
-            clauses.append(f"(id IN ({placeholders}){node_clause})")
-            params.extend(fts_ids)
-            params.extend(keyword_nodes)
-        elif keyword_nodes:
-            clauses.append(f"(storage_node_id IN ({','.join('?' for _ in keyword_nodes)}))")
-            params.extend(keyword_nodes)
-        else:
-            clauses.append("0 = 1")
-        return
     like = f"%{keyword}%"
     field_clause = " OR ".join(f"{field} LIKE ?" for field in like_fields)
     clauses.append(f"({field_clause}{node_clause})")

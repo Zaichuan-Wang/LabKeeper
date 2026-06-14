@@ -11,7 +11,6 @@ from services.options_config import dropdown_values
 from services.storage_inventory import (
     assign_sample_to_node,
     attach_aliquot_totals,
-    descendant_node_ids,
     normalize_sample_item,
     occupies_storage,
     release_sample_storage,
@@ -81,56 +80,6 @@ def ensure_unique_sample_aliquot(
 
 def normalize_sample_rows(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
     return attach_aliquot_totals(conn, [normalize_sample_item(row, conn) for row in rows])
-
-
-def list_samples(query: dict[str, list[str]]) -> dict[str, Any]:
-    keyword = query.get("keyword", [""])[0].strip()
-    name = query.get("name", [""])[0].strip()
-    category = query.get("category", [""])[0].strip()
-    status = query.get("status", [""])[0].strip()
-    storage_node_id = clean_int_range(query.get("storage_node_id", ["0"])[0], 0, 0, 1_000_000)
-    include_descendants = query.get("include_descendants", ["1"])[0] != "0"
-    limit = clean_int_range(query.get("limit", ["200"])[0], 200, 1, 500)
-    clauses: list[str] = []
-    params: list[Any] = []
-    if keyword:
-        clauses.append(
-            """
-            (code LIKE ? OR name LIKE ? OR category LIKE ? OR note LIKE ?
-             OR CAST(aliquot_no AS TEXT) LIKE ?)
-            """
-        )
-        params.extend([f"%{keyword}%"] * 5)
-    if name:
-        clauses.append("name = ?")
-        params.append(name)
-    if category:
-        clauses.append("category = ?")
-        params.append(category)
-    if status:
-        clauses.append("status = ?")
-        params.append(status)
-    with connect() as conn:
-        if storage_node_id:
-            node_ids = descendant_node_ids(conn, storage_node_id, True) if include_descendants else [storage_node_id]
-            placeholders = ",".join("?" for _ in node_ids)
-            clauses.append(f"storage_node_id IN ({placeholders})")
-            params.extend(node_ids)
-        sql = "SELECT * FROM clinical_samples"
-        if clauses:
-            sql += " WHERE " + " AND ".join(clauses)
-        sql += " ORDER BY updated_at DESC LIMIT ?"
-        params.append(limit)
-        rows = conn.execute(sql, params).fetchall()
-        items = normalize_sample_rows(conn, rows)
-        if keyword:
-            lowered = keyword.lower()
-            items = [
-                item for item in items
-                if lowered in str(item.get("storage_location") or "").lower()
-                or any(lowered in str(item.get(key) or "").lower() for key in ("code", "name", "category", "note", "aliquot_no"))
-            ]
-    return {"items": items, "count": len(items)}
 
 
 def sample_detail(conn: sqlite3.Connection, sample_id: int) -> dict[str, Any]:

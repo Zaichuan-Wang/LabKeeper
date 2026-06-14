@@ -58,3 +58,22 @@ def test_init_db_adds_missing_safe_columns(monkeypatch, tmp_path):
     with sqlite3.connect(db_path) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
     assert "permissions" in columns
+
+
+def test_init_db_uses_lightweight_indexes(monkeypatch, tmp_path):
+    config, database = _fresh_database(monkeypatch, tmp_path)
+
+    database.init_db()
+
+    with sqlite3.connect(config.DB_PATH) as conn:
+        names = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table', 'index', 'trigger') AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        }
+    assert "idx_reagents_name" not in names
+    assert "idx_movements_to_snapshot_moved" not in names
+    assert "idx_reagents_updated" in names
+    assert "idx_reagents_storage_status_updated" in names
+    assert "idx_validations_catalog_date" in names

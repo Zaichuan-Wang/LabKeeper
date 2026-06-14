@@ -1,258 +1,132 @@
-# LabKeeper — 实验室库存管理系统
+# LabKeeper 实验室库存管理系统
 
-LabKeeper 是给生物实验室和课题组使用的轻量级库存管理系统。它可以在一台普通电脑上本地运行，也可以部署到实验室 Linux 服务器上，让组内成员通过浏览器一起使用。
+LabKeeper 是一个给实验室、课题组或小型平台使用的库存管理系统。它用浏览器操作，不需要安装数据库服务器；数据保存在一个 SQLite 文件里，方便备份、搬迁和在低性能服务器上部署。
 
-LabKeeper is a lightweight inventory management system for biological laboratories and research groups. It can run locally on a regular computer, or be deployed on a lab Linux server so that team members can use it through a browser.
-
-> 语言状态 / Language status: 当前系统界面以中文为主，英文界面和完整英文文档仍在开发中。本文档后续内容暂以中文为准。
->
-> The current application UI is primarily Chinese. The English UI and complete English documentation are still under development. The rest of this README is currently maintained in Chinese.
-
-适合管理：
+适合记录：
 
 - 试剂、抗体、耗材、试剂盒
 - 临床标本、冻存管、分装样本
-- 冰箱、液氮罐、抽屉、样本盒和盒内孔位
+- 冰箱、液氮罐、抽屉、冻存盒和盒内孔位
 - 订购、到货、验证、入库、移动、出库和备份记录
 
-系统不需要安装数据库服务器，数据保存在一个 SQLite 文件中，便于备份和迁移。
+系统界面和文档目前以中文为主。
+
+## 一句话理解
+
+LabKeeper 可以理解成“实验室库存台账 + 存放位置图 + 操作记录”。它不会记录患者姓名、身份证号、电话等个人身份信息，只记录样本业务编号和库存信息。
 
 ## 在线试用
 
-无需安装，直接在浏览器访问：
+无需安装，可直接访问：
 
 ```text
 http://sw2-dynamic.xiyoucloud.pro:20829/
 ```
 
-## 推荐使用流程
+试用环境只用于体验流程，不要录入真实敏感数据。
 
-建议按这个顺序使用：
+## 推荐使用顺序
 
-1. **先启动测试版**：不用配置正式密码，直接进入系统，点击“载入 Demo 数据库”，熟悉页面和流程。
-2. **再部署正式使用版**：创建正式配置，关闭测试入口，设置自己的管理员密码，从空数据库开始记录真实库存。
+1. 先用测试模式熟悉页面。
+2. 确认流程后，再创建正式配置。
+3. 正式使用前，从空数据库开始录入真实库存。
 
-不要把 Demo 数据库当作正式库存库继续使用。正式使用前，建议重新解压/克隆一份干净项目，或先备份并删除测试时生成的：
+不要把 Demo 数据库当作正式库存库继续使用。如果测试时生成过数据，正式使用前请备份后删除：
 
 ```text
 db/lab_inventory.sqlite3
 ```
 
-## 主要功能
+再次启动后，系统会创建新的空库。
 
-- 记录试剂/耗材从订购、到货、验证、入库到出库的完整流程
-- 记录临床标本和分装信息，不保存姓名、身份证号、电话等个人身份信息
-- 用空间树和盒内孔位管理冰箱、液氮罐、抽屉、盒子等位置
-- 支持 Excel 批量导入、批量编辑、批量移动和批量出库
-- 支持管理员和普通用户权限
-- 支持数据库备份、数据健康检查、操作审计和库存时间线
-- 开发测试模式可一键载入 Demo 数据库，正式部署默认关闭测试入口
+## 快速启动
 
-## 第一步：启动测试版，先熟悉系统
+### Windows 本机试用
 
-测试版适合第一次试用、培训同事、演示流程。测试版会显示“测试管理员登录”和“载入 Demo 数据库”。
-
-### Windows 电脑测试版
-
-适合一个人先试用，或在实验室电脑上本机管理库存。
-
-#### 1. 准备 Python
-
-电脑需要先安装 Python 3.10 或更高版本。推荐使用 Miniconda / Miniforge，但普通 Python 也可以。
-
-#### 2. 下载项目
-
-从 GitHub 下载本项目，解压到一个固定位置，例如：
-
-```text
-D:\LabKeeper
-```
-
-#### 3. 安装依赖
-
-第一次使用前，在项目目录打开 PowerShell，运行：
+1. 安装 Python 3.10 或更高版本。
+2. 下载并解压项目，例如放到 `D:\LabKeeper`。
+3. 在项目目录打开 PowerShell，安装依赖：
 
 ```powershell
 pip install -r requirements.txt
 ```
 
-如果使用 conda，也可以运行：
-
-```powershell
-conda env create -f environment.yml
-conda activate labkeeper
-```
-
-#### 4. 启动测试版
-
-在项目文件夹中找到：
-
-```text
-start.ps1
-```
-
-右键点击 `start.ps1`，选择“使用 PowerShell 运行”。
-
-如果系统提示脚本权限问题，可以打开 PowerShell 后进入项目目录运行：
+4. 运行：
 
 ```powershell
 .\start.ps1
 ```
 
-启动成功后，浏览器访问：
+5. 浏览器访问：
 
 ```text
 http://127.0.0.1:5173
 ```
 
-测试版默认账号：
+测试模式默认账号：
 
 ```text
 用户名：admin
 密码：admin123
 ```
 
-进入登录页后，可以直接点击：
-
-```text
-测试管理员登录
-```
-
-登录后如需查看演示数据，点击：
-
-```text
-载入 Demo 数据库
-```
-
-这样可以先体验订购、到货、入库、位置、批量处理、备份等功能。
-
-#### 5. 停止系统
-
-在项目目录打开 PowerShell，运行：
+停止服务：
 
 ```powershell
 .\start.ps1 -Stop
 ```
 
-### Linux 服务器测试版
-
-如果想先在服务器上给几个人试用，也可以先不创建 `.env`，直接运行测试版：
+### Linux 服务器试用
 
 ```bash
 git clone https://github.com/Zaichuan-Wang/LabKeeper.git
-cd labkeeper
+cd LabKeeper
 pip install -r requirements.txt
 ./start.sh --daemon
 ```
 
-然后在同一内网访问：
+同一内网访问：
 
 ```text
 http://服务器IP:5173
 ```
 
-测试完成后停止服务：
+停止服务：
 
 ```bash
 ./start.sh --stop
 ```
 
-## 第二步：部署正式使用版
+## 正式部署
 
-正式使用版用于记录真实库存。正式版会关闭测试管理员登录和 Demo 数据库入口，并要求设置正式管理员密码。
-
-### Windows 本机正式使用
-
-如果只在自己电脑上正式记录库存，可以仍然使用 `start.ps1`，但需要先创建正式配置。
-
-复制 `.env.example`，重命名为：
-
-```text
-.env
-```
-
-打开 `.env`，至少修改这些内容：
-
-```env
-LABKEEPER_ENV=production
-LABKEEPER_ENABLE_DEV_TOOLS=0
-LABKEEPER_API_SECRET=请换成随机长字符串
-LABKEEPER_INITIAL_ADMIN_PASSWORD=请换成正式管理员密码
-```
-
-然后双击或右键运行 `start.ps1`，访问：
-
-```text
-http://127.0.0.1:5173
-```
-
-如果你之前载入过 Demo 数据库，不要直接把它当正式库使用。正式开始前请重新解压一份干净项目，或备份后删除：
-
-```text
-db/lab_inventory.sqlite3
-```
-
-再次启动后，系统会按 `.env` 中的正式管理员密码创建新库。
-
-### Linux 服务器正式共享
-
-适合课题组多人共用。部署后，大家在同一个内网中通过浏览器访问服务器地址。
-
-#### 1. 上传项目并安装依赖
-
-```bash
-git clone https://github.com/Zaichuan-Wang/LabKeeper.git
-cd labkeeper
-pip install -r requirements.txt
-```
-
-也可以用 conda：
-
-```bash
-conda env create -f environment.yml
-conda activate labkeeper
-```
-
-#### 2. 创建正式配置
-
-复制配置模板：
+正式使用前，复制配置模板：
 
 ```bash
 cp .env.example .env
 ```
 
-至少修改这些项目：
+至少修改这些项：
 
 ```env
 LABKEEPER_ENV=production
 LABKEEPER_ENABLE_DEV_TOOLS=0
 LABKEEPER_API_SECRET=请换成随机长字符串
 LABKEEPER_INITIAL_ADMIN_PASSWORD=请换成正式管理员密码
+LABKEEPER_CORS_ORIGINS=http://服务器IP:5173
 ```
 
-#### 3. 安装 nginx
+正式环境会关闭“测试管理员登录”和“载入 Demo 数据库”入口。
 
-正式部署使用 nginx 反向代理，好处是：
+### 推荐的服务器方式
 
-- **静态文件性能更好**：nginx 处理前端页面、图片等静态资源比 Python HTTP 服务器快得多
-- **统一入口**：前端页面和后端 API 通过同一个端口访问，不需要开放多个端口
-- **节省带宽**：可以启用 gzip 压缩和浏览器缓存，低带宽服务器访问更稳
-- **支持 HTTPS**：后续可以方便地加上 SSL 证书，实现加密访问
-- **更稳定**：nginx 是专业的 Web 服务器，适合长期运行
+长期多人使用时，推荐用 nginx 提供前端页面，并把 `/api/` 转发到后端：
 
-```bash
-sudo apt install nginx
-```
-
-#### 4. 创建 nginx 站点配置
-
-```bash
-sudo tee /etc/nginx/sites-available/labkeeper << 'EOF'
+```nginx
 server {
     listen 5173;
     server_name _;
 
-    root /home/wangzc/LabKeeper/frontend;
+    root /home/your-user/LabKeeper/frontend;
     index index.html;
 
     client_max_body_size 20m;
@@ -284,132 +158,76 @@ server {
         try_files $uri $uri/ /index.html;
     }
 }
-EOF
 ```
 
-> 把 `/home/wangzc/LabKeeper` 换成你的实际项目路径。
-
-#### 5. 启用站点并更新 CORS
-
-```bash
-sudo ln -s /etc/nginx/sites-available/labkeeper /etc/nginx/sites-enabled/
-sudo nginx -t          # 检查配置是否正确
-```
-
-更新 `.env` 中的 CORS 设置，填写 nginx 对外访问地址：
-
-```env
-LABKEEPER_CORS_ORIGINS=http://服务器IP:5173
-```
-
-#### 6. 启动服务
+启动：
 
 ```bash
 ./start.sh --daemon --nginx
 ```
 
-`--nginx` 参数会启动后端并自动管理 nginx，不启动 Python 内置前端服务器。
+## 数据库和轻量化
 
-停止所有服务（含 nginx）：
-
-```bash
-./start.sh --stop
-```
-
-#### 7. 访问
-
-同一内网成员通过 nginx 端口访问：
-
-```text
-http://服务器IP:5173
-```
-
-nginx 会自动把前端页面和 `/api/` 请求分别处理，对外只有一个端口。
-
-#### 自定义端口
-
-如果需要更换前端端口（例如改为 `8080`），需要修改以下两处：
-
-1. **nginx 配置文件** `/etc/nginx/sites-available/labkeeper` 中的 `listen 5173` 改为 `listen 8080`
-2. **`.env`** 中的 `LABKEEPER_CORS_ORIGINS` 里的端口改为 `8080`
-
-修改后重启服务使配置生效：
-
-```bash
-./start.sh --stop
-./start.sh --daemon --nginx
-```
-
-> `start.sh` 不会自动改写 nginx 配置。对外端口以 `/etc/nginx/sites-available/labkeeper` 中的 `listen` 为准。
-
-## 数据和备份
-
-主要运行数据在：
+主要数据库文件：
 
 ```text
 db/lab_inventory.sqlite3
 ```
 
-管理员可以在系统里的“管理员 > 数据库备份”中创建备份。进行批量导入、空间结构大调整或系统升级前，建议先备份数据库。
+LabKeeper 默认采用轻量 SQLite 策略：
 
-开发测试用的 Demo 数据库默认按需生成在：
+- 只保留位置、状态、有效期、货号、分装和时间线常用查询所需的索引。
+- WAL 日志自动限制大小，减少低性能服务器上的磁盘压力。
+- 几万条数据可直接使用；更大数据量建议先做真实搜索耗时测试，再决定是否专项优化。
+
+### 压缩数据库
+
+清理历史索引或大量删除数据后，SQLite 文件不会立刻变小。维护人员可在停用服务或低峰期运行：
+
+```bash
+python backend/server.py --compact
+```
+
+该命令会初始化数据库、清理旧索引，并执行 SQLite `VACUUM` 压缩。
+
+## 备份
+
+管理员可在系统的“管理员 > 数据库备份”里创建、下载和清理备份。
+
+建议在这些操作前备份：
+
+- 大批量导入 Excel
+- 调整冰箱、盒子、孔位结构
+- 系统升级
+- 手动压缩数据库
+
+网页端不提供“一键恢复”，避免误覆盖正式数据。恢复备份应由维护人员停服务后手动替换数据库文件，并删除旧的 `-wal`、`-shm` 文件后再检查系统。
+
+## 文件夹说明
 
 ```text
-dev_tools/demo.sqlite3
+backend/       后端 API、业务逻辑和 SQLite 初始化
+frontend/      浏览器页面、样式和交互脚本
+config/        下拉选项和备份策略配置
+db/            运行时数据库和本地备份，不纳入源码
+data/          日志、PID、验证图片等运行时数据
+dev_tools/     本机测试和 Demo 数据库生成工具
+tests/         自动化测试
 ```
 
-首次点击“载入 Demo 数据库”时，如果该文件不存在，系统会用
-`dev_tools/build_demo_db.py` 自动生成；也可以手动运行该脚本重建。`dev_tools`
-只用于本机测试和演示，正式部署不要依赖其中的脚本或测试数据。
+`archive/`、`.pytest_cache/`、`__pycache__/`、旧的 smoke/demo 数据库都属于本地历史或缓存，不是正式运行所需内容。
 
-## 常见问题
+## 给日常使用者
 
-### 页面打不开
-
-Windows 本机访问：
+更多操作说明见：
 
 ```text
-http://127.0.0.1:5173
+USER_MANUAL.md
 ```
 
-Linux 服务器访问（使用 nginx）：
+建议先阅读其中的“日常使用流程”“库存空间”“管理员功能”和“常见问题”。
 
-```text
-http://服务器IP:5173
-```
-
-### 忘记管理员密码
-
-如果是正式数据，请先备份数据库，再由维护人员处理。不要直接删除数据库文件。
-
-### Windows 提示不能运行脚本
-
-可以改为打开 PowerShell，进入项目目录后运行：
-
-```powershell
-.\start.ps1
-```
-
-如仍被系统策略拦截，需要由电脑管理员调整 PowerShell 执行策略。
-
-## 给开发者
-
-项目结构：
-
-```text
-backend/     后端 API、业务逻辑和数据库入口
-backend/routers/   API 路由入口
-backend/services/  业务逻辑
-backend/models/    请求模型和参数校验
-backend/db/        SQLite 初始化、迁移和 schema
-backend/core/      配置、权限和通用工具
-frontend/    前端页面、样式和交互脚本
-config/      下拉选项配置
-db/          运行时 SQLite 数据库和本地备份
-data/        运行时数据
-dev_tools/   本机测试和 Demo 数据库
-tests/       单元测试和 API 集成测试
-```
+## 给维护人员
 
 常用检查：
 
@@ -420,14 +238,7 @@ LABKEEPER_ENV=test python backend/server.py --check
 node --check frontend/app.js
 ```
 
-`requirements.txt` 保留给普通 Python、CI 和服务器部署；`environment.yml` 给 conda 用户。
-
-## 文档
-
-| 文件 | 内容 |
-|------|------|
-| `USER_MANUAL.md` | 用户操作手册 |
-| `dev_tools/README.md` | Demo 数据库和本机测试说明 |
+普通 Python、CI 和服务器部署使用 `requirements.txt`；conda 用户可使用 `environment.yml`。
 
 ## 许可证
 

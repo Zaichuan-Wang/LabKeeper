@@ -16,7 +16,6 @@ from db.database import connect
 from services.storage_inventory import (
     assign_reagent_to_node,
     attach_aliquot_totals,
-    descendant_node_ids,
     normalize_consumed_reagent_fields,
     normalize_reagent_item,
     occupies_storage,
@@ -60,7 +59,7 @@ def dashboard() -> dict[str, Any]:
             f"""
             SELECT COUNT(*) AS n FROM reagents
             WHERE expiration_date IS NOT NULL AND expiration_date != ''
-              AND date(expiration_date) < date(?)
+              AND expiration_date < ?
               AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
             """,
             (today,),
@@ -69,7 +68,7 @@ def dashboard() -> dict[str, Any]:
             f"""
             SELECT COUNT(*) AS n FROM reagents
             WHERE expiration_date IS NOT NULL AND expiration_date != ''
-              AND date(expiration_date) >= date(?) AND date(expiration_date) <= date(?)
+              AND expiration_date >= ? AND expiration_date <= ?
               AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
             """,
             (today, until),
@@ -114,47 +113,6 @@ def dashboard() -> dict[str, Any]:
         "category_breakdown": rows_list(category_rows),
         "status_breakdown": rows_list(status_rows),
     }
-
-
-def list_reagents(query: dict[str, list[str]]) -> dict[str, Any]:
-    keyword = query.get("keyword", [""])[0].strip()
-    category = query.get("category", [""])[0].strip()
-    status = query.get("status", [""])[0].strip()
-    validation_status = query.get("validation_status", [""])[0].strip()
-    storage_node_id = clean_int_range(query.get("storage_node_id", ["0"])[0], 0, 0, 1_000_000)
-    include_descendants = query.get("include_descendants", ["1"])[0] != "0"
-    limit = clean_int_range(query.get("limit", ["200"])[0], 200, 1, 500)
-    clauses: list[str] = []
-    params: list[Any] = []
-    if category:
-        clauses.append("category = ?")
-        params.append(category)
-    if status:
-        clauses.append("status = ?")
-        params.append(status)
-    with connect() as conn:
-        if validation_status:
-            clauses.append("validation_status = ?")
-            params.append(validation_status)
-        if storage_node_id:
-            node_ids = descendant_node_ids(conn, storage_node_id, True) if include_descendants else [storage_node_id]
-            placeholders = ",".join("?" for _ in node_ids)
-            clauses.append(f"storage_node_id IN ({placeholders})")
-            params.extend(node_ids)
-        sql = "SELECT * FROM reagents"
-        if clauses:
-            sql += " WHERE " + " AND ".join(clauses)
-        sql += " ORDER BY updated_at DESC LIMIT ?"
-        params.append(limit)
-        items = attach_aliquot_totals(conn, [normalize_reagent_item(row, conn) for row in conn.execute(sql, params).fetchall()])
-        if keyword:
-            lowered = keyword.lower()
-            items = [
-                item for item in items
-                if lowered in str(item.get("storage_location") or "").lower()
-                or any(lowered in str(item.get(key) or "").lower() for key in ("name", "code", "source_code", "catalog_no", "brand", "amount_unit", "note"))
-            ]
-    return {"items": items, "count": len(items)}
 
 
 def reagent_detail(reagent_id: int) -> dict[str, Any]:
@@ -434,7 +392,7 @@ def expiration(query: dict[str, list[str]] | None = None) -> dict[str, Any]:
             f"""
             SELECT id, code, name, category, quantity, storage_node_id, position_in_box, expiration_date, status
             FROM reagents
-            WHERE expiration_date IS NOT NULL AND expiration_date != '' AND date(expiration_date) < date(?)
+            WHERE expiration_date IS NOT NULL AND expiration_date != '' AND expiration_date < ?
               AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
             ORDER BY expiration_date ASC LIMIT 100
             """,
@@ -445,7 +403,7 @@ def expiration(query: dict[str, list[str]] | None = None) -> dict[str, Any]:
             SELECT id, code, name, category, quantity, storage_node_id, position_in_box, expiration_date, status
             FROM reagents
             WHERE expiration_date IS NOT NULL AND expiration_date != ''
-              AND date(expiration_date) >= date(?) AND date(expiration_date) <= date(?)
+              AND expiration_date >= ? AND expiration_date <= ?
               AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
             ORDER BY expiration_date ASC LIMIT 100
             """,

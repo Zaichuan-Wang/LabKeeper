@@ -112,13 +112,13 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
     )
     assert any(item["item_type"] == "reagent" and item["id"] == reagent["id"] for item in path_keyword_search["items"])
 
-    fts_search = api_ok(
+    keyword_search = api_ok(
         app_client.get("/api/inventory/search?type=reagent&keyword=SMOKE-CAT&page=1&page_size=1", headers=auth_headers)
     )
-    assert fts_search["total"] >= 1
-    assert fts_search["page"] == 1
-    assert fts_search["page_size"] == 1
-    assert fts_search["items"][0]["id"] == reagent["id"]
+    assert keyword_search["total"] >= 1
+    assert keyword_search["page"] == 1
+    assert keyword_search["page_size"] == 1
+    assert keyword_search["items"][0]["id"] == reagent["id"]
 
     forgiving_search = api_ok(
         app_client.get("/api/inventory/search?type=reagent&page=bad&page_size=9999&storage_node_id=bad", headers=auth_headers)
@@ -287,6 +287,23 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
         assert arrival["location_snapshot"] == "Empty-bin / A1"
         assert movement["from_storage_node_id"] is None
         assert movement["to_storage_node_id"] is None
+
+
+def test_emergency_excel_export_skips_internal_tables(app_client, auth_headers):
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    table_data = api_ok(app_client.get("/api/excel/tables", headers=auth_headers))
+    table_names = {item["name"] for item in table_data["items"]}
+    assert "reagents" in table_names
+    assert "schema_migrations" not in table_names
+
+    response = app_client.get("/api/excel/export?mode=data&limit=5", headers=auth_headers)
+    assert response.status_code == 200, response.text
+    workbook = load_workbook(BytesIO(response.content), read_only=True)
+    assert "reagents" in workbook.sheetnames
+    assert "schema_migrations" not in workbook.sheetnames
 
 
 def test_health_hides_database_path_in_production(app_client, monkeypatch):

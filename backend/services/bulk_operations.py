@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 from io import BytesIO
 from typing import Any
 
@@ -14,6 +13,7 @@ from core.constants import (
 from db.database import connect
 from services import clinical_samples
 from services import movements
+from services.excel_utils import clean_excel_cell, new_workbook, parse_excel_data_url, set_column_widths, xlsx_response
 from services.options_config import load_dropdown_options
 from services import reagents
 from services.storage_inventory import get_node, node_full_path, position_options_for_node
@@ -37,50 +37,6 @@ SAMPLE_EDIT_TEMPLATE_COLUMNS = [
     "状态", "入库日期", "存放空间ID", "孔位", "备注",
 ]
 
-EXCEL_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-EXCEL_IMPORT_MIMES = {EXCEL_MIME, "application/vnd.ms-excel", "application/octet-stream"}
-
-
-def _new_workbook() -> Any:
-    try:
-        from openpyxl import Workbook
-    except ImportError as exc:
-        raise ApiError(500, "Excel 功能需要安装 openpyxl") from exc
-    return Workbook()
-
-
-def _workbook_bytes(wb: Any) -> bytes:
-    buffer = BytesIO()
-    wb.save(buffer)
-    return buffer.getvalue()
-
-
-def _xlsx_response(wb: Any, filename: str) -> tuple[bytes, str, str]:
-    return _workbook_bytes(wb), EXCEL_MIME, filename
-
-
-def _set_column_widths(
-    ws: Any,
-    columns: list[str],
-    *,
-    minimum: int = 12,
-    maximum: int | None = 28,
-    extra: int = 8,
-    wide_columns: set[str] | None = None,
-    wide_width: int = 42,
-) -> None:
-    try:
-        from openpyxl.utils import get_column_letter
-    except ImportError as exc:
-        raise ApiError(500, "Excel 功能需要安装 openpyxl") from exc
-    wide_columns = wide_columns or set()
-    for idx, column in enumerate(columns, 1):
-        width = wide_width if column in wide_columns else max(minimum, len(column) + extra)
-        if maximum is not None:
-            width = min(maximum, width)
-        ws.column_dimensions[get_column_letter(idx)].width = width
-
-
 def _item_type(value: Any, default: str = "reagent") -> str:
     text = str(value or default).strip().lower()
     if text in {"sample", "clinical_sample", "clinical-sample", "临床标本", "标本"}:
@@ -94,38 +50,12 @@ def _item_type_label(item_type: str) -> str:
     return "临床标本" if item_type == "sample" else "试剂/耗材"
 
 
-def _parse_excel_data_url(value: str) -> bytes:
-    if not value.startswith("data:") or "," not in value:
-        raise ApiError(400, "Excel 文件数据格式不正确")
-    header, payload = value.split(",", 1)
-    mime = header.removeprefix("data:").split(";", 1)[0].lower()
-    if mime not in EXCEL_IMPORT_MIMES:
-        raise ApiError(400, "只支持 Excel 文件")
-    try:
-        raw = base64.b64decode(payload)
-    except Exception as exc:
-        raise ApiError(400, "Excel 文件数据无法解析") from exc
-    if len(raw) > 24 * 1024 * 1024:
-        raise ApiError(400, "Excel 文件不能超过 24MB")
-    return raw
-
-
-def _clean_cell(value: Any) -> Any:
-    if value is None:
-        return ""
-    if hasattr(value, "isoformat"):
-        return value.isoformat()
-    if isinstance(value, str):
-        return value.strip()
-    return value
-
-
 def parse_excel(data: dict[str, Any]) -> dict[str, Any]:
     try:
         from openpyxl import load_workbook
     except ImportError as exc:
         raise ApiError(500, "Excel 功能需要安装 openpyxl") from exc
-    raw = _parse_excel_data_url(str(data.get("data_url", "")))
+    raw, _ = parse_excel_data_url(str(data.get("data_url", "")))
     sheet_name = str(data.get("sheet", "")).strip()
     wb = load_workbook(BytesIO(raw), data_only=True)
     if sheet_name and sheet_name not in wb.sheetnames:
@@ -137,7 +67,7 @@ def parse_excel(data: dict[str, Any]) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     for row_index, values in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
         record = {
-            header: _clean_cell(values[idx]) if idx < len(values) else ""
+            header: clean_excel_cell(values[idx]) if idx < len(values) else ""
             for idx, header in enumerate(headers)
             if header
         }
@@ -162,16 +92,16 @@ def template(query: dict[str, list[str]]) -> tuple[bytes, str, str]:
     else:
         columns = SAMPLE_TEMPLATE_COLUMNS if item_type == "sample" else REAGENT_TEMPLATE_COLUMNS
         filename = f"{_item_type_label(item_type)}批量导入模板.xlsx"
-    wb = _new_workbook()
+    wb = new_workbook()
     ws = wb.active
     ws.title = "模板"
     ws.append(columns)
     example = _template_example(operation, item_type)
     if example:
         ws.append([example.get(column, "") for column in columns])
-    _set_column_widths(ws, columns)
+    set_column_widths(ws, columns)
     _append_template_help_sheet(wb, operation, item_type)
-    return _xlsx_response(wb, filename)
+    return xlsx_response(wb, filename)
 
 
 def _template_example(operation: str, item_type: str) -> dict[str, Any]:
@@ -240,7 +170,7 @@ def _append_template_help_sheet(wb: Any, operation: str, item_type: str) -> None
 
 def storage_map() -> tuple[bytes, str, str]:
     columns = ["空间ID", "空间名称", "类型", "完整层级位置", "父级ID", "父级名称", "行数", "列数", "可填孔位/格位", "备注"]
-    wb = _new_workbook()
+    wb = new_workbook()
     ws = wb.active
     ws.title = "空间对应表"
     ws.append(columns)
@@ -267,8 +197,8 @@ def storage_map() -> tuple[bytes, str, str]:
                 ", ".join(positions),
                 node.get("note") or "",
             ])
-    _set_column_widths(ws, columns, maximum=None, extra=6, wide_columns={"完整层级位置", "可填孔位/格位"})
-    return _xlsx_response(wb, "空间ID和层级位置对应表.xlsx")
+    set_column_widths(ws, columns, maximum=None, extra=6, wide_columns={"完整层级位置", "可填孔位/格位"})
+    return xlsx_response(wb, "空间ID和层级位置对应表.xlsx")
 
 
 def _current_inventory_row(item: dict[str, Any], item_type: str) -> list[Any]:
@@ -297,7 +227,7 @@ def current_inventory(query: dict[str, list[str]]) -> tuple[bytes, str, str]:
         "对象类型", "编号", "名称", "类别", "品牌", "货号", "规格量", "规格单位",
         "数量", "状态", "验证状态", "入库日期", "有效期", "存放空间ID", "孔位", "备注",
     ]
-    wb = _new_workbook()
+    wb = new_workbook()
     ws = wb.active
     ws.title = "现有库存"
     ws.append(columns)
@@ -324,8 +254,8 @@ def current_inventory(query: dict[str, list[str]]) -> tuple[bytes, str, str]:
             for row in rows:
                 item = row_dict(row) or {}
                 ws.append(_current_inventory_row(item, "sample"))
-    _set_column_widths(ws, columns, maximum=24)
-    return _xlsx_response(wb, "现有库存清单.xlsx")
+    set_column_widths(ws, columns, maximum=24)
+    return xlsx_response(wb, "现有库存清单.xlsx")
 
 
 def _resolve_storage_node(conn: Any, row: dict[str, Any], id_key: str = "存放空间ID") -> int | None:

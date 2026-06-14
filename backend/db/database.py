@@ -14,8 +14,58 @@ from core.config import (
 
 logger = get_logger("lab.database")
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
+LIGHTWEIGHT_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS idx_reagents_expiration ON reagents(expiration_date)",
+    "CREATE INDEX IF NOT EXISTS idx_reagents_updated ON reagents(updated_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_reagents_status_updated ON reagents(status, updated_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_reagents_category_updated ON reagents(category, updated_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_reagents_validation_updated ON reagents(validation_status, updated_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_reagents_storage_status_updated ON reagents(storage_node_id, status, updated_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_reagents_storage_position_status ON reagents(storage_node_id, position_in_box, status)",
+    "CREATE INDEX IF NOT EXISTS idx_reagents_catalog_updated ON reagents(catalog_no, updated_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_reagents_source_aliquot ON reagents(COALESCE(source_code, code, id), aliquot_no)",
+    "CREATE INDEX IF NOT EXISTS idx_clinical_samples_code ON clinical_samples(code)",
+    "CREATE INDEX IF NOT EXISTS idx_clinical_samples_updated ON clinical_samples(updated_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_clinical_samples_status_updated ON clinical_samples(status, updated_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_clinical_samples_name_updated ON clinical_samples(name, updated_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_clinical_samples_category_updated ON clinical_samples(category, updated_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_clinical_samples_storage_status_updated ON clinical_samples(storage_node_id, status, updated_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_clinical_samples_storage_position_status ON clinical_samples(storage_node_id, position_in_box, status)",
+    "CREATE INDEX IF NOT EXISTS idx_clinical_samples_source_aliquot ON clinical_samples(COALESCE(source_code, code, id), aliquot_no)",
+    "CREATE INDEX IF NOT EXISTS idx_arrivals_storage_node ON arrivals(storage_node_id)",
+    "CREATE INDEX IF NOT EXISTS idx_arrivals_item_created ON arrivals(item_type, item_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_arrivals_order ON arrivals(order_id)",
+    "CREATE INDEX IF NOT EXISTS idx_arrivals_created ON arrivals(created_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_validations_catalog_date ON validations(catalog_no, validation_date DESC, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_validations_created ON validations(created_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_orders_status_updated ON orders(status, updated_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_orders_updated ON orders(updated_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_movements_item_moved ON movements(item_type, item_id, moved_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_movements_from_storage_node ON movements(from_storage_node_id)",
+    "CREATE INDEX IF NOT EXISTS idx_movements_to_storage_node ON movements(to_storage_node_id)",
+    "CREATE INDEX IF NOT EXISTS idx_movements_moved ON movements(moved_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_movements_checkout_moved ON movements(moved_at DESC, id DESC) WHERE to_location_snapshot = '已出库'",
+    "CREATE INDEX IF NOT EXISTS idx_storage_nodes_parent_sort_name ON storage_nodes(parent_id, sort_order, name)",
+    "CREATE INDEX IF NOT EXISTS idx_storage_nodes_parent_grid ON storage_nodes(parent_id, grid_row, grid_col)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_logs_target_created ON audit_logs(target_table, target_id, created_at DESC)",
+)
+
+OBSOLETE_INDEX_NAMES = (
+    "idx_reagents_name",
+    "idx_reagents_storage_node",
+    "idx_reagents_source",
+    "idx_clinical_samples_storage_node",
+    "idx_arrivals_item",
+    "idx_validations_catalog_no",
+    "idx_orders_status",
+    "idx_movements_object",
+    "idx_movements_to_snapshot_moved",
+    "idx_storage_nodes_parent",
+    "idx_storage_nodes_type",
+    "idx_audit_logs_created",
+)
 
 def connect() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -24,20 +74,24 @@ def connect() -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout = 5000")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA wal_autocheckpoint = 200")
+    conn.execute("PRAGMA journal_size_limit = 1048576")
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
 def init_db() -> None:
-    with connect() as conn:
+    conn = connect()
+    try:
         _apply_base_schema(conn)
         _apply_migrations(conn)
         _ensure_indexes(conn)
-        _ensure_inventory_search_index(conn)
         _ensure_admin_user(conn)
         _ensure_root_storage_node(conn)
         _repair_known_inconsistencies(conn)
         conn.commit()
+    finally:
+        conn.close()
 
 
 def _apply_base_schema(conn: sqlite3.Connection) -> None:
@@ -139,128 +193,38 @@ def _is_add_column_safe(column_sql: str) -> bool:
 
 
 def _ensure_indexes(conn: sqlite3.Connection) -> None:
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_reagents_name ON reagents(name)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_reagents_expiration ON reagents(expiration_date)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_reagents_storage_node ON reagents(storage_node_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_reagents_source ON reagents(source_code)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_clinical_samples_code ON clinical_samples(code)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_clinical_samples_storage_node ON clinical_samples(storage_node_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_arrivals_storage_node ON arrivals(storage_node_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_arrivals_item ON arrivals(item_type, item_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_validations_catalog_no ON validations(catalog_no)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_movements_object ON movements(object_type, object_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_movements_from_storage_node ON movements(from_storage_node_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_movements_to_storage_node ON movements(to_storage_node_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_storage_nodes_parent ON storage_nodes(parent_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_storage_nodes_type ON storage_nodes(node_type)")
+    _drop_obsolete_indexes(conn)
+    for sql in LIGHTWEIGHT_INDEX_SQL:
+        conn.execute(sql)
 
 
-def _ensure_inventory_search_index(conn: sqlite3.Connection) -> None:
+def _drop_obsolete_indexes(conn: sqlite3.Connection) -> None:
+    for index_name in OBSOLETE_INDEX_NAMES:
+        conn.execute(f'DROP INDEX IF EXISTS "{index_name}"')
+
+
+def compact_database() -> dict[str, int]:
+    init_db()
+    before = _sqlite_file_size()
+    conn = connect()
     try:
-        conn.executescript(
-            """
-            CREATE VIRTUAL TABLE IF NOT EXISTS inventory_search_fts USING fts5(
-                item_type UNINDEXED,
-                item_id UNINDEXED,
-                name,
-                code,
-                source_code,
-                catalog_no,
-                brand,
-                category,
-                amount,
-                amount_unit,
-                note,
-                position_in_box,
-                tokenize='unicode61'
-            );
-
-            CREATE TRIGGER IF NOT EXISTS reagents_ai_fts AFTER INSERT ON reagents BEGIN
-                INSERT INTO inventory_search_fts(
-                    rowid, item_type, item_id, name, code, source_code, catalog_no, brand,
-                    category, amount, amount_unit, note, position_in_box
-                )
-                VALUES (
-                    NEW.id, 'reagent', NEW.id, NEW.name, NEW.code, NEW.source_code, NEW.catalog_no, NEW.brand,
-                    NEW.category, NEW.amount, NEW.amount_unit, NEW.note, NEW.position_in_box
-                );
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS reagents_ad_fts AFTER DELETE ON reagents BEGIN
-                DELETE FROM inventory_search_fts WHERE rowid = OLD.id;
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS reagents_au_fts AFTER UPDATE ON reagents BEGIN
-                DELETE FROM inventory_search_fts WHERE rowid = OLD.id;
-                INSERT INTO inventory_search_fts(
-                    rowid, item_type, item_id, name, code, source_code, catalog_no, brand,
-                    category, amount, amount_unit, note, position_in_box
-                )
-                VALUES (
-                    NEW.id, 'reagent', NEW.id, NEW.name, NEW.code, NEW.source_code, NEW.catalog_no, NEW.brand,
-                    NEW.category, NEW.amount, NEW.amount_unit, NEW.note, NEW.position_in_box
-                );
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS clinical_samples_ai_fts AFTER INSERT ON clinical_samples BEGIN
-                INSERT INTO inventory_search_fts(
-                    rowid, item_type, item_id, name, code, source_code, catalog_no, brand,
-                    category, amount, amount_unit, note, position_in_box
-                )
-                VALUES (
-                    1000000000 + NEW.id, 'sample', NEW.id, NEW.name, NEW.code, NEW.source_code, '', '',
-                    NEW.category, NEW.amount, NEW.amount_unit, NEW.note, NEW.position_in_box
-                );
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS clinical_samples_ad_fts AFTER DELETE ON clinical_samples BEGIN
-                DELETE FROM inventory_search_fts WHERE rowid = 1000000000 + OLD.id;
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS clinical_samples_au_fts AFTER UPDATE ON clinical_samples BEGIN
-                DELETE FROM inventory_search_fts WHERE rowid = 1000000000 + OLD.id;
-                INSERT INTO inventory_search_fts(
-                    rowid, item_type, item_id, name, code, source_code, catalog_no, brand,
-                    category, amount, amount_unit, note, position_in_box
-                )
-                VALUES (
-                    1000000000 + NEW.id, 'sample', NEW.id, NEW.name, NEW.code, NEW.source_code, '', '',
-                    NEW.category, NEW.amount, NEW.amount_unit, NEW.note, NEW.position_in_box
-                );
-            END;
-            """
-        )
-        _rebuild_inventory_search_index(conn)
-    except sqlite3.Error as exc:
-        logger.warning("库存全文搜索索引不可用，已跳过 FTS 初始化：%s", exc)
-        conn.execute("DROP TABLE IF EXISTS inventory_search_fts")
+        conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.execute("VACUUM")
+        conn.execute("PRAGMA optimize")
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        conn.close()
+    after = _sqlite_file_size()
+    return {"before_bytes": before, "after_bytes": after, "saved_bytes": max(0, before - after)}
 
 
-def _rebuild_inventory_search_index(conn: sqlite3.Connection) -> None:
-    conn.execute("DELETE FROM inventory_search_fts")
-    conn.execute(
-        """
-        INSERT INTO inventory_search_fts(
-            rowid, item_type, item_id, name, code, source_code, catalog_no, brand,
-            category, amount, amount_unit, note, position_in_box
-        )
-        SELECT id, 'reagent', id, name, code, source_code, catalog_no, brand,
-               category, amount, amount_unit, note, position_in_box
-        FROM reagents
-        """
-    )
-    conn.execute(
-        """
-        INSERT INTO inventory_search_fts(
-            rowid, item_type, item_id, name, code, source_code, catalog_no, brand,
-            category, amount, amount_unit, note, position_in_box
-        )
-        SELECT 1000000000 + id, 'sample', id, name, code, source_code, '', '',
-               category, amount, amount_unit, note, position_in_box
-        FROM clinical_samples
-        """
-    )
+def _sqlite_file_size() -> int:
+    total = 0
+    for path in (DB_PATH, DB_PATH.with_name(DB_PATH.name + "-wal"), DB_PATH.with_name(DB_PATH.name + "-shm")):
+        if path.exists():
+            total += path.stat().st_size
+    return total
 
 
 def _ensure_admin_user(conn: sqlite3.Connection) -> None:
