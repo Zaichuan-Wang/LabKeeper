@@ -1,4 +1,4 @@
-const ASSET_VERSION = '20260614-cleanup';
+const ASSET_VERSION = '20260614-box-tiles';
 const APP_SCRIPTS = [
   'core.js',
   'ui-common.js',
