@@ -1,4 +1,4 @@
-﻿function renderInventoryWorkbench(data) {
+function renderInventoryWorkbench(data) {
   const grid = data.grid || { rows: data.current.rows || 1, cols: data.current.cols || 3, capacity: 0 };
   const capacityText = grid.is_framed === false ? '无框架' : `框架 ${grid.rows}x${grid.cols}`;
   const statText = `下级 ${data.stats.children} · 直接 ${data.stats.direct} · 总计 ${data.stats.total} · ${capacityText}`;
@@ -144,7 +144,7 @@ function renderInventoryItemCard(r) {
   const canDrag = canManageLocation();
   const measureText = inventoryMeasureText(r);
   const measure = measureText ? ` · ${esc(measureText)}` : '';
-  const position = r.position_in_box ? ` · ${esc(r.position_in_box)}` : '';
+  const position = r.grid_cell ? ` · ${esc(r.grid_cell)}` : '';
   return `<button class="reagent-card ${inventoryItemClass(itemType)} ${active ? 'active' : ''}" data-action="inventory-item" data-type="${esc(itemType)}" data-id="${r.id}" data-drag-type="${esc(itemType)}" data-drag-id="${r.id}" draggable="${canDrag ? 'true' : 'false'}"><b>${esc(name)}</b><span>${esc(inventorySubtypeText(r))}${measure}${position}</span></button>`;
 }
 
@@ -162,7 +162,7 @@ function renderPickerInventoryCard(item) {
   const name = inventoryDisplayName(item);
   const measureText = inventoryMeasureText(item);
   const measure = measureText ? ` · ${esc(measureText)}` : '';
-  const position = item.position_in_box ? ` · ${esc(item.position_in_box)}` : '';
+  const position = item.grid_cell ? ` · ${esc(item.grid_cell)}` : '';
   return `<div class="reagent-card static-card ${inventoryItemClass(item)}"><b>${esc(name)}</b><span>${esc(inventorySubtypeText(item))}${measure}${position}</span></div>`;
 }
 
@@ -211,7 +211,7 @@ function compareUnplacedInventory(a, b) {
 }
 
 function unplacedInventoryItems(data) {
-  return (data.direct_items || []).filter(item => !item.position_in_box).sort(compareUnplacedInventory);
+  return (data.direct_items || []).filter(item => !item.grid_cell).sort(compareUnplacedInventory);
 }
 
 function unplacedStorageChildren(data) {
@@ -269,7 +269,7 @@ function renderContainerGrid(data) {
   }
   const positionedChildren = positionedStorageChildren(data);
   const byPosition = new Map(positionedChildren.map(child => [Number(child.grid_position), child]));
-  const byItemPosition = new Map((data.frame_items || []).map(item => [String(item.position_in_box || ''), item]));
+  const byItemPosition = new Map((data.frame_items || []).map(item => [String(item.grid_cell || ''), item]));
   const cells = [];
   const capacity = visibleGridCapacity(grid, positionedChildren, data.frame_items || []);
   for (let index = 1; index <= capacity; index += 1) {
@@ -324,7 +324,7 @@ function coordLabel(index, cols) {
 function visibleGridCapacity(grid, children, frameItems = []) {
   const childMax = children.reduce((max, child) => Math.max(max, Number(child.grid_position) || 0), 0);
   const itemMax = frameItems.reduce((max, item) => {
-    const position = String(item.position_in_box || '');
+    const position = String(item.grid_cell || '');
     const match = position.match(/^([A-Z])(\d+)$/i);
     if (!match) return max;
     const row = match[1].toUpperCase().charCodeAt(0) - 64;
@@ -340,12 +340,12 @@ function grid_position_from_row_col(row, col, cols) {
 }
 
 const pickerConfigs = {
-  arrival: { container: 'arrivalStoragePicker', form: 'arrivalForm', nodeField: 'storage_node_id', positionField: 'position_in_box', title: '到货存放位置', label: '到货登记' },
-  reagent: { container: 'reagentStoragePicker', form: 'reagentForm', nodeField: 'storage_node_id', positionField: 'position_in_box', title: '试剂存放位置', label: '试剂位置' },
-  sample: { container: 'sampleStoragePicker', form: 'sampleForm', nodeField: 'storage_node_id', positionField: 'position_in_box', title: '临床标本存放位置', label: '标本位置' },
-  sampleEdit: { container: 'sampleEditStoragePicker', form: 'sampleEditForm', nodeField: 'storage_node_id', positionField: 'position_in_box', title: '标本存放位置', label: '标本位置' },
-  aliquot: { container: 'aliquotStoragePicker', form: 'aliquotForm', nodeField: 'storage_node_id', positionField: 'position_in_box', title: '分装存放位置', label: '分装位置' },
-  movement: { container: 'movementStoragePicker', form: 'movementForm', nodeField: 'to_storage_node_id', positionField: 'position_in_box', title: '移动目标位置', label: '移动目标' },
+  arrival: { container: 'arrivalStoragePicker', form: 'arrivalForm', nodeField: 'storage_node_id', positionField: 'grid_cell', title: '到货存放位置', label: '到货登记' },
+  reagent: { container: 'reagentStoragePicker', form: 'reagentForm', nodeField: 'storage_node_id', positionField: 'grid_cell', title: '试剂存放位置', label: '试剂位置' },
+  sample: { container: 'sampleStoragePicker', form: 'sampleForm', nodeField: 'storage_node_id', positionField: 'grid_cell', title: '临床标本存放位置', label: '标本位置' },
+  sampleEdit: { container: 'sampleEditStoragePicker', form: 'sampleEditForm', nodeField: 'storage_node_id', positionField: 'grid_cell', title: '标本存放位置', label: '标本位置' },
+  aliquot: { container: 'aliquotStoragePicker', form: 'aliquotForm', nodeField: 'storage_node_id', positionField: 'grid_cell', title: '分装存放位置', label: '分装位置' },
+  movement: { container: 'movementStoragePicker', form: 'movementForm', nodeField: 'to_storage_node_id', positionField: 'grid_cell', title: '移动目标位置', label: '移动目标' },
 };
 
 function renderPickerCenter(data, kind) {
@@ -365,7 +365,7 @@ function renderPickerCenter(data, kind) {
   const unplaced = renderPickerUnplacedSection(data, kind);
   const positionedChildren = positionedStorageChildren(data);
   const byPosition = new Map(positionedChildren.map(child => [Number(child.grid_position), child]));
-  const byItemPosition = new Map((data.frame_items || []).map(item => [String(item.position_in_box || ''), item]));
+  const byItemPosition = new Map((data.frame_items || []).map(item => [String(item.grid_cell || ''), item]));
   const capacity = visibleGridCapacity(grid, positionedChildren, data.frame_items || []);
   const cells = [];
   for (let index = 1; index <= capacity; index += 1) {

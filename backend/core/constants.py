@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 ROLES = {"user": "普通用户", "admin": "管理员"}
 
@@ -24,8 +24,4 @@ DEFAULT_USER_PERMISSIONS = {
     "inventory.manage": True,
     "location.manage": False,
     "inventory.search": True,
-}
-
-NODE_TYPE_LABELS = {
-    "space": "普通空间",
 }

@@ -1,4 +1,4 @@
-﻿function badge(value) {
+function badge(value) {
   const text = fmt(value);
   let cls = 'badge';
   if (['已过期', '不通过', STATUS_DISABLED, STATUS_CONSUMED, '取消'].includes(text)) cls += ' danger';
@@ -350,11 +350,6 @@ async function loadOptions() {
   document.querySelectorAll('select[name="role"]').forEach(sel => fillSelectObjects(
     sel,
     Object.entries(state.options.roles || {}).map(([value, label]) => ({ value, label })),
-    { valueKey: 'value', label: item => item.label }
-  ));
-  document.querySelectorAll('select[name="node_type"]').forEach(sel => fillSelectObjects(
-    sel,
-    Object.entries(state.options.node_type_labels || {}).map(([value, label]) => ({ value, label })),
     { valueKey: 'value', label: item => item.label }
   ));
   setDefaultDropdownValues();

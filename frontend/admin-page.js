@@ -1,4 +1,4 @@
-﻿async function loadExcel() {
+async function loadExcel() {
   const data = await api('/api/excel/tables');
   state.excelTables = data.items;
   $('excelTableCount').textContent = `可操作 ${data.count} 张底层表`;
@@ -53,7 +53,7 @@ function renderHealthItem(item) {
 }
 
 function healthExampleKeys(examples) {
-  const priority = ['item_type', 'id', 'code', 'source_code', 'name', 'category', 'catalog_no', 'aliquot_no', 'storage_node_id', 'position_in_box', 'count', 'location', 'names', 'objects', 'message'];
+  const priority = ['item_type', 'id', 'code', 'source_code', 'name', 'category', 'catalog_no', 'aliquot_no', 'storage_node_id', 'grid_cell', 'count', 'location', 'names', 'objects', 'message'];
   const existing = new Set(examples.flatMap(row => Object.keys(row || {})));
   return priority.filter(key => existing.has(key)).concat([...existing].filter(key => !priority.includes(key))).slice(0, 8);
 }
@@ -69,7 +69,7 @@ function healthKeyLabel(key) {
     catalog_no: '货号',
     aliquot_no: '管号',
     storage_node_id: '空间ID',
-    position_in_box: '孔位',
+    grid_cell: '孔位',
     count: '数量',
     location: '位置',
     names: '名称',

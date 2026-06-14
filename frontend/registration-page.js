@@ -1,8 +1,8 @@
-﻿function syncReagentStorageFields(form = $('reagentForm')) {
+function syncReagentStorageFields(form = $('reagentForm')) {
   if (!form) return;
   const isConsumed = form.elements.status.value === STATUS_CONSUMED || Number(form.elements.quantity.value || 0) <= 0;
   const storageField = form.elements.storage_node_id;
-  const positionField = form.elements.position_in_box;
+  const positionField = form.elements.grid_cell;
   const note = $('reagentStorageState');
   if (isConsumed) {
     storageField.value = '';
@@ -159,7 +159,7 @@ function renderArrivalSummary() {
 async function loadArrivalForm() {
   await loadOrdersCache();
   await loadStorageTree();
-  fillPositionSelect(document.querySelector('#arrivalForm select[name="position_in_box"]'), document.querySelector('#arrivalForm select[name="storage_node_id"]').value);
+  fillPositionSelect(document.querySelector('#arrivalForm select[name="grid_cell"]'), document.querySelector('#arrivalForm select[name="storage_node_id"]').value);
   await loadLocationPicker('arrival');
 }
 
@@ -238,7 +238,7 @@ async function startNewReagent(options = {}) {
   resetForm(form);
   $('reagentFormTitle').textContent = '新建试剂/耗材';
   setDefaultDropdownValues();
-  fillPositionSelect(form.elements.position_in_box, form.elements.storage_node_id.value);
+  fillPositionSelect(form.elements.grid_cell, form.elements.storage_node_id.value);
   syncReagentStorageFields(form);
   syncMultiRegisterFields(form);
   if (refreshPicker) await loadLocationPicker('reagent');
@@ -250,7 +250,7 @@ async function editReagent(id) {
   const item = data.item;
   $('reagentFormTitle').textContent = `编辑试剂：${item.code || item.id}`;
   setFormValues($('reagentForm'), item);
-  fillPositionSelect($('reagentForm').elements.position_in_box, item.storage_node_id, item.position_in_box || '');
+  fillPositionSelect($('reagentForm').elements.grid_cell, item.storage_node_id, item.grid_cell || '');
   syncReagentStorageFields($('reagentForm'));
   syncMultiRegisterFields($('reagentForm'));
   await loadLocationPicker('reagent');
@@ -275,7 +275,7 @@ function renderReagentDetail(data) {
 async function loadSampleForm() {
   setDefaultDropdownValues();
   await loadStorageTree();
-  fillPositionSelect(document.querySelector('#sampleForm select[name="position_in_box"]'), document.querySelector('#sampleForm select[name="storage_node_id"]').value);
+  fillPositionSelect(document.querySelector('#sampleForm select[name="grid_cell"]'), document.querySelector('#sampleForm select[name="storage_node_id"]').value);
   syncMultiRegisterFields($('sampleForm'));
   await loadLocationPicker('sample');
 }
@@ -314,8 +314,8 @@ function renderAliquotSourceSummary() {
   const code = inventoryObjectCode(item, item.item_type);
   const name = inventoryObjectName(item, item.item_type, '-');
   const position = locationText(item.storage_location);
-  const wellText = item.position_in_box
-    ? `来源孔位：${esc(item.position_in_box)}；带入后会以该孔位为起点寻找空位。`
+  const wellText = item.grid_cell
+    ? `来源孔位：${esc(item.grid_cell)}；带入后会以该孔位为起点寻找空位。`
     : '来源没有具体孔位；带入后会使用同一空间。';
   summaryBox.innerHTML = `
     <div class="source-location-head">
@@ -339,7 +339,7 @@ async function loadAliquotCandidates() {
     label: item => inventoryObjectSelectLabel(item, type),
   });
   renderAliquotSourceSummary();
-  fillPositionSelect(document.querySelector('#aliquotForm select[name="position_in_box"]'), document.querySelector('#aliquotForm select[name="storage_node_id"]').value);
+  fillPositionSelect(document.querySelector('#aliquotForm select[name="grid_cell"]'), document.querySelector('#aliquotForm select[name="storage_node_id"]').value);
   await loadLocationPicker('aliquot');
   return data;
 }
@@ -352,10 +352,10 @@ async function useAliquotSourceLocation() {
     return;
   }
   const nodeId = item.storage_node_id ? String(item.storage_node_id) : '';
-  const startPosition = nodeId ? String(item.position_in_box || '') : '';
+  const startPosition = nodeId ? String(item.grid_cell || '') : '';
   form.elements.storage_node_id.value = nodeId;
-  fillPositionSelect(form.elements.position_in_box, nodeId, startPosition);
-  form.elements.position_in_box.value = startPosition;
+  fillPositionSelect(form.elements.grid_cell, nodeId, startPosition);
+  form.elements.grid_cell.value = startPosition;
   await loadLocationPicker('aliquot');
   toast(nodeId ? '已带入来源位置，可按需改到其他空位' : '已设为未归位');
 }
@@ -440,11 +440,11 @@ async function submitReagent(e) {
   const consumed = form.elements.status.value === STATUS_CONSUMED || Number(form.elements.quantity.value || 0) <= 0;
   if (consumed && form.elements.id.value && !confirm('确认把该试剂/耗材设为已耗尽？\n保存后会释放存放位置，但试剂和验证记录会继续保留。')) return;
   form.elements.storage_node_id.disabled = false;
-  form.elements.position_in_box.disabled = false;
+  form.elements.grid_cell.disabled = false;
   const data = formData(form);
   if (consumed) {
     data.storage_node_id = '';
-    data.position_in_box = '';
+    data.grid_cell = '';
   }
   const id = data.id;
   delete data.id;

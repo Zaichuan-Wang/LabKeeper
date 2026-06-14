@@ -32,7 +32,7 @@ def row_location_snapshot(conn: Any, row: Any) -> str:
         if "code" in row.keys():
             return "未归位" if occupies_storage(row["status"]) else ""
         return "未归位" if occupies_storage(row["status"]) else ""
-    return storage_location_text(conn, int(node_id), str(row["position_in_box"] or "").strip() or None)
+    return storage_location_text(conn, int(node_id), str(row["grid_cell"] or "").strip() or None)
 
 
 def movement_item(row: Any) -> dict[str, Any]:
@@ -51,7 +51,7 @@ def movement_item(row: Any) -> dict[str, Any]:
 
 
 def same_storage_position(row: Any, node_id: Any, position: Any) -> bool:
-    return int(row["storage_node_id"] or 0) == int(node_id or 0) and str(row["position_in_box"] or "").strip() == str(position or "").strip()
+    return int(row["storage_node_id"] or 0) == int(node_id or 0) and str(row["grid_cell"] or "").strip() == str(position or "").strip()
 
 
 def _load_movable_item(conn: Any, item_type: str, item_id: int, action_label: str) -> tuple[Any, str, str]:
@@ -77,7 +77,7 @@ def grid_row_col_from_label(conn: Any, parent_id: int | None, label: str | None)
     parent = get_node(conn, parent_id)
     if parent is None:
         return None, None
-    rows, cols = default_grid_for_node(str(parent["node_type"]), parent["rows"], parent["cols"])
+    rows, cols = default_grid_for_node(parent["rows"], parent["cols"])
     for row in range(1, rows + 1):
         for col in range(1, cols + 1):
             if grid_label((row - 1) * cols + col, cols) == clean:
@@ -97,7 +97,7 @@ def validate_space_rollback_target(conn: Any, node_id: int, parent_id: int | Non
         raise ApiError(404, "空间节点不存在")
     if parent_id and int(parent_id) in descendant_node_ids(conn, node_id, True):
         raise ApiError(400, "不能把空间回滚到自己的下级")
-    validate_storage_parent(conn, str(node["node_type"]), parent_id)
+    validate_storage_parent(conn, parent_id)
     if not parent_id or not (grid_row and grid_col):
         return
     sibling = conn.execute(
@@ -109,7 +109,7 @@ def validate_space_rollback_target(conn: Any, node_id: int, parent_id: int | Non
         (parent_id, grid_row, grid_col, node_id),
     ).fetchone()
     parent = get_node(conn, parent_id)
-    _, cols = default_grid_for_node(str(parent["node_type"]), parent["rows"], parent["cols"]) if parent else (1, 1)
+    _, cols = default_grid_for_node(parent["rows"], parent["cols"]) if parent else (1, 1)
     label = grid_label((grid_row - 1) * int(cols or 1) + grid_col, int(cols or 1))
     if sibling:
         raise ApiError(409, f"原格位 {label} 已被 {sibling['name']} 占用，不能回滚")
@@ -141,14 +141,14 @@ def create_movement(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any
         raise ApiError(400, "移动类型不正确")
     if not item_id:
         raise ApiError(400, "必须选择库存")
-    position = str(data.get("position_in_box", "")).strip() or None
+    position = str(data.get("grid_cell", "")).strip() or None
     timestamp = now_text()
     with connect() as conn:
         to_node_id = to_node_id or None
         position = position if to_node_id else None
         item, object_type, object_id = _load_movable_item(conn, item_type, item_id, "移动")
         from_node_id = item["storage_node_id"]
-        from_position = str(item["position_in_box"] or "").strip() or None
+        from_position = str(item["grid_cell"] or "").strip() or None
         from_location = row_location_snapshot(conn, item)
         if same_storage_position(item, to_node_id, position):
             return {"item": {
@@ -158,9 +158,9 @@ def create_movement(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any
                 "item_type": item_type,
                 "item_id": item_id,
                 "from_storage_node_id": from_node_id,
-                "from_position_in_box": from_position,
+                "from_grid_cell": from_position,
                 "to_storage_node_id": from_node_id,
-                "to_position_in_box": from_position,
+                "to_grid_cell": from_position,
                 "from_location": from_location,
                 "to_location": from_location,
                 "reason": str(data.get("reason", "")).strip(),
@@ -181,8 +181,8 @@ def create_movement(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any
         cur = conn.execute(
             """
             INSERT INTO movements
-                (object_type, object_id, item_type, item_id, from_storage_node_id, from_position_in_box,
-                 to_storage_node_id, to_position_in_box, from_location_snapshot, to_location_snapshot,
+                (object_type, object_id, item_type, item_id, from_storage_node_id, from_grid_cell,
+                 to_storage_node_id, to_grid_cell, from_location_snapshot, to_location_snapshot,
                  moved_by, moved_at, reason, note)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -211,9 +211,9 @@ def rollback_movement(movement_id: int, user: dict[str, Any]) -> dict[str, Any]:
 
         object_type = str(movement["object_type"] or "")
         from_node_id = movement["from_storage_node_id"]
-        from_position = str(movement["from_position_in_box"] or "").strip() or None
+        from_position = str(movement["from_grid_cell"] or "").strip() or None
         to_node_id = movement["to_storage_node_id"]
-        to_position = str(movement["to_position_in_box"] or "").strip() or None
+        to_position = str(movement["to_grid_cell"] or "").strip() or None
 
         if object_type == "试剂":
             reagent_id = int(movement["item_id"] or 0)
@@ -294,8 +294,8 @@ def rollback_movement(movement_id: int, user: dict[str, Any]) -> dict[str, Any]:
         cur = conn.execute(
             """
             INSERT INTO movements
-                (object_type, object_id, item_type, item_id, from_storage_node_id, from_position_in_box,
-                 to_storage_node_id, to_position_in_box, from_location_snapshot, to_location_snapshot,
+                (object_type, object_id, item_type, item_id, from_storage_node_id, from_grid_cell,
+                 to_storage_node_id, to_grid_cell, from_location_snapshot, to_location_snapshot,
                  moved_by, moved_at, reason, note)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -343,7 +343,7 @@ def create_checkout(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any
     with connect() as conn:
         item, object_type, object_id = _load_movable_item(conn, item_type, item_id, "出库")
         from_node_id = item["storage_node_id"]
-        from_position = str(item["position_in_box"] or "").strip() or None
+        from_position = str(item["grid_cell"] or "").strip() or None
         from_location = row_location_snapshot(conn, item) or "未放置"
         if item_type == "sample":
             conn.execute(
@@ -368,8 +368,8 @@ def create_checkout(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any
         cur = conn.execute(
             """
             INSERT INTO movements
-                (object_type, object_id, item_type, item_id, from_storage_node_id, from_position_in_box,
-                 to_storage_node_id, to_position_in_box, from_location_snapshot, to_location_snapshot,
+                (object_type, object_id, item_type, item_id, from_storage_node_id, from_grid_cell,
+                 to_storage_node_id, to_grid_cell, from_location_snapshot, to_location_snapshot,
                  moved_by, moved_at, reason, note)
             VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, '已出库', ?, ?, ?, ?)
             """,

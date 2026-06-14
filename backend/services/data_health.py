@@ -51,9 +51,9 @@ def report() -> dict[str, Any]:
 def _consumed_reagents_with_location(conn: Any) -> dict[str, Any]:
     rows = conn.execute(
         """
-        SELECT id, code, name, status, storage_node_id, position_in_box
+        SELECT id, code, name, status, storage_node_id, grid_cell
         FROM reagents
-        WHERE status = ? AND (storage_node_id IS NOT NULL OR COALESCE(position_in_box, '') != '')
+        WHERE status = ? AND (storage_node_id IS NOT NULL OR COALESCE(grid_cell, '') != '')
         ORDER BY updated_at DESC, id DESC
         LIMIT 200
         """,
@@ -75,9 +75,9 @@ def _consumed_reagents_with_location(conn: Any) -> dict[str, Any]:
 def _consumed_samples_with_location(conn: Any) -> dict[str, Any]:
     rows = conn.execute(
         """
-        SELECT id, code, name, category, status, storage_node_id, position_in_box
+        SELECT id, code, name, category, status, storage_node_id, grid_cell
         FROM clinical_samples
-        WHERE status = ? AND (storage_node_id IS NOT NULL OR COALESCE(position_in_box, '') != '')
+        WHERE status = ? AND (storage_node_id IS NOT NULL OR COALESCE(grid_cell, '') != '')
         ORDER BY updated_at DESC, id DESC
         LIMIT 200
         """,
@@ -100,9 +100,9 @@ def _consumed_samples_with_location(conn: Any) -> dict[str, Any]:
 def _ordered_reagents_with_location(conn: Any) -> dict[str, Any]:
     rows = conn.execute(
         """
-        SELECT id, code, name, status, storage_node_id, position_in_box
+        SELECT id, code, name, status, storage_node_id, grid_cell
         FROM reagents
-        WHERE status = ? AND (storage_node_id IS NOT NULL OR COALESCE(position_in_box, '') != '')
+        WHERE status = ? AND (storage_node_id IS NOT NULL OR COALESCE(grid_cell, '') != '')
         ORDER BY updated_at DESC, id DESC
         LIMIT 200
         """,
@@ -124,12 +124,12 @@ def _ordered_reagents_with_location(conn: Any) -> dict[str, Any]:
 def _inventory_missing_storage(conn: Any) -> dict[str, Any]:
     rows = conn.execute(
         f"""
-        SELECT 'reagent' AS item_type, id, code, name, status, storage_node_id, position_in_box
+        SELECT 'reagent' AS item_type, id, code, name, status, storage_node_id, grid_cell
         FROM reagents
         WHERE status IN {PHYSICAL_INVENTORY_STATUS_SQL} AND storage_node_id IS NOT NULL
           AND storage_node_id NOT IN (SELECT id FROM storage_nodes)
         UNION ALL
-        SELECT 'sample' AS item_type, id, code, name, status, storage_node_id, position_in_box
+        SELECT 'sample' AS item_type, id, code, name, status, storage_node_id, grid_cell
         FROM clinical_samples
         WHERE status IN {PHYSICAL_INVENTORY_STATUS_SQL} AND storage_node_id IS NOT NULL
           AND storage_node_id NOT IN (SELECT id FROM storage_nodes)
@@ -153,18 +153,18 @@ def _inventory_missing_storage(conn: Any) -> dict[str, Any]:
 def _duplicate_positions(conn: Any) -> dict[str, Any]:
     rows = conn.execute(
         f"""
-        SELECT storage_node_id, position_in_box, COUNT(*) AS n,
+        SELECT storage_node_id, grid_cell, COUNT(*) AS n,
                GROUP_CONCAT(item_type || ':' || code || ' · ' || name, '；') AS objects
         FROM (
-            SELECT '试剂' AS item_type, code, name, storage_node_id, position_in_box
+            SELECT '试剂' AS item_type, code, name, storage_node_id, grid_cell
             FROM reagents
-            WHERE storage_node_id IS NOT NULL AND COALESCE(position_in_box, '') != '' AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
+            WHERE storage_node_id IS NOT NULL AND COALESCE(grid_cell, '') != '' AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
             UNION ALL
-            SELECT '标本' AS item_type, code, name, storage_node_id, position_in_box
+            SELECT '标本' AS item_type, code, name, storage_node_id, grid_cell
             FROM clinical_samples
-            WHERE storage_node_id IS NOT NULL AND COALESCE(position_in_box, '') != '' AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
+            WHERE storage_node_id IS NOT NULL AND COALESCE(grid_cell, '') != '' AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
         )
-        GROUP BY storage_node_id, position_in_box
+        GROUP BY storage_node_id, grid_cell
         HAVING COUNT(*) > 1
         ORDER BY n DESC
         LIMIT 200
@@ -176,10 +176,10 @@ def _duplicate_positions(conn: Any) -> dict[str, Any]:
         node_name = node["name"] if node else f"空间 {row['storage_node_id']}"
         examples.append({
             "storage_node_id": row["storage_node_id"],
-            "position_in_box": row["position_in_box"],
+            "grid_cell": row["grid_cell"],
             "count": row["n"],
             "objects": row["objects"],
-            "message": f"{node_name} 的 {row['position_in_box']} 被多个库存对象占用。",
+            "message": f"{node_name} 的 {row['grid_cell']} 被多个库存对象占用。",
         })
     return _item("duplicate_storage_position", "同一孔位被多个库存对象占用", "error", examples)
 

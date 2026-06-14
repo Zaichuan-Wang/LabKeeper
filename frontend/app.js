@@ -1,4 +1,4 @@
-﻿function setLoggedIn(isLoggedIn) {
+function setLoggedIn(isLoggedIn) {
   $('loginView').classList.toggle('hidden', isLoggedIn);
   $('appView').classList.toggle('hidden', !isLoggedIn);
   $('userPanel').classList.toggle('hidden', !isLoggedIn);
@@ -373,7 +373,7 @@ function wireEvents() {
   wireLocationFields('reagent', {
     extraFields: ['status', 'quantity'],
     onBeforeLoad: e => {
-      if (['status', 'quantity', 'storage_node_id', 'position_in_box'].includes(e.target.name)) syncReagentStorageFields(e.currentTarget);
+      if (['status', 'quantity', 'storage_node_id', 'grid_cell'].includes(e.target.name)) syncReagentStorageFields(e.currentTarget);
       if (e.target.name === 'quantity') syncMultiRegisterFields(e.currentTarget);
     },
   });
@@ -415,7 +415,7 @@ function wireEvents() {
       state.moveItemId = e.target.value;
       renderMoveSummary();
     }
-    if (e.target.name === 'position_in_box') {
+    if (e.target.name === 'grid_cell') {
       state.moveWell = e.target.value;
       renderMoveSummary();
       await loadLocationPicker('movement');
@@ -472,13 +472,6 @@ function wireEvents() {
       e.preventDefault();
       addSettingsOption(e.target.dataset.settingsInput);
     }
-  });
-  $('nodeForm').elements.node_type.addEventListener('change', e => {
-    const form = $('nodeForm');
-    const layout = defaultSpaceLayout(e.target.value);
-    if (!form.elements.rows.value) form.elements.rows.value = layout.rows;
-    if (!form.elements.cols.value) form.elements.cols.value = layout.cols;
-    updateNodeDimensionLabels();
   });
   $('unframedSpaceBtn')?.addEventListener('click', setSpaceUnframed);
   $('deleteSpaceBtn')?.addEventListener('click', guard(async () => { await deleteCurrentSpace($('nodeForm').elements.id.value); }));
@@ -592,7 +585,7 @@ async function moveInventoryByDrop(payload, target) {
       item_type: payload.item_type === 'sample' ? 'sample' : 'reagent',
       item_id: payload.item_id,
       to_storage_node_id: toUnplaced ? '' : nodeId,
-      position_in_box: well,
+      grid_cell: well,
       reason: '拖拽移动',
     }),
   });

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from io import BytesIO
@@ -6,7 +6,7 @@ from typing import Any
 
 from services import backup as database_backup
 from core.common import ApiError, clean_int_range, create_audit, now_text, row_dict
-from core.constants import DEFAULT_USER_PERMISSIONS, NODE_TYPE_LABELS, PERMISSIONS, ROLES
+from core.constants import DEFAULT_USER_PERMISSIONS, PERMISSIONS, ROLES
 from db.database import connect
 from services.auth import hash_password, user_permissions
 from services.excel_utils import clean_excel_cell, excel_export_cell, parse_excel_data_url
@@ -20,7 +20,6 @@ def options() -> dict[str, Any]:
     dropdowns = load_dropdown_options()
     return {
         **dropdowns,
-        "node_type_labels": NODE_TYPE_LABELS,
         "roles": ROLES,
         "permissions": PERMISSIONS,
         "default_user_permissions": DEFAULT_USER_PERMISSIONS,
@@ -308,7 +307,7 @@ def _import_sheet(conn: Any, table: str, sheet: Any, mode: str) -> dict[str, Any
         if table == "users" and "password_hash" in allowed_columns and not record.get("password_hash"):
             record["password_hash"] = hash_password("123456")
         if table == "arrivals" and not record.get("storage_node_id"):
-            record["position_in_box"] = None
+            record["grid_cell"] = None
             record["location_snapshot"] = record.get("location_snapshot") or "未归位"
         if mode == "append" and "id" in record and "id" in pk_cols:
             record.pop("id", None)

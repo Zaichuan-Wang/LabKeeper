@@ -79,22 +79,24 @@ def test_init_db_uses_lightweight_indexes(monkeypatch, tmp_path):
     assert "idx_validations_catalog_date" in names
 
 
-def test_init_db_normalizes_legacy_box_nodes(monkeypatch, tmp_path):
+def test_storage_nodes_schema_uses_single_space_model(monkeypatch, tmp_path):
     config, database = _fresh_database(monkeypatch, tmp_path)
 
     database.init_db()
-    with sqlite3.connect(config.DB_PATH) as conn:
-        conn.execute(
-            """
-            INSERT INTO storage_nodes
-                (parent_id, name, node_type, rows, cols, created_at, updated_at)
-            VALUES (1, 'Legacy Box', 'box', NULL, 12, '2026-01-01 00:00:00', '2026-01-01 00:00:00')
-            """
-        )
-        conn.commit()
-
-    database.init_db()
 
     with sqlite3.connect(config.DB_PATH) as conn:
-        row = conn.execute("SELECT node_type, rows, cols FROM storage_nodes WHERE name = 'Legacy Box'").fetchone()
-    assert row == ("space", 9, 12)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(storage_nodes)").fetchall()}
+        root = conn.execute("SELECT node_type FROM storage_nodes WHERE id = 1").fetchone()
+    assert {
+        "id",
+        "parent_id",
+        "name",
+        "node_type",
+        "location_code",
+        "rows",
+        "cols",
+        "grid_row",
+        "grid_col",
+        "sort_order",
+    } <= columns
+    assert root == ("space",)

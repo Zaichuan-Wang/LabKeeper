@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import sqlite3
 
@@ -23,7 +23,7 @@ LIGHTWEIGHT_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_reagents_category_updated ON reagents(category, updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_reagents_validation_updated ON reagents(validation_status, updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_reagents_storage_status_updated ON reagents(storage_node_id, status, updated_at DESC, id DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_reagents_storage_position_status ON reagents(storage_node_id, position_in_box, status)",
+    "CREATE INDEX IF NOT EXISTS idx_reagents_storage_position_status ON reagents(storage_node_id, grid_cell, status)",
     "CREATE INDEX IF NOT EXISTS idx_reagents_catalog_updated ON reagents(catalog_no, updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_reagents_source_aliquot ON reagents(COALESCE(source_code, code, id), aliquot_no)",
     "CREATE INDEX IF NOT EXISTS idx_clinical_samples_code ON clinical_samples(code)",
@@ -32,7 +32,7 @@ LIGHTWEIGHT_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_clinical_samples_name_updated ON clinical_samples(name, updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_clinical_samples_category_updated ON clinical_samples(category, updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_clinical_samples_storage_status_updated ON clinical_samples(storage_node_id, status, updated_at DESC, id DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_clinical_samples_storage_position_status ON clinical_samples(storage_node_id, position_in_box, status)",
+    "CREATE INDEX IF NOT EXISTS idx_clinical_samples_storage_position_status ON clinical_samples(storage_node_id, grid_cell, status)",
     "CREATE INDEX IF NOT EXISTS idx_clinical_samples_source_aliquot ON clinical_samples(COALESCE(source_code, code, id), aliquot_no)",
     "CREATE INDEX IF NOT EXISTS idx_arrivals_storage_node ON arrivals(storage_node_id)",
     "CREATE INDEX IF NOT EXISTS idx_arrivals_item_created ON arrivals(item_type, item_id, created_at DESC)",
@@ -63,7 +63,6 @@ OBSOLETE_INDEX_NAMES = (
     "idx_movements_object",
     "idx_movements_to_snapshot_moved",
     "idx_storage_nodes_parent",
-    "idx_storage_nodes_type",
     "idx_audit_logs_created",
 )
 
@@ -280,22 +279,7 @@ def _ensure_root_storage_node(conn: sqlite3.Connection) -> None:
 
 
 def _repair_known_inconsistencies(conn: sqlite3.Connection) -> None:
-    _normalize_legacy_storage_nodes(conn)
     _repair_storage_references(conn)
-
-
-def _normalize_legacy_storage_nodes(conn: sqlite3.Connection) -> None:
-    cursor = conn.execute(
-        """
-        UPDATE storage_nodes
-        SET node_type = 'space',
-            rows = COALESCE(rows, 9),
-            cols = COALESCE(cols, 9)
-        WHERE node_type = 'box'
-        """
-    )
-    if cursor.rowcount:
-        logger.info("已将 %s 个历史盒子节点转换为普通带框架空间", cursor.rowcount)
 
 
 def _repair_storage_references(conn: sqlite3.Connection) -> None:
@@ -303,7 +287,7 @@ def _repair_storage_references(conn: sqlite3.Connection) -> None:
         cursor = conn.execute(
             f"""
             UPDATE {table}
-            SET storage_node_id = NULL, position_in_box = NULL
+            SET storage_node_id = NULL, grid_cell = NULL
             WHERE storage_node_id IS NOT NULL
               AND storage_node_id NOT IN (SELECT id FROM storage_nodes)
             """

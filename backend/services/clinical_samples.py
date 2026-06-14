@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import sqlite3
 from datetime import date
@@ -180,7 +180,7 @@ def base_sample_values(data: dict[str, Any], user: dict[str, Any], source: str |
         "quantity": safe_float(data.get("quantity"), 1),
         "status": str(data.get("status", STATUS_AVAILABLE)).strip() or STATUS_AVAILABLE,
         "storage_node_id": None,
-        "position_in_box": None,
+        "grid_cell": None,
         "entry_date": str(data.get("entry_date") or date.today().isoformat()),
         "expiration_date": str(data.get("expiration_date") or "").strip(),
         "validation_status": str(data.get("validation_status") or "").strip(),
@@ -200,7 +200,7 @@ def create_sample(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     tube_count = clean_int_range(data.get("tube_count"), 1, 1, 300)
     separate_items = bool(data.get("separate_items", True))
     node_id = clean_optional_positive_int(data.get("storage_node_id"))
-    start_position = str(data.get("position_in_box", "")).strip() or None
+    start_position = str(data.get("grid_cell", "")).strip() or None
     with connect() as conn:
         if separate_items:
             items = insert_sample_tubes(conn, values, tube_count, user["id"], node_id, start_position)
@@ -214,12 +214,12 @@ def create_sample(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
 def update_sample(sample_id: int, data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     allowed = [
         "code", "source_code", "name", "category", "amount", "amount_unit", "quantity", "status",
-        "storage_node_id", "position_in_box", "entry_date", "expiration_date", "validation_status", "note",
+        "storage_node_id", "grid_cell", "entry_date", "expiration_date", "validation_status", "note",
     ]
     move_node_requested = "storage_node_id" in data
     move_node_id = data.get("storage_node_id") if move_node_requested else None
-    move_position = data.get("position_in_box", "")
-    updates = {key: data[key] for key in allowed if key in data and key not in {"storage_node_id", "position_in_box"}}
+    move_position = data.get("grid_cell", "")
+    updates = {key: data[key] for key in allowed if key in data and key not in {"storage_node_id", "grid_cell"}}
     if not updates and not move_node_requested:
         raise ApiError(400, "没有可更新字段")
     if "name" in updates and not str(updates["name"]).strip():
@@ -277,7 +277,7 @@ def create_aliquots(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any
         raise ApiError(400, "必须选择已有标本")
     tube_count = clean_int_range(data.get("tube_count"), 1, 1, 300)
     node_id = clean_optional_positive_int(data.get("storage_node_id"))
-    start_position = str(data.get("position_in_box", "")).strip() or None
+    start_position = str(data.get("grid_cell", "")).strip() or None
     with connect() as conn:
         source = conn.execute("SELECT * FROM clinical_samples WHERE id = ?", (source_id,)).fetchone()
         if source is None:

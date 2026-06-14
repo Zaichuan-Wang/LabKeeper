@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import sqlite3
 import math
@@ -21,12 +21,12 @@ from services import reagents
 REAGENT_PAYLOAD_KEYS = (
     "code", "source_code", "name", "category", "brand", "catalog_no", "amount", "amount_unit",
     "quantity", "status", "entry_date", "expiration_date", "validation_status",
-    "storage_node_id", "position_in_box", "separate_items", "note",
+    "storage_node_id", "grid_cell", "separate_items", "note",
 )
 SAMPLE_PAYLOAD_KEYS = (
     "code", "source_code", "name", "category", "tube_count", "amount", "amount_unit",
     "quantity", "status", "entry_date", "expiration_date", "validation_status",
-    "storage_node_id", "position_in_box", "separate_items", "note",
+    "storage_node_id", "grid_cell", "separate_items", "note",
 )
 
 
@@ -165,11 +165,11 @@ def _keyword_node_ids(
         return []
     lowered = keyword.lower()
     ids: set[int] = set()
-    rows = conn.execute("SELECT id, name, location_code, node_type, note FROM storage_nodes ORDER BY id LIMIT 1000").fetchall()
+    rows = conn.execute("SELECT id, name, location_code, note FROM storage_nodes ORDER BY id LIMIT 1000").fetchall()
     for row in rows:
         node_id = int(row["id"])
         path = path_cache.get(node_id, "")
-        haystack = " ".join(str(value or "") for value in (row["name"], row["location_code"], row["node_type"], row["note"], path)).lower()
+        haystack = " ".join(str(value or "") for value in (row["name"], row["location_code"], row["note"], path)).lower()
         if lowered in haystack:
             ids.update(desc_cache.get(node_id, [node_id]))
     return sorted(ids)
@@ -201,7 +201,7 @@ def _search_reagents(
         conn,
         "reagent",
         keyword,
-        ["name", "code", "source_code", "catalog_no", "brand", "category", "amount", "amount_unit", "note", "position_in_box"],
+        ["name", "code", "source_code", "catalog_no", "brand", "category", "amount", "amount_unit", "note", "grid_cell"],
         path_cache,
         desc_cache,
         clauses,
@@ -252,7 +252,7 @@ def _search_samples(
         conn,
         "sample",
         keyword,
-        ["code", "name", "category", "amount", "amount_unit", "note", "position_in_box"],
+        ["code", "name", "category", "amount", "amount_unit", "note", "grid_cell"],
         path_cache,
         desc_cache,
         clauses,
@@ -274,8 +274,8 @@ def _search_spaces(conn: sqlite3.Connection, keyword: str, limit: int, offset: i
     where = ""
     if keyword:
         like = f"%{keyword}%"
-        where = "WHERE name LIKE ? OR location_code LIKE ? OR node_type LIKE ? OR note LIKE ?"
-        params.extend([like] * 4)
+        where = "WHERE name LIKE ? OR location_code LIKE ? OR note LIKE ?"
+        params.extend([like] * 3)
     if not keyword:
         total = int(conn.execute(f"SELECT COUNT(*) AS n FROM storage_nodes {where}", params).fetchone()["n"] or 0)
     else:
@@ -288,7 +288,7 @@ def _search_spaces(conn: sqlite3.Connection, keyword: str, limit: int, offset: i
     items: list[dict[str, Any]] = []
     for row in rows:
         path = path_cache.get(int(row["id"]), "")
-        haystack = " ".join(str(value or "") for value in (row["name"], row["location_code"], row["node_type"], row["note"], path)).lower()
+        haystack = " ".join(str(value or "") for value in (row["name"], row["location_code"], row["note"], path)).lower()
         if lowered and lowered not in haystack:
             continue
         item = {
@@ -296,10 +296,9 @@ def _search_spaces(conn: sqlite3.Connection, keyword: str, limit: int, offset: i
             "id": row["id"],
             "code": row["location_code"] or row["id"],
             "name": row["name"],
-            "node_type": row["node_type"],
             "status": "",
             "display_title": row["name"],
-            "display_subtitle": "普通空间",
+            "display_subtitle": "空间",
             "display_location": path,
             "storage_location": path,
             "matched_fields": _matched_fields(keyword, {

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
 import io
@@ -152,7 +152,7 @@ def create_arrival(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
     entry_date = str(data.get("entry_date") or date.today().isoformat())
     expiration_date = str(data.get("expiration_date", "")).strip() or None
     note = str(data.get("note", "")).strip()
-    position = str(data.get("position_in_box", "")).strip() or None
+    position = str(data.get("grid_cell", "")).strip() or None
     with connect() as conn:
         order = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
         if order is None:
@@ -202,7 +202,7 @@ def create_arrival(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
             arrival = conn.execute(
                 """
                 INSERT INTO arrivals
-                    (order_id, item_type, item_id, entry_date, received_by, storage_node_id, position_in_box,
+                    (order_id, item_type, item_id, entry_date, received_by, storage_node_id, grid_cell,
                      location_snapshot, expiration_date, note, created_at)
                 VALUES (?, 'reagent', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,

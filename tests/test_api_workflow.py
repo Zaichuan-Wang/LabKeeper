@@ -23,7 +23,7 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
         app_client.post(
             "/api/storage/nodes",
             headers=auth_headers,
-            json={"parent_id": root_id, "name": "Freezer-1", "node_type": "space", "rows": 2, "cols": 3},
+            json={"parent_id": root_id, "name": "Freezer-1", "rows": 2, "cols": 3},
         ),
         201,
     )["item"]
@@ -31,7 +31,7 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
         app_client.post(
             "/api/storage/nodes",
             headers=auth_headers,
-            json={"parent_id": freezer["id"], "name": "Rack-A", "node_type": "space", "rows": 4, "cols": 4},
+            json={"parent_id": freezer["id"], "name": "Rack-A", "rows": 4, "cols": 4},
         ),
         201,
     )["item"]
@@ -39,7 +39,7 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
         app_client.post(
             "/api/storage/nodes",
             headers=auth_headers,
-            json={"parent_id": rack["id"], "name": "Frame-A", "node_type": "space", "rows": 9, "cols": 9},
+            json={"parent_id": rack["id"], "name": "Frame-A", "rows": 9, "cols": 9},
         ),
         201,
     )["item"]
@@ -48,7 +48,7 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
         app_client.post(
             "/api/storage/nodes",
             headers=auth_headers,
-            json={"parent_id": freezer["id"], "name": "Forgiving-space", "node_type": "space", "sort_order": ""},
+            json={"parent_id": freezer["id"], "name": "Forgiving-space", "sort_order": ""},
         ),
         201,
     )["item"]
@@ -68,14 +68,14 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
                 "amount_unit": "mL",
                 "status": "可用",
                 "storage_node_id": frame_space["id"],
-                "position_in_box": "A1",
+                "grid_cell": "A1",
             },
         ),
         201,
     )
     assert sample_result["count"] == 2
     sample_items = sample_result["items"]
-    assert [item["position_in_box"] for item in sample_items] == ["A1", "A2"]
+    assert [item["grid_cell"] for item in sample_items] == ["A1", "A2"]
 
     reagent = api_ok(
         app_client.post(
@@ -91,14 +91,14 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
                 "status": "可用",
                 "validation_status": "未验证",
                 "storage_node_id": frame_space["id"],
-                "position_in_box": "B1",
+                "grid_cell": "B1",
             },
         ),
         201,
     )["item"]
 
     frame_visual = api_ok(app_client.get(f"/api/storage/visual?node_id={frame_space['id']}", headers=auth_headers))
-    occupied = {item["position_in_box"]: item["code"] for item in frame_visual["frame_items"]}
+    occupied = {item["grid_cell"]: item["code"] for item in frame_visual["frame_items"]}
     assert sample_items[0]["code"] in occupied["A1"]
     assert reagent["code"] in occupied["B1"]
 
@@ -113,7 +113,7 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
                 "tube_count": 1,
                 "status": "可用",
                 "storage_node_id": frame_space["id"],
-                "position_in_box": "A9",
+                "grid_cell": "A9",
             },
         ),
         201,
@@ -130,11 +130,11 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
         app_client.get(f"/api/inventory/items/sample/{shrink_sample['id']}", headers=auth_headers)
     )["item"]
     assert shrink_detail["storage_node_id"] == frame_space["id"]
-    assert shrink_detail["position_in_box"] in ("", None)
+    assert shrink_detail["grid_cell"] in ("", None)
     frame_visual = api_ok(app_client.get(f"/api/storage/visual?node_id={frame_space['id']}", headers=auth_headers))
     direct_ids_without_position = {
         item["id"] for item in frame_visual["direct_items"]
-        if item["item_type"] == "sample" and not item.get("position_in_box")
+        if item["item_type"] == "sample" and not item.get("grid_cell")
     }
     assert shrink_sample["id"] in direct_ids_without_position
 
@@ -310,7 +310,7 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
         app_client.post(
             "/api/storage/nodes",
             headers=auth_headers,
-            json={"parent_id": freezer["id"], "name": "Empty-bin", "node_type": "space"},
+            json={"parent_id": freezer["id"], "name": "Empty-bin"},
         ),
         201,
     )["item"]
@@ -319,7 +319,7 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
         conn.execute(
             """
             INSERT INTO arrivals
-                (order_id, item_type, item_id, entry_date, received_by, storage_node_id, position_in_box, location_snapshot, expiration_date, note, created_at)
+                (order_id, item_type, item_id, entry_date, received_by, storage_node_id, grid_cell, location_snapshot, expiration_date, note, created_at)
             VALUES (NULL, 'reagent', ?, '2026-06-01', 1, ?, 'A1', 'Empty-bin / A1', '', '', '2026-06-01 09:00:00')
             """,
             (reagent["id"], empty_bin["id"]),
@@ -327,8 +327,8 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
         conn.execute(
             """
             INSERT INTO movements
-                (object_type, object_id, item_type, item_id, from_storage_node_id, from_position_in_box,
-                 to_storage_node_id, to_position_in_box, from_location_snapshot, to_location_snapshot, moved_by, moved_at, reason, note)
+                (object_type, object_id, item_type, item_id, from_storage_node_id, from_grid_cell,
+                 to_storage_node_id, to_grid_cell, from_location_snapshot, to_location_snapshot, moved_by, moved_at, reason, note)
             VALUES ('试剂', ?, 'reagent', ?, ?, 'A1', ?, 'B1', 'Empty-bin / A1', 'Empty-bin / B1', 1, '2026-06-01 10:00:00', '历史引用测试', '')
             """,
             (reagent["code"], reagent["id"], empty_bin["id"], empty_bin["id"]),
@@ -338,10 +338,10 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
     deleted = api_ok(app_client.delete(f"/api/storage/nodes/{empty_bin['id']}", headers=auth_headers))
     assert deleted["cleared_history_refs"] == {"arrivals": 1, "movement_refs": 2}
     with database.connect() as conn:
-        arrival = conn.execute("SELECT storage_node_id, position_in_box, location_snapshot FROM arrivals ORDER BY id DESC LIMIT 1").fetchone()
+        arrival = conn.execute("SELECT storage_node_id, grid_cell, location_snapshot FROM arrivals ORDER BY id DESC LIMIT 1").fetchone()
         movement = conn.execute("SELECT from_storage_node_id, to_storage_node_id FROM movements ORDER BY id DESC LIMIT 1").fetchone()
         assert arrival["storage_node_id"] is None
-        assert arrival["position_in_box"] is None
+        assert arrival["grid_cell"] is None
         assert arrival["location_snapshot"] == "Empty-bin / A1"
         assert movement["from_storage_node_id"] is None
         assert movement["to_storage_node_id"] is None
