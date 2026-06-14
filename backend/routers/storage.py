@@ -14,6 +14,13 @@ from core.security import require_admin, require_permission, require_user
 router = APIRouter(prefix="/api")
 
 
+def clean_storage_visual_node_id(value: str) -> int | None:
+    raw = str(value or "").strip()
+    if raw == str(storage_api.VIRTUAL_UNPLACED_NODE_ID):
+        return storage_api.VIRTUAL_UNPLACED_NODE_ID
+    return clean_optional_positive_int(raw)
+
+
 @router.get("/storage/tree")
 def storage_tree(_: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
     return storage_api.storage_tree()
@@ -22,7 +29,7 @@ def storage_tree(_: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
 @router.get("/storage/visual")
 def storage_visual(request: Request, _: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
     query = strict_query_params(request, {"node_id", "well", "item_type", "item_id"})
-    node_id = clean_optional_positive_int(query.get("node_id", [""])[0])
+    node_id = clean_storage_visual_node_id(query.get("node_id", [""])[0])
     selected_well = query.get("well", [""])[0].strip()
     item_type = query.get("item_type", [""])[0].strip()
     item_id = clean_optional_positive_int(query.get("item_id", [""])[0])

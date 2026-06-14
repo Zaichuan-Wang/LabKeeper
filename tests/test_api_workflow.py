@@ -211,6 +211,11 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
     assert unplaced_sample["storage_node_id"] is None
     assert unplaced_sample["storage_location"] == "未归位"
 
+    unplaced_visual = api_ok(app_client.get("/api/storage/visual?node_id=-1", headers=auth_headers))
+    assert unplaced_visual["current"]["id"] == -1
+    assert unplaced_visual["current"]["name"] == "未归位"
+    assert {item["item_type"] for item in unplaced_visual["direct_items"]} >= {"reagent", "sample"}
+
     moved = api_ok(
         app_client.post(
             "/api/movements",
