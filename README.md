@@ -352,13 +352,15 @@ db/lab_inventory.sqlite3
 
 管理员可以在系统里的“管理员 > 数据库备份”中创建备份。进行批量导入、空间结构大调整或系统升级前，建议先备份数据库。
 
-开发测试用的 Demo 数据库在：
+开发测试用的 Demo 数据库默认按需生成在：
 
 ```text
 dev_tools/demo.sqlite3
 ```
 
-`dev_tools` 只用于本机测试和演示，正式部署不要依赖其中的脚本或测试数据。
+首次点击“载入 Demo 数据库”时，如果该文件不存在，系统会用
+`dev_tools/build_demo_db.py` 自动生成；也可以手动运行该脚本重建。`dev_tools`
+只用于本机测试和演示，正式部署不要依赖其中的脚本或测试数据。
 
 ## 常见问题
 
@@ -399,11 +401,11 @@ backend/     后端 API、业务逻辑和数据库入口
 backend/routers/   API 路由入口
 backend/services/  业务逻辑
 backend/models/    请求模型和参数校验
-backend/db/        SQLite 初始化和迁移
+backend/db/        SQLite 初始化、迁移和 schema
 backend/core/      配置、权限和通用工具
 frontend/    前端页面、样式和交互脚本
 config/      下拉选项配置
-db/          SQLite schema
+db/          运行时 SQLite 数据库和本地备份
 data/        运行时数据
 dev_tools/   本机测试和 Demo 数据库
 tests/       单元测试和 API 集成测试

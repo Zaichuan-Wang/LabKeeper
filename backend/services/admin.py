@@ -6,7 +6,7 @@ from io import BytesIO
 from typing import Any
 
 from services import backup as database_backup
-from core.common import ApiError, create_audit, now_text, row_dict
+from core.common import ApiError, clean_int_range, create_audit, now_text, row_dict
 from core.constants import BOX_SPECS, DEFAULT_USER_PERMISSIONS, NODE_TYPE_LABELS, PERMISSIONS, ROLES
 from db.database import connect
 from services.auth import hash_password, user_permissions
@@ -159,7 +159,7 @@ def excel_export(query: dict[str, list[str]]) -> tuple[bytes, str, str]:
         raise ApiError(500, "Excel 功能需要安装 openpyxl") from exc
     table = query.get("table", [""])[0].strip()
     mode = query.get("mode", ["data"])[0].strip() or "data"
-    limit = int(query.get("limit", ["0"])[0] or 0)
+    limit = clean_int_range(query.get("limit", ["0"])[0], 0, 0, 100_000)
     with connect() as conn:
         names = _table_names(conn)
         if table and table not in names:

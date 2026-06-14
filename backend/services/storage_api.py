@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from core.common import ApiError, create_audit, now_text, row_dict, rows_list
+from core.common import ApiError, clean_int_range, clean_optional_positive_int, create_audit, now_text, row_dict, rows_list
 from core.constants import NODE_TYPE_LABELS
 from db.database import connect
 from services.storage_inventory import (
@@ -40,20 +40,7 @@ def is_virtual_unplaced_id(node_id: Any) -> bool:
         return False
 
 
-def storage_node_position_snapshot(conn: Any, parent_id: int | None, grid_row: Any, grid_col: Any) -> str:
-    if not parent_id:
-        return "未归位"
-    parent = get_node(conn, parent_id)
-    if parent is None:
-        return ""
-    position = None
-    if grid_row and grid_col:
-        _, cols = default_grid_for_node(str(parent["node_type"]), parent["rows"], parent["cols"])
-        position = grid_label((int(grid_row) - 1) * int(cols or 1) + int(grid_col), int(cols or 1))
-    return storage_location_text(conn, int(parent_id), position)
-
-
-def storage_node_grid_label(conn: Any, parent_id: int | None, grid_row: Any, grid_col: Any) -> str | None:
+def _grid_label_for_parent(conn: Any, parent_id: int | None, grid_row: Any, grid_col: Any) -> str | None:
     if not parent_id or not (grid_row and grid_col):
         return None
     parent = get_node(conn, parent_id)
@@ -63,14 +50,24 @@ def storage_node_grid_label(conn: Any, parent_id: int | None, grid_row: Any, gri
     return grid_label((int(grid_row) - 1) * int(cols or 1) + int(grid_col), int(cols or 1))
 
 
+def storage_node_position_snapshot(conn: Any, parent_id: int | None, grid_row: Any, grid_col: Any) -> str:
+    if not parent_id:
+        return "未归位"
+    if get_node(conn, parent_id) is None:
+        return ""
+    return storage_location_text(conn, int(parent_id), _grid_label_for_parent(conn, parent_id, grid_row, grid_col))
+
+
+def storage_node_grid_label(conn: Any, parent_id: int | None, grid_row: Any, grid_col: Any) -> str | None:
+    return _grid_label_for_parent(conn, parent_id, grid_row, grid_col)
+
+
 def validate_storage_grid_target(conn: Any, node_id: int, parent_id: int | None, grid_row: Any, grid_col: Any) -> None:
     if not parent_id or not (grid_row and grid_col):
         return
-    parent = get_node(conn, parent_id)
-    if parent is None:
+    label = _grid_label_for_parent(conn, parent_id, grid_row, grid_col)
+    if label is None:
         return
-    _, cols = default_grid_for_node(str(parent["node_type"]), parent["rows"], parent["cols"])
-    label = grid_label((int(grid_row) - 1) * int(cols or 1) + int(grid_col), int(cols or 1))
     sibling = conn.execute(
         """
         SELECT id, name FROM storage_nodes
@@ -321,7 +318,7 @@ def create_storage_node(data: dict[str, Any], user: dict[str, Any]) -> dict[str,
     cols_value = clean_node_dimension(node_type, "cols", data.get("cols"))
     timestamp = now_text()
     with connect() as conn:
-        parent_id = int(data.get("parent_id") or 0) or None
+        parent_id = clean_optional_positive_int(data.get("parent_id"))
         validate_storage_parent(conn, node_type, parent_id)
         cur = conn.execute(
             """
@@ -339,7 +336,7 @@ def create_storage_node(data: dict[str, Any], user: dict[str, Any]) -> dict[str,
                 clean_positive_int(data.get("grid_row")),
                 clean_positive_int(data.get("grid_col")),
                 str(data.get("note", "")).strip() or None,
-                int(data.get("sort_order") or 0),
+                clean_int_range(data.get("sort_order"), 0, 0, 100_000),
                 user["id"], user["id"], timestamp, timestamp,
             ),
         )
@@ -357,9 +354,11 @@ def update_storage_node(node_id: int, data: dict[str, Any], user: dict[str, Any]
     if "node_type" in updates and updates["node_type"] not in NODE_TYPE_LABELS:
         raise ApiError(400, "空间类型不正确")
     if "parent_id" in updates:
-        updates["parent_id"] = int(updates["parent_id"] or 0) or None
+        updates["parent_id"] = clean_optional_positive_int(updates["parent_id"])
         if updates["parent_id"] == node_id:
             raise ApiError(400, "父级空间不能是自己")
+    if "sort_order" in updates:
+        updates["sort_order"] = clean_int_range(updates["sort_order"], 0, 0, 100_000)
     updates["updated_by"] = user["id"]
     updates["updated_at"] = now_text()
     with connect() as conn:
@@ -421,68 +420,22 @@ def update_storage_node(node_id: int, data: dict[str, Any], user: dict[str, Any]
     return {"item": row_dict(row)}
 
 
-def _record_unplaced_moves_for_deleted_storage(
-    conn: Any, deleted_ids: list[int], user: dict[str, Any], timestamp: str, spec: tuple[str, str, str],
-) -> int:
-    table, code_column, object_type = spec
+def _clear_deleted_storage_history_references(conn: Any, deleted_ids: list[int]) -> dict[str, int]:
     placeholders = ",".join("?" for _ in deleted_ids)
-    rows = conn.execute(
-        f"SELECT id, {code_column} AS object_code, storage_node_id, position_in_box FROM {table} WHERE storage_node_id IN ({placeholders})",
-        deleted_ids,
-    ).fetchall()
-    for row in rows:
-        item_id = int(row["id"])
-        item_type = "reagent" if object_type == "试剂" else "sample"
-        from_location = storage_location_text(conn, int(row["storage_node_id"]), row["position_in_box"])
-        conn.execute(
-            """
-            INSERT INTO movements
-                (object_type, object_id, item_type, item_id, from_storage_node_id, from_position_in_box,
-                 to_storage_node_id, to_position_in_box, from_location_snapshot, to_location_snapshot,
-                 moved_by, moved_at, reason, note)
-            VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                object_type, row["object_code"] or str(item_id), item_type, item_id,
-                row["storage_node_id"], row["position_in_box"], from_location, "未归位",
-                user["id"], timestamp, "原空间删除，转入未归位", "系统自动迁移当前位置，历史快照不改。",
-            ),
-        )
-    return len(rows)
-
-
-def _repoint_deleted_storage_references(conn: Any, deleted_ids: list[int], user: dict[str, Any]) -> dict[str, int]:
-    placeholders = ",".join("?" for _ in deleted_ids)
-    timestamp = now_text()
-    counts = {"reagents": 0, "clinical_samples": 0, "arrivals": 0, "movement_refs": 0}
-
-    for key, spec in {
-        "reagents": ("reagents", "code", "试剂"),
-        "clinical_samples": ("clinical_samples", "code", "临床标本"),
-    }.items():
-        counts[key] = _record_unplaced_moves_for_deleted_storage(conn, deleted_ids, user, timestamp, spec)
-
-    conn.execute(
-        f"UPDATE reagents SET storage_node_id = NULL, position_in_box = NULL, updated_by = ?, updated_at = ? WHERE storage_node_id IN ({placeholders})",
-        [user["id"], timestamp, *deleted_ids],
-    )
-    conn.execute(
-        f"UPDATE clinical_samples SET storage_node_id = NULL, position_in_box = NULL, updated_by = ?, updated_at = ? WHERE storage_node_id IN ({placeholders})",
-        [user["id"], timestamp, *deleted_ids],
-    )
-    counts["arrivals"] = conn.execute(
+    counts = {"arrivals": 0, "movement_refs": 0}
+    counts["arrivals"] = int(conn.execute(
         f"SELECT COUNT(*) AS n FROM arrivals WHERE storage_node_id IN ({placeholders})",
         deleted_ids,
-    ).fetchone()["n"]
+    ).fetchone()["n"] or 0)
     conn.execute(
         f"UPDATE arrivals SET storage_node_id = NULL, position_in_box = NULL, location_snapshot = COALESCE(NULLIF(location_snapshot, ''), '未归位') WHERE storage_node_id IN ({placeholders})",
         deleted_ids,
     )
     for column in ("from_storage_node_id", "to_storage_node_id"):
-        counts["movement_refs"] += conn.execute(
+        counts["movement_refs"] += int(conn.execute(
             f"SELECT COUNT(*) AS n FROM movements WHERE {column} IN ({placeholders})",
             deleted_ids,
-        ).fetchone()["n"]
+        ).fetchone()["n"] or 0)
         conn.execute(
             f"UPDATE movements SET {column} = NULL WHERE {column} IN ({placeholders})",
             deleted_ids,
@@ -539,7 +492,7 @@ def delete_storage_node(node_id: int, user: dict[str, Any]) -> dict[str, Any]:
             next_node_id = next_node["id"] if next_node else None
 
         deleted_ids = [node_id]
-        reference_counts = _repoint_deleted_storage_references(conn, deleted_ids, user)
+        reference_counts = _clear_deleted_storage_history_references(conn, deleted_ids)
         placeholders = ",".join("?" for _ in deleted_ids)
         conn.execute(f"DELETE FROM storage_nodes WHERE id IN ({placeholders})", deleted_ids)
         create_audit(
@@ -548,8 +501,8 @@ def delete_storage_node(node_id: int, user: dict[str, Any]) -> dict[str, Any]:
             "api_delete_storage_node",
             "storage_nodes",
             node_id,
-            {"deleted_ids": deleted_ids, "repointed": reference_counts},
+            {"deleted_ids": deleted_ids, "cleared_history_refs": reference_counts},
             row_dict(old),
         )
         conn.commit()
-    return {"ok": True, "deleted_id": node_id, "deleted_ids": deleted_ids, "next_node_id": next_node_id, "repointed": reference_counts}
+    return {"ok": True, "deleted_id": node_id, "deleted_ids": deleted_ids, "next_node_id": next_node_id, "cleared_history_refs": reference_counts}

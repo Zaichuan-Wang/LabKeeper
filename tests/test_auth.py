@@ -1,6 +1,5 @@
 """认证模块核心逻辑测试。"""
-import time
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from services.auth import hash_password, verify_password, make_token, read_token
 

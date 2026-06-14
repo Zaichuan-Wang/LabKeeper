@@ -11,7 +11,7 @@ os.environ.setdefault("LABKEEPER_ENABLE_DEV_TOOLS", "1")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-SCHEMA_PATH = Path(__file__).resolve().parents[1] / "db" / "schema.sql"
+SCHEMA_PATH = Path(__file__).resolve().parents[1] / "backend" / "db" / "schema.sql"
 
 
 @pytest.fixture

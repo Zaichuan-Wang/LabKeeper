@@ -8,21 +8,12 @@ from fastapi.responses import JSONResponse
 from services import clinical_samples
 from services import inventory
 from services import reagents
-from core.common import ApiError
+from core.common import ApiError, clean_optional_positive_int
 from models.request_models import AliquotCreateRequest, InventoryItemCreateRequest, InventoryItemUpdateRequest
+from routers.common import json_response, query_params
 from core.security import require_permission, require_user
 
 router = APIRouter(prefix="/api")
-
-
-def json_response(payload: Any, status_code: int = 200) -> JSONResponse:
-    return JSONResponse(content=payload, status_code=status_code)
-
-
-def query_params(request: Request) -> dict[str, list[str]]:
-    from urllib.parse import parse_qs
-
-    return parse_qs(request.url.query)
 
 
 @router.get("/inventory/search")
@@ -47,7 +38,7 @@ def catalog_conflicts(request: Request, _: dict[str, Any] = Depends(require_user
     query = query_params(request)
     catalog_no = query.get("catalog_no", [""])[0]
     name = query.get("name", [""])[0]
-    exclude_id = int(query.get("exclude_id", ["0"])[0] or 0) or None
+    exclude_id = clean_optional_positive_int(query.get("exclude_id", [""])[0])
     return reagents.catalog_name_conflicts(catalog_no, name, exclude_id)
 
 
@@ -68,7 +59,7 @@ def inventory_item_timeline(request: Request, user: dict[str, Any] = Depends(req
     require_permission(user, "inventory.search")
     query = query_params(request)
     item_type = query.get("item_type", ["reagent"])[0]
-    item_id = int(query.get("id", ["0"])[0] or 0)
+    item_id = clean_optional_positive_int(query.get("id", [""])[0]) or 0
     if not item_id:
         raise ApiError(400, "库存对象不存在")
     return inventory.timeline(item_type, item_id)

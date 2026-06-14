@@ -5,7 +5,12 @@ from io import BytesIO
 from typing import Any
 
 from core.common import ApiError, create_audit, now_text, row_dict
-from core.constants import NODE_TYPE_LABELS
+from core.constants import (
+    NODE_TYPE_LABELS,
+    PHYSICAL_INVENTORY_STATUS_SQL,
+    STATUS_AVAILABLE,
+    VALIDATION_UNVERIFIED,
+)
 from db.database import connect
 from services import clinical_samples
 from services import movements
@@ -32,6 +37,49 @@ SAMPLE_EDIT_TEMPLATE_COLUMNS = [
     "状态", "入库日期", "存放空间ID", "孔位", "备注",
 ]
 
+EXCEL_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+EXCEL_IMPORT_MIMES = {EXCEL_MIME, "application/vnd.ms-excel", "application/octet-stream"}
+
+
+def _new_workbook() -> Any:
+    try:
+        from openpyxl import Workbook
+    except ImportError as exc:
+        raise ApiError(500, "Excel 功能需要安装 openpyxl") from exc
+    return Workbook()
+
+
+def _workbook_bytes(wb: Any) -> bytes:
+    buffer = BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+def _xlsx_response(wb: Any, filename: str) -> tuple[bytes, str, str]:
+    return _workbook_bytes(wb), EXCEL_MIME, filename
+
+
+def _set_column_widths(
+    ws: Any,
+    columns: list[str],
+    *,
+    minimum: int = 12,
+    maximum: int | None = 28,
+    extra: int = 8,
+    wide_columns: set[str] | None = None,
+    wide_width: int = 42,
+) -> None:
+    try:
+        from openpyxl.utils import get_column_letter
+    except ImportError as exc:
+        raise ApiError(500, "Excel 功能需要安装 openpyxl") from exc
+    wide_columns = wide_columns or set()
+    for idx, column in enumerate(columns, 1):
+        width = wide_width if column in wide_columns else max(minimum, len(column) + extra)
+        if maximum is not None:
+            width = min(maximum, width)
+        ws.column_dimensions[get_column_letter(idx)].width = width
+
 
 def _item_type(value: Any, default: str = "reagent") -> str:
     text = str(value or default).strip().lower()
@@ -51,12 +99,7 @@ def _parse_excel_data_url(value: str) -> bytes:
         raise ApiError(400, "Excel 文件数据格式不正确")
     header, payload = value.split(",", 1)
     mime = header.removeprefix("data:").split(";", 1)[0].lower()
-    allowed = {
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "application/vnd.ms-excel",
-        "application/octet-stream",
-    }
-    if mime not in allowed:
+    if mime not in EXCEL_IMPORT_MIMES:
         raise ApiError(400, "只支持 Excel 文件")
     try:
         raw = base64.b64decode(payload)
@@ -105,11 +148,6 @@ def parse_excel(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def template(query: dict[str, list[str]]) -> tuple[bytes, str, str]:
-    try:
-        from openpyxl import Workbook
-        from openpyxl.utils import get_column_letter
-    except ImportError as exc:
-        raise ApiError(500, "Excel 功能需要安装 openpyxl") from exc
     operation = query.get("operation", ["import"])[0].strip() or "import"
     item_type = _item_type(query.get("item_type", ["reagent"])[0])
     if operation == "checkout":
@@ -124,19 +162,16 @@ def template(query: dict[str, list[str]]) -> tuple[bytes, str, str]:
     else:
         columns = SAMPLE_TEMPLATE_COLUMNS if item_type == "sample" else REAGENT_TEMPLATE_COLUMNS
         filename = f"{_item_type_label(item_type)}批量导入模板.xlsx"
-    wb = Workbook()
+    wb = _new_workbook()
     ws = wb.active
     ws.title = "模板"
     ws.append(columns)
     example = _template_example(operation, item_type)
     if example:
         ws.append([example.get(column, "") for column in columns])
-    for idx, column in enumerate(columns, 1):
-        ws.column_dimensions[get_column_letter(idx)].width = max(12, min(28, len(column) + 8))
+    _set_column_widths(ws, columns)
     _append_template_help_sheet(wb, operation, item_type)
-    buffer = BytesIO()
-    wb.save(buffer)
-    return buffer.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename
+    return _xlsx_response(wb, filename)
 
 
 def _template_example(operation: str, item_type: str) -> dict[str, Any]:
@@ -148,23 +183,23 @@ def _template_example(operation: str, item_type: str) -> dict[str, Any]:
         if item_type == "sample":
             return {
                 "对象类型": "临床标本", "编号": "SP000001", "样本号": "P001", "样本类型": "组织",
-                "状态": "可用", "存放空间ID": 12, "孔位": "A1",
+                "状态": STATUS_AVAILABLE, "存放空间ID": 12, "孔位": "A1",
                 "备注": "建议从现有库存清单保留要改的行后编辑",
             }
         return {
             "对象类型": "试剂/耗材", "编号": "RG000001", "名称": "示例抗体", "类型": "抗体",
-            "数量": 1, "状态": "可用", "验证状态": "未验证", "存放空间ID": 12,
+            "数量": 1, "状态": STATUS_AVAILABLE, "验证状态": VALIDATION_UNVERIFIED, "存放空间ID": 12,
             "孔位": "A1", "备注": "建议从现有库存清单保留要改的行后编辑",
         }
     if item_type == "sample":
         return {
             "样本号": "P001", "样本类型": "血清", "规格量": 0.5, "规格单位": "mL",
-            "状态": "可用", "入库日期": "2026-06-12", "存放空间ID": 12, "孔位": "A1",
+            "状态": STATUS_AVAILABLE, "入库日期": "2026-06-12", "存放空间ID": 12, "孔位": "A1",
             "备注": "示例行，上传前请删除或改成真实标本",
         }
     return {
         "编号": "RG000001", "名称": "示例抗体", "类型": "抗体", "品牌": "CST", "货号": "12345",
-        "规格量": 100, "规格单位": "uL", "数量": 1, "状态": "可用", "验证状态": "未验证",
+        "规格量": 100, "规格单位": "uL", "数量": 1, "状态": STATUS_AVAILABLE, "验证状态": VALIDATION_UNVERIFIED,
         "入库日期": "2026-06-12", "有效期": "2027-06-12", "存放空间ID": 12, "孔位": "A1",
         "备注": "示例行，上传前请删除或改成真实试剂",
     }
@@ -204,13 +239,8 @@ def _append_template_help_sheet(wb: Any, operation: str, item_type: str) -> None
 
 
 def storage_map() -> tuple[bytes, str, str]:
-    try:
-        from openpyxl import Workbook
-        from openpyxl.utils import get_column_letter
-    except ImportError as exc:
-        raise ApiError(500, "Excel 功能需要安装 openpyxl") from exc
     columns = ["空间ID", "空间名称", "类型", "完整层级位置", "父级ID", "父级名称", "行数", "列数", "可填孔位/格位", "备注"]
-    wb = Workbook()
+    wb = _new_workbook()
     ws = wb.active
     ws.title = "空间对应表"
     ws.append(columns)
@@ -237,19 +267,29 @@ def storage_map() -> tuple[bytes, str, str]:
                 ", ".join(positions),
                 node.get("note") or "",
             ])
-    for idx, column in enumerate(columns, 1):
-        ws.column_dimensions[get_column_letter(idx)].width = 42 if column in {"完整层级位置", "可填孔位/格位"} else max(12, len(column) + 6)
-    buffer = BytesIO()
-    wb.save(buffer)
-    return buffer.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "空间ID和层级位置对应表.xlsx"
+    _set_column_widths(ws, columns, maximum=None, extra=6, wide_columns={"完整层级位置", "可填孔位/格位"})
+    return _xlsx_response(wb, "空间ID和层级位置对应表.xlsx")
+
+
+def _current_inventory_row(item: dict[str, Any], item_type: str) -> list[Any]:
+    if item_type == "sample":
+        return [
+            "临床标本", item.get("code") or item.get("id"), item.get("name") or "",
+            item.get("category") or "", "", "", item.get("amount"), item.get("amount_unit") or "",
+            item.get("quantity") or "", item.get("status") or "", "", item.get("entry_date") or "",
+            "", item.get("storage_node_id") or "", item.get("position_in_box") or "", item.get("note") or "",
+        ]
+    return [
+        "试剂/耗材", item.get("code") or item.get("id"), item.get("name") or "",
+        item.get("category") or "", item.get("brand") or "", item.get("catalog_no") or "",
+        item.get("amount"), item.get("amount_unit") or "", item.get("quantity"),
+        item.get("status") or "", item.get("validation_status") or "", item.get("entry_date") or "",
+        item.get("expiration_date") or "", item.get("storage_node_id") or "",
+        item.get("position_in_box") or "", item.get("note") or "",
+    ]
 
 
 def current_inventory(query: dict[str, list[str]]) -> tuple[bytes, str, str]:
-    try:
-        from openpyxl import Workbook
-        from openpyxl.utils import get_column_letter
-    except ImportError as exc:
-        raise ApiError(500, "Excel 功能需要安装 openpyxl") from exc
     item_type = str(query.get("item_type", ["all"])[0] or "all").strip()
     if item_type not in {"all", "reagent", "sample"}:
         item_type = "all"
@@ -257,50 +297,35 @@ def current_inventory(query: dict[str, list[str]]) -> tuple[bytes, str, str]:
         "对象类型", "编号", "名称", "类别", "品牌", "货号", "规格量", "规格单位",
         "数量", "状态", "验证状态", "入库日期", "有效期", "存放空间ID", "孔位", "备注",
     ]
-    wb = Workbook()
+    wb = _new_workbook()
     ws = wb.active
     ws.title = "现有库存"
     ws.append(columns)
     with connect() as conn:
         if item_type in {"all", "reagent"}:
             rows = conn.execute(
-                """
+                f"""
                 SELECT * FROM reagents
-                WHERE COALESCE(status, '') IN ('可用', '停用')
+                WHERE COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
                 ORDER BY updated_at DESC, id DESC
                 """
             ).fetchall()
             for row in rows:
                 item = row_dict(row) or {}
-                ws.append([
-                    "试剂/耗材", item.get("code") or item.get("id"), item.get("name") or "",
-                    item.get("category") or "", item.get("brand") or "", item.get("catalog_no") or "",
-                    item.get("amount"), item.get("amount_unit") or "", item.get("quantity"),
-                    item.get("status") or "", item.get("validation_status") or "", item.get("entry_date") or "",
-                    item.get("expiration_date") or "", item.get("storage_node_id") or "",
-                    item.get("position_in_box") or "", item.get("note") or "",
-                ])
+                ws.append(_current_inventory_row(item, "reagent"))
         if item_type in {"all", "sample"}:
             rows = conn.execute(
-                """
+                f"""
                 SELECT * FROM clinical_samples
-                WHERE status IN ('可用', '停用')
+                WHERE status IN {PHYSICAL_INVENTORY_STATUS_SQL}
                 ORDER BY updated_at DESC, id DESC
                 """
             ).fetchall()
             for row in rows:
                 item = row_dict(row) or {}
-                ws.append([
-                    "临床标本", item.get("code") or item.get("id"), item.get("name") or "",
-                    item.get("category") or "", "", "", item.get("amount"), item.get("amount_unit") or "", item.get("quantity") or "",
-                    item.get("status") or "", "", item.get("entry_date") or "", "",
-                    item.get("storage_node_id") or "", item.get("position_in_box") or "", item.get("note") or "",
-                ])
-    for idx, column in enumerate(columns, 1):
-        ws.column_dimensions[get_column_letter(idx)].width = max(12, min(24, len(column) + 8))
-    buffer = BytesIO()
-    wb.save(buffer)
-    return buffer.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "现有库存清单.xlsx"
+                ws.append(_current_inventory_row(item, "sample"))
+    _set_column_widths(ws, columns, maximum=24)
+    return _xlsx_response(wb, "现有库存清单.xlsx")
 
 
 def _resolve_storage_node(conn: Any, row: dict[str, Any], id_key: str = "存放空间ID") -> int | None:
@@ -342,7 +367,7 @@ def _normalize_import_row(conn: Any, item_type: str, row: dict[str, Any]) -> dic
             "category": category,
             "amount": row.get("规格量") or row.get("amount") or None,
             "amount_unit": str(row.get("规格单位") or row.get("amount_unit") or "").strip(),
-            "status": str(row.get("状态") or row.get("status") or "可用").strip() or "可用",
+            "status": str(row.get("状态") or row.get("status") or STATUS_AVAILABLE).strip() or STATUS_AVAILABLE,
             "entry_date": str(row.get("入库日期") or row.get("entry_date") or "").strip(),
             "storage_node_id": node_id,
             "position_in_box": str(row.get("孔位") or row.get("position_in_box") or "").strip(),
@@ -361,8 +386,8 @@ def _normalize_import_row(conn: Any, item_type: str, row: dict[str, Any]) -> dic
         "amount": row.get("规格量") or row.get("amount") or None,
         "amount_unit": str(row.get("规格单位") or row.get("单位") or row.get("amount_unit") or "").strip(),
         "quantity": row.get("数量") or row.get("quantity") or 0,
-        "status": str(row.get("状态") or row.get("status") or "可用").strip() or "可用",
-        "validation_status": str(row.get("验证状态") or row.get("validation_status") or "未验证").strip() or "未验证",
+        "status": str(row.get("状态") or row.get("status") or STATUS_AVAILABLE).strip() or STATUS_AVAILABLE,
+        "validation_status": str(row.get("验证状态") or row.get("validation_status") or VALIDATION_UNVERIFIED).strip() or VALIDATION_UNVERIFIED,
         "entry_date": str(row.get("入库日期") or row.get("entry_date") or "").strip(),
         "expiration_date": str(row.get("有效期") or row.get("expiration_date") or "").strip(),
         "storage_node_id": node_id,

@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from services import backup
-from core.common import ApiError, get_logger, now_text
+from core.common import ApiError, get_logger
 from core.config import CORS_ORIGINS, DB_PATH
 from db.database import connect, init_db
 from routers.admin import router as admin_router

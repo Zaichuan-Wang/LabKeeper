@@ -7,8 +7,9 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from core.common import ApiError, create_audit, now_text, row_dict, rows_list, safe_float
+from core.common import ApiError, clean_int_range, clean_optional_positive_int, create_audit, now_text, row_dict, rows_list, safe_float
 from core.config import ROOT, VALIDATION_IMAGE_DIR
+from core.constants import STATUS_AVAILABLE, STATUS_DISABLED, STATUS_ORDERED, VALIDATION_UNVERIFIED
 from db.database import connect
 from services.storage_inventory import (
     assign_reagent_to_node,
@@ -74,7 +75,7 @@ def create_order(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
         "quantity": safe_float(data.get("quantity"), 1),
         "reason": str(data.get("reason", "")).strip(),
         "price": None if data.get("price") in (None, "") else safe_float(data.get("price"), 0),
-        "status": "已订购",
+        "status": STATUS_ORDERED,
         "created_at": timestamp,
         "updated_at": timestamp,
     }
@@ -91,17 +92,16 @@ def create_order(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
 
 
 def clean_arrival_count(value: Any, fallback: Any = 1) -> int:
-    raw = fallback if value in (None, "") else value
     try:
-        count = int(float(raw))
+        default = int(float(fallback or 1))
     except (TypeError, ValueError):
-        count = 1
-    return max(1, min(count, 300))
+        default = 1
+    return clean_int_range(value, default, 1, 300)
 
 
 def update_order(order_id: int, data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     status = str(data.get("status", "")).strip()
-    if status not in {"已订购", "停用"}:
+    if status not in {STATUS_ORDERED, STATUS_DISABLED}:
         raise ApiError(400, "没有可更新字段")
     with connect() as conn:
         old = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
@@ -145,8 +145,8 @@ def list_arrivals() -> dict[str, Any]:
 
 
 def create_arrival(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
-    order_id = int(data.get("order_id") or 0)
-    storage_node_id = int(data.get("storage_node_id") or 0) or None
+    order_id = clean_optional_positive_int(data.get("order_id")) or 0
+    storage_node_id = clean_optional_positive_int(data.get("storage_node_id"))
     if not order_id:
         raise ApiError(400, "必须选择订购登记")
     entry_date = str(data.get("entry_date") or date.today().isoformat())
@@ -176,12 +176,13 @@ def create_arrival(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
                 INSERT INTO reagents
                     (code, source_code, aliquot_no, name, category, brand, catalog_no, amount, amount_unit, quantity, status,
                      entry_date, expiration_date, validation_status, note, created_by, updated_by, created_at, updated_at)
-                VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, '可用', ?, ?, '未验证', ?, ?, ?, ?, ?)
+                VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     source_code, aliquot_no,
                     order["name"], order["category"] or "其他", order["brand"] or "", order["catalog_no"] or "",
-                    order["amount"], order["amount_unit"] or "", row_quantity, entry_date, expiration_date, note, user["id"], user["id"], timestamp, timestamp,
+                    order["amount"], order["amount_unit"] or "", row_quantity, STATUS_AVAILABLE,
+                    entry_date, expiration_date, VALIDATION_UNVERIFIED, note, user["id"], user["id"], timestamp, timestamp,
                 ),
             )
             reagent_id = int(cur.lastrowid)

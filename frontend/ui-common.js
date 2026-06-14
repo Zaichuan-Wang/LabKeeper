@@ -1,13 +1,29 @@
 ﻿function badge(value) {
   const text = fmt(value);
   let cls = 'badge';
-  if (['已过期', '不通过', '停用', '已耗尽', '取消'].includes(text)) cls += ' danger';
-  if (['待验证', '未验证', '待复核', '已订购', 'user'].includes(text)) cls += ' warn';
+  if (['已过期', '不通过', STATUS_DISABLED, STATUS_CONSUMED, '取消'].includes(text)) cls += ' danger';
+  if (['待验证', VALIDATION_UNVERIFIED, '待复核', STATUS_ORDERED, 'user'].includes(text)) cls += ' warn';
   return `<span class="${cls}">${esc(text)}</span>`;
 }
 
 function actionButton(label, action, id, cls = 'ghost') {
   return `<button class="${cls} mini-btn" type="button" data-action="${action}" data-id="${id}">${esc(label)}</button>`;
+}
+
+function inventoryActionButtons(item, type, options = {}) {
+  const itemType = inventoryObjectType(type);
+  const detailAction = options.detailAction ?? (itemType === 'sample' ? 'inventory-sample-detail' : 'inventory-row-detail');
+  const editAction = options.editAction ?? (itemType === 'sample' ? 'sample-row-edit' : 'inventory-row-edit');
+  const moveAction = options.moveAction ?? (itemType === 'sample' ? 'sample-row-move' : 'inventory-row-move');
+  const checkoutAction = options.checkoutAction ?? (itemType === 'sample' ? 'sample-row-checkout' : 'inventory-row-checkout');
+  const showDetail = options.detail !== false;
+  const canMoveOrCheckout = inventoryObjectAvailable(item, itemType);
+  return [
+    showDetail ? actionButton('详情', detailAction, item.id) : '',
+    editAction && canManageInventory() ? actionButton('编辑', editAction, item.id) : '',
+    canMoveOrCheckout && canManageLocation() ? actionButton('移动', moveAction, item.id) : '',
+    canMoveOrCheckout ? actionButton('出库', checkoutAction, item.id, 'danger') : '',
+  ].filter(Boolean).join(' ');
 }
 
 function amountText(item) {
@@ -35,12 +51,7 @@ function inventoryColumns() {
   columns.push({
     key: 'id',
     label: '操作',
-    render: (_, r) => [
-      actionButton('详情', 'inventory-row-detail', r.id),
-      canManageInventory() ? actionButton('编辑', 'inventory-row-edit', r.id) : '',
-      inventoryObjectAvailable(r, 'reagent') ? actionButton('出库', 'inventory-row-checkout', r.id, 'danger') : '',
-      inventoryObjectAvailable(r, 'reagent') && canManageLocation() ? actionButton('移动', 'inventory-row-move', r.id) : '',
-    ].filter(Boolean).join(' '),
+    render: (_, r) => inventoryActionButtons(r, 'reagent'),
   });
   return columns;
 }
@@ -77,12 +88,7 @@ function allInventoryColumns() {
       render: (_, r) => {
         if (r.item_type === 'space') return actionButton('打开空间', 'inventory-node', r.id);
         const type = inventoryObjectType(r, r.item_type);
-        return [
-          actionButton('详情', type === 'sample' ? 'inventory-sample-detail' : 'inventory-row-detail', r.id),
-          canManageInventory() ? actionButton('编辑', type === 'sample' ? 'sample-row-edit' : 'inventory-row-edit', r.id) : '',
-          inventoryObjectAvailable(r, type) && canManageLocation() ? actionButton('移动', type === 'sample' ? 'sample-row-move' : 'inventory-row-move', r.id) : '',
-          inventoryObjectAvailable(r, type) ? actionButton('出库', type === 'sample' ? 'sample-row-checkout' : 'inventory-row-checkout', r.id, 'danger') : '',
-        ].filter(Boolean).join(' ');
+        return inventoryActionButtons(r, type);
       },
     },
   ];
@@ -93,12 +99,7 @@ function sampleInventoryColumns() {
   columns.push({
     key: 'id',
     label: '操作',
-    render: (_, r) => [
-      actionButton('详情', 'inventory-sample-detail', r.id),
-      canManageInventory() ? actionButton('编辑', 'sample-row-edit', r.id) : '',
-      inventoryObjectAvailable(r, 'sample') && canManageLocation() ? actionButton('移动', 'sample-row-move', r.id) : '',
-      inventoryObjectAvailable(r, 'sample') ? actionButton('出库', 'sample-row-checkout', r.id, 'danger') : '',
-    ].filter(Boolean).join(' '),
+    render: (_, r) => inventoryActionButtons(r, 'sample'),
   });
   return columns;
 }
@@ -267,8 +268,6 @@ function isUnframedNode(node) {
   return Boolean(node && !isBox(node) && Number(node.rows || 1) === 1 && Number(node.cols || 1) === 1);
 }
 
-function numberOrDefault(value, fallback) { return value === null || value === undefined || value === '' ? fallback : Number(value); }
-
 function storageContext(node) {
   if (!node?.path) return '';
   const parts = String(node.path).split(' / ');
@@ -371,8 +370,8 @@ function setDefaultDropdownValues() {
   const reagentForm = $('reagentForm');
   if (reagentForm && !reagentForm.elements.id.value) {
     reagentForm.elements.category.value = currentOptions('categories').includes('其他') ? '其他' : currentOptions('categories')[0] || '';
-    reagentForm.elements.status.value = currentOptions('reagent_statuses').includes('可用') ? '可用' : currentOptions('reagent_statuses')[0] || '';
-    reagentForm.elements.validation_status.value = currentOptions('validation_statuses').includes('未验证') ? '未验证' : currentOptions('validation_statuses')[0] || '';
+    reagentForm.elements.status.value = currentOptions('reagent_statuses').includes(STATUS_AVAILABLE) ? STATUS_AVAILABLE : currentOptions('reagent_statuses')[0] || '';
+    reagentForm.elements.validation_status.value = currentOptions('validation_statuses').includes(VALIDATION_UNVERIFIED) ? VALIDATION_UNVERIFIED : currentOptions('validation_statuses')[0] || '';
     if (reagentForm.elements.separate_items) reagentForm.elements.separate_items.checked = true;
   }
   const sampleForm = $('sampleForm');
@@ -380,12 +379,12 @@ function setDefaultDropdownValues() {
     sampleForm.elements.tube_count.value ||= 1;
     if (sampleForm.elements.separate_items) sampleForm.elements.separate_items.checked = true;
     sampleForm.elements.category.value ||= currentOptions('sample_names')[0] || '';
-    sampleForm.elements.status.value ||= currentOptions('sample_statuses').includes('可用') ? '可用' : currentOptions('sample_statuses')[0] || '';
+    sampleForm.elements.status.value ||= currentOptions('sample_statuses').includes(STATUS_AVAILABLE) ? STATUS_AVAILABLE : currentOptions('sample_statuses')[0] || '';
   }
   const sampleEditForm = $('sampleEditForm');
   if (sampleEditForm && !sampleEditForm.elements.id.value) {
     sampleEditForm.elements.category.value ||= currentOptions('sample_names')[0] || '';
-    sampleEditForm.elements.status.value ||= currentOptions('sample_statuses').includes('可用') ? '可用' : currentOptions('sample_statuses')[0] || '';
+    sampleEditForm.elements.status.value ||= currentOptions('sample_statuses').includes(STATUS_AVAILABLE) ? STATUS_AVAILABLE : currentOptions('sample_statuses')[0] || '';
   }
   const aliquotForm = $('aliquotForm');
   if (aliquotForm) aliquotForm.elements.tube_count.value ||= 1;
@@ -426,12 +425,10 @@ function reagentColumns(showActions = false) {
   if (showActions) columns.push({
     key: 'id',
     label: '操作',
-    render: (_, r) => [
-      actionButton('编辑', 'edit-reagent', r.id),
-      actionButton('详情', 'detail-reagent', r.id),
-      inventoryObjectAvailable(r, 'reagent') && canManageLocation() ? actionButton('移动', 'inventory-row-move', r.id) : '',
-      inventoryObjectAvailable(r, 'reagent') ? actionButton('出库', 'inventory-row-checkout', r.id, 'danger') : '',
-    ].filter(Boolean).join(' '),
+    render: (_, r) => inventoryActionButtons(r, 'reagent', {
+      detailAction: 'detail-reagent',
+      editAction: 'edit-reagent',
+    }),
   });
   return columns;
 }
@@ -449,12 +446,7 @@ function sampleColumns(showActions = false) {
   if (showActions) columns.push({
     key: 'id',
     label: '操作',
-    render: (_, r) => [
-      actionButton('详情', 'detail-sample', r.id),
-      canManageInventory() ? actionButton('编辑', 'sample-row-edit', r.id) : '',
-      inventoryObjectAvailable(r, 'sample') && canManageLocation() ? actionButton('移动', 'sample-row-move', r.id) : '',
-      inventoryObjectAvailable(r, 'sample') ? actionButton('出库', 'sample-row-checkout', r.id, 'danger') : '',
-    ].filter(Boolean).join(' '),
+    render: (_, r) => inventoryActionButtons(r, 'sample', { detailAction: 'detail-sample' }),
   });
   return columns;
 }

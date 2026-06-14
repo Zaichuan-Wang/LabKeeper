@@ -44,6 +44,16 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
         201,
     )["item"]
 
+    forgiving_space = api_ok(
+        app_client.post(
+            "/api/storage/nodes",
+            headers=auth_headers,
+            json={"parent_id": freezer["id"], "name": "Forgiving-space", "node_type": "space", "sort_order": ""},
+        ),
+        201,
+    )["item"]
+    assert forgiving_space["sort_order"] == 0
+
     sample_result = api_ok(
         app_client.post(
             "/api/inventory/items",
@@ -110,10 +120,60 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
     assert fts_search["page_size"] == 1
     assert fts_search["items"][0]["id"] == reagent["id"]
 
+    forgiving_search = api_ok(
+        app_client.get("/api/inventory/search?type=reagent&page=bad&page_size=9999&storage_node_id=bad", headers=auth_headers)
+    )
+    assert forgiving_search["page"] == 1
+    assert forgiving_search["page_size"] == 500
+
+    api_ok(app_client.get("/api/inventory/catalog-conflicts?exclude_id=bad", headers=auth_headers))
+    bad_timeline = app_client.get("/api/inventory/timeline?item_type=reagent&id=bad", headers=auth_headers)
+    assert bad_timeline.status_code == 400
+    api_ok(app_client.get("/api/storage/visual?node_id=bad&item_id=bad", headers=auth_headers))
+
+    forgiving_expiration = api_ok(app_client.get("/api/expiration?days=bad", headers=auth_headers))
+    assert forgiving_expiration["remind_days"] > 0
+    excel_export = app_client.get("/api/excel/export?limit=bad&mode=template", headers=auth_headers)
+    assert excel_export.status_code == 200
+
     sample_search = api_ok(
         app_client.get("/api/inventory/search?type=sample&keyword=P-SMOKE-001&available=1", headers=auth_headers)
     )
     assert sample_search["count"] >= 2
+
+    unplaced_reagent = api_ok(
+        app_client.post(
+            "/api/inventory/items",
+            headers=auth_headers,
+            json={
+                "item_type": "reagent",
+                "name": "Unplaced reagent",
+                "category": "抗体",
+                "quantity": 1,
+                "status": "可用",
+            },
+        ),
+        201,
+    )["item"]
+    assert unplaced_reagent["storage_node_id"] is None
+    assert unplaced_reagent["storage_location"] == "未归位"
+
+    unplaced_sample = api_ok(
+        app_client.post(
+            "/api/inventory/items",
+            headers=auth_headers,
+            json={
+                "item_type": "sample",
+                "name": "P-UNPLACED-001",
+                "category": "血清",
+                "tube_count": 1,
+                "status": "可用",
+            },
+        ),
+        201,
+    )["item"]
+    assert unplaced_sample["storage_node_id"] is None
+    assert unplaced_sample["storage_location"] == "未归位"
 
     moved = api_ok(
         app_client.post(
@@ -163,6 +223,9 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
     )
     assert denied_move.status_code == 403
 
+    occupied_delete = app_client.delete(f"/api/storage/nodes/{box['id']}", headers=auth_headers)
+    assert occupied_delete.status_code == 400
+
     limited_order = api_ok(
         app_client.post(
             "/api/orders",
@@ -172,6 +235,58 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
         201,
     )["item"]
     assert limited_order["name"] == "Limited-order"
+
+    arrival = api_ok(
+        app_client.post(
+            "/api/arrivals",
+            headers=auth_headers,
+            json={"order_id": limited_order["id"], "arrival_quantity": 1},
+        ),
+        201,
+    )
+    assert arrival["items"][0]["storage_node_id"] is None
+    assert arrival["items"][0]["storage_location"] == "未归位"
+
+    empty_bin = api_ok(
+        app_client.post(
+            "/api/storage/nodes",
+            headers=auth_headers,
+            json={"parent_id": freezer["id"], "name": "Empty-bin", "node_type": "space"},
+        ),
+        201,
+    )["item"]
+    import db.database as database
+
+    with database.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO arrivals
+                (order_id, item_type, item_id, entry_date, received_by, storage_node_id, position_in_box, location_snapshot, expiration_date, note, created_at)
+            VALUES (NULL, 'reagent', ?, '2026-06-01', 1, ?, 'A1', 'Empty-bin / A1', '', '', '2026-06-01 09:00:00')
+            """,
+            (reagent["id"], empty_bin["id"]),
+        )
+        conn.execute(
+            """
+            INSERT INTO movements
+                (object_type, object_id, item_type, item_id, from_storage_node_id, from_position_in_box,
+                 to_storage_node_id, to_position_in_box, from_location_snapshot, to_location_snapshot, moved_by, moved_at, reason, note)
+            VALUES ('试剂', ?, 'reagent', ?, ?, 'A1', ?, 'B1', 'Empty-bin / A1', 'Empty-bin / B1', 1, '2026-06-01 10:00:00', '历史引用测试', '')
+            """,
+            (reagent["code"], reagent["id"], empty_bin["id"], empty_bin["id"]),
+        )
+        conn.commit()
+
+    deleted = api_ok(app_client.delete(f"/api/storage/nodes/{empty_bin['id']}", headers=auth_headers))
+    assert deleted["cleared_history_refs"] == {"arrivals": 1, "movement_refs": 2}
+    with database.connect() as conn:
+        arrival = conn.execute("SELECT storage_node_id, position_in_box, location_snapshot FROM arrivals ORDER BY id DESC LIMIT 1").fetchone()
+        movement = conn.execute("SELECT from_storage_node_id, to_storage_node_id FROM movements ORDER BY id DESC LIMIT 1").fetchone()
+        assert arrival["storage_node_id"] is None
+        assert arrival["position_in_box"] is None
+        assert arrival["location_snapshot"] == "Empty-bin / A1"
+        assert movement["from_storage_node_id"] is None
+        assert movement["to_storage_node_id"] is None
 
 
 def test_health_hides_database_path_in_production(app_client, monkeypatch):

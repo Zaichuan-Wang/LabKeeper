@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from core.common import ApiError, create_audit, get_logger, now_text
+from core.common import ApiError, clean_int_range, create_audit, get_logger, now_text
 from core.config import BACKUP_SETTINGS_PATH, DB_PATH
 from db.database import connect
 
@@ -74,14 +74,6 @@ def _time_from_text(value: Any) -> datetime | None:
 
 def _time_text(value: datetime) -> str:
     return value.strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _clean_positive_int(value: Any, default: int, minimum: int, maximum: int) -> int:
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        number = default
-    return min(max(number, minimum), maximum)
 
 
 def verify_database_backup(path: str | Path) -> dict[str, Any]:
@@ -173,7 +165,7 @@ def delete_database_backup(filename: str, user: dict[str, Any] | None = None) ->
 
 
 def cleanup_expired_backups(days: int, user: dict[str, Any] | None = None) -> dict[str, Any]:
-    keep_days = _clean_positive_int(days, 30, 1, 3650)
+    keep_days = clean_int_range(days, 30, 1, 3650)
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     cutoff = time.time() - keep_days * 24 * 60 * 60
     deleted = []
@@ -208,8 +200,8 @@ def load_backup_settings() -> dict[str, Any]:
         except json.JSONDecodeError:
             pass
     settings["enabled"] = bool(settings.get("enabled"))
-    settings["interval_hours"] = _clean_positive_int(settings.get("interval_hours"), 24, 1, 720)
-    settings["retention_days"] = _clean_positive_int(settings.get("retention_days"), 30, 1, 3650)
+    settings["interval_hours"] = clean_int_range(settings.get("interval_hours"), 24, 1, 720)
+    settings["retention_days"] = clean_int_range(settings.get("retention_days"), 30, 1, 3650)
     settings["cleanup_on_schedule"] = bool(settings.get("cleanup_on_schedule", True))
     for key in ("last_run_at", "last_success_at", "last_error", "next_run_at"):
         settings[key] = str(settings.get(key) or "")
@@ -221,8 +213,8 @@ def save_backup_settings(data: dict[str, Any], user: dict[str, Any] | None = Non
     settings = {
         **previous,
         "enabled": bool(data.get("enabled", previous["enabled"])),
-        "interval_hours": _clean_positive_int(data.get("interval_hours", previous["interval_hours"]), previous["interval_hours"], 1, 720),
-        "retention_days": _clean_positive_int(data.get("retention_days", previous["retention_days"]), previous["retention_days"], 1, 3650),
+        "interval_hours": clean_int_range(data.get("interval_hours", previous["interval_hours"]), previous["interval_hours"], 1, 720),
+        "retention_days": clean_int_range(data.get("retention_days", previous["retention_days"]), previous["retention_days"], 1, 3650),
         "cleanup_on_schedule": bool(data.get("cleanup_on_schedule", previous["cleanup_on_schedule"])),
     }
     if settings["enabled"]:
@@ -248,7 +240,7 @@ def start_scheduler() -> None:
         if _scheduler_thread and _scheduler_thread.is_alive():
             return
         _scheduler_stop.clear()
-        _scheduler_thread = threading.Thread(target=_scheduler_loop, name="lab-position-backup-scheduler", daemon=True)
+        _scheduler_thread = threading.Thread(target=_scheduler_loop, name="labkeeper-backup-scheduler", daemon=True)
         _scheduler_thread.start()
 
 

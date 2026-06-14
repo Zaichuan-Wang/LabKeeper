@@ -13,6 +13,7 @@ from core.common import ApiError, get_logger, now_text
 from core.config import DB_PATH, IS_PRODUCTION
 from models.request_models import LoginRequest, PasswordChangeRequest
 from core.security import AUTH_COOKIE_NAME, require_admin, require_user
+from routers.common import json_response
 
 router = APIRouter()
 logger = get_logger("lab.server")
@@ -36,10 +37,6 @@ def _record_login_failure(client_ip: str) -> None:
 
 def _clear_login_failures(client_ip: str) -> None:
     _login_failures.pop(client_ip, None)
-
-
-def json_response(payload: Any, status_code: int = 200) -> JSONResponse:
-    return JSONResponse(content=payload, status_code=status_code)
 
 
 def auth_response(result: dict[str, Any], status_code: int = 200) -> JSONResponse:

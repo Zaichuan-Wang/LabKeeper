@@ -187,9 +187,9 @@ const SETTINGS_GROUPS = [
 ];
 
 const FIXED_OPTION_VALUES = {
-  reagent_statuses: ['已订购', '可用', '停用', '已耗尽'],
-  validation_statuses: ['未验证', '通过', '不通过', '待复核'],
-  sample_statuses: ['可用', '停用', '已耗尽'],
+  reagent_statuses: [STATUS_ORDERED, STATUS_AVAILABLE, STATUS_DISABLED, STATUS_CONSUMED],
+  validation_statuses: [VALIDATION_UNVERIFIED, '通过', '不通过', '待复核'],
+  sample_statuses: [STATUS_AVAILABLE, STATUS_DISABLED, STATUS_CONSUMED],
 };
 
 function fillSettingsForms() {

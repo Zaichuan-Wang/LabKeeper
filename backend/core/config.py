@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = ROOT / "db" / "lab_inventory.sqlite3"
-SCHEMA_PATH = ROOT / "db" / "schema.sql"
+SCHEMA_PATH = ROOT / "backend" / "db" / "schema.sql"
 DATA_DIR = ROOT / "data"
 VALIDATION_IMAGE_DIR = DATA_DIR / "validation_images"
 

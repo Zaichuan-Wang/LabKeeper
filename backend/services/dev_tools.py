@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import shutil
 import sqlite3
 from pathlib import Path
@@ -8,14 +9,14 @@ from typing import Any
 from services import backup
 from core import config
 from core.common import ApiError, now_text
-from db.database import connect, init_db
+from db.database import init_db
 
 
 def runtime_config() -> dict[str, Any]:
     return {
         "dev_tools_enabled": config.ENABLE_DEV_TOOLS,
         "dev_admin_username": config.DEV_ADMIN_USERNAME if config.ENABLE_DEV_TOOLS else "",
-        "demo_database_available": config.DEMO_DB_PATH.exists(),
+        "demo_database_available": config.DEMO_DB_PATH.exists() or _demo_builder_path().exists(),
     }
 
 
@@ -33,8 +34,7 @@ def load_demo_database() -> dict[str, Any]:
     require_enabled()
     demo_db_path = config.DEMO_DB_PATH
     db_path = config.DB_PATH
-    if not demo_db_path.exists():
-        raise ApiError(404, "Demo 数据库不存在，请先运行 dev_tools/build_demo_db.py")
+    generated = _ensure_demo_database(demo_db_path)
     _assert_sqlite_ok(demo_db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     backup.stop_scheduler()
@@ -48,10 +48,35 @@ def load_demo_database() -> dict[str, Any]:
     stats = _database_stats(db_path)
     return {
         "ok": True,
-        "message": "Demo 数据库已载入",
+        "message": "Demo 数据库已生成并载入" if generated else "Demo 数据库已载入",
         "backup": str(backup_path) if backup_path else "",
         "stats": stats,
     }
+
+
+def _demo_builder_path() -> Path:
+    return config.ROOT / "dev_tools" / "build_demo_db.py"
+
+
+def _ensure_demo_database(path: Path) -> bool:
+    if path.exists():
+        return False
+    builder_path = _demo_builder_path()
+    if not builder_path.exists():
+        raise ApiError(404, "Demo 数据库不存在，且缺少生成脚本 dev_tools/build_demo_db.py")
+    spec = importlib.util.spec_from_file_location("labkeeper_demo_builder", builder_path)
+    if spec is None or spec.loader is None:
+        raise ApiError(500, "Demo 数据库生成脚本无法加载")
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+        build_demo_database = getattr(module, "build_demo_database")
+        build_demo_database(path)
+    except Exception as exc:
+        raise ApiError(500, "Demo 数据库生成失败，请手动运行 dev_tools/build_demo_db.py") from exc
+    if not path.exists():
+        raise ApiError(500, "Demo 数据库生成后未找到")
+    return True
 
 
 def _assert_sqlite_ok(path: Path) -> None:

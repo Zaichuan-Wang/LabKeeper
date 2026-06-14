@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.common import ApiError, create_audit, now_text, row_dict, rows_list
+from core.common import ApiError, clean_optional_positive_int, create_audit, now_text, row_dict, rows_list
+from core.constants import STATUS_CONSUMED
 from db.database import connect
 from services.storage_inventory import (
     assign_reagent_to_node,
@@ -51,6 +52,22 @@ def movement_item(row: Any) -> dict[str, Any]:
 
 def same_storage_position(row: Any, node_id: Any, position: Any) -> bool:
     return int(row["storage_node_id"] or 0) == int(node_id or 0) and str(row["position_in_box"] or "").strip() == str(position or "").strip()
+
+
+def _load_movable_item(conn: Any, item_type: str, item_id: int, action_label: str) -> tuple[Any, str, str]:
+    if item_type == "sample":
+        item = conn.execute("SELECT * FROM clinical_samples WHERE id = ?", (item_id,)).fetchone()
+        if item is None:
+            raise ApiError(404, "临床标本不存在")
+        if not occupies_storage(item["status"]):
+            raise ApiError(409, f"只有已入库标本可以{action_label}")
+        return item, "临床标本", sample_object_id(item)
+    item = conn.execute("SELECT * FROM reagents WHERE id = ?", (item_id,)).fetchone()
+    if item is None:
+        raise ApiError(404, "试剂不存在")
+    if not occupies_storage(item["status"]):
+        raise ApiError(409, f"只有已入库试剂可以{action_label}")
+    return item, "试剂", item["code"] or str(item_id)
 
 
 def grid_row_col_from_label(conn: Any, parent_id: int | None, label: str | None) -> tuple[int | None, int | None]:
@@ -118,8 +135,8 @@ def list_movements() -> dict[str, Any]:
 
 def create_movement(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     item_type = str(data.get("item_type", "reagent")).strip() or "reagent"
-    item_id = int(data.get("item_id") or 0)
-    to_node_id = int(data.get("to_storage_node_id") or 0)
+    item_id = clean_optional_positive_int(data.get("item_id")) or 0
+    to_node_id = clean_optional_positive_int(data.get("to_storage_node_id")) or 0
     if item_type not in {"reagent", "sample"}:
         raise ApiError(400, "移动类型不正确")
     if not item_id:
@@ -128,33 +145,19 @@ def create_movement(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any
     timestamp = now_text()
     with connect() as conn:
         to_node_id = to_node_id or None
+        item, object_type, object_id = _load_movable_item(conn, item_type, item_id, "移动")
+        from_node_id = item["storage_node_id"]
+        from_position = str(item["position_in_box"] or "").strip() or None
+        from_location = row_location_snapshot(conn, item)
         if item_type == "sample":
-            item = conn.execute("SELECT * FROM clinical_samples WHERE id = ?", (item_id,)).fetchone()
-            if item is None:
-                raise ApiError(404, "临床标本不存在")
-            if not occupies_storage(item["status"]):
-                raise ApiError(409, "只有已入库标本可以移动")
-            from_node_id = item["storage_node_id"]
-            from_position = str(item["position_in_box"] or "").strip() or None
-            from_location = row_location_snapshot(conn, item)
             assign_sample_to_node(conn, item_id, to_node_id, user["id"], position)
             updated = conn.execute("SELECT * FROM clinical_samples WHERE id = ?", (item_id,)).fetchone()
             to_location = row_location_snapshot(conn, updated)
-            object_type = "临床标本"
             object_id = sample_object_id(updated)
         else:
-            item = conn.execute("SELECT * FROM reagents WHERE id = ?", (item_id,)).fetchone()
-            if item is None:
-                raise ApiError(404, "试剂不存在")
-            if not occupies_storage(item["status"]):
-                raise ApiError(409, "只有已入库试剂可以移动")
-            from_node_id = item["storage_node_id"]
-            from_position = str(item["position_in_box"] or "").strip() or None
-            from_location = row_location_snapshot(conn, item)
             assign_reagent_to_node(conn, item_id, to_node_id, user["id"], position)
             updated = conn.execute("SELECT * FROM reagents WHERE id = ?", (item_id,)).fetchone()
             to_location = row_location_snapshot(conn, updated)
-            object_type = "试剂"
             object_id = updated["code"] or str(item_id)
         cur = conn.execute(
             """
@@ -310,7 +313,7 @@ def list_checkouts() -> dict[str, Any]:
 
 def create_checkout(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     item_type = str(data.get("item_type", "reagent")).strip() or "reagent"
-    item_id = int(data.get("item_id") or 0)
+    item_id = clean_optional_positive_int(data.get("item_id")) or 0
     if item_type not in {"reagent", "sample"}:
         raise ApiError(400, "出库类型不正确")
     if not item_id:
@@ -319,44 +322,28 @@ def create_checkout(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any
     note = str(data.get("note", "")).strip()
     timestamp = now_text()
     with connect() as conn:
+        item, object_type, object_id = _load_movable_item(conn, item_type, item_id, "出库")
+        from_node_id = item["storage_node_id"]
+        from_position = str(item["position_in_box"] or "").strip() or None
+        from_location = row_location_snapshot(conn, item) or "未放置"
         if item_type == "sample":
-            item = conn.execute("SELECT * FROM clinical_samples WHERE id = ?", (item_id,)).fetchone()
-            if item is None:
-                raise ApiError(404, "临床标本不存在")
-            if not occupies_storage(item["status"]):
-                raise ApiError(409, "只有已入库标本可以出库")
-            object_type = "临床标本"
-            object_id = sample_object_id(item)
-            from_node_id = item["storage_node_id"]
-            from_position = str(item["position_in_box"] or "").strip() or None
-            from_location = row_location_snapshot(conn, item) or "未放置"
             conn.execute(
                 """
                 UPDATE clinical_samples
-                SET status = '已耗尽', updated_by = ?, updated_at = ?
+                SET status = ?, updated_by = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (user["id"], timestamp, item_id),
+                (STATUS_CONSUMED, user["id"], timestamp, item_id),
             )
             release_sample_storage(conn, item_id, user["id"])
         else:
-            item = conn.execute("SELECT * FROM reagents WHERE id = ?", (item_id,)).fetchone()
-            if item is None:
-                raise ApiError(404, "试剂不存在")
-            if not occupies_storage(item["status"]):
-                raise ApiError(409, "只有已入库试剂可以出库")
-            object_type = "试剂"
-            object_id = item["code"] or str(item_id)
-            from_node_id = item["storage_node_id"]
-            from_position = str(item["position_in_box"] or "").strip() or None
-            from_location = row_location_snapshot(conn, item) or "未放置"
             conn.execute(
                 """
                 UPDATE reagents
-                SET status = '已耗尽', quantity = 0, updated_by = ?, updated_at = ?
+                SET status = ?, quantity = 0, updated_by = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (user["id"], timestamp, item_id),
+                (STATUS_CONSUMED, user["id"], timestamp, item_id),
             )
             assign_reagent_to_node(conn, item_id, None, user["id"])
         cur = conn.execute(

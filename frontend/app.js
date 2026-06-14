@@ -29,21 +29,25 @@ function logout(show = true) {
   if (state.token) void fetch(`${state.apiBase}/api/logout`, { method: 'POST', credentials: 'include' }).catch(() => {});
   state.token = '';
   state.user = null;
-  localStorage.removeItem('lp_user');
+  localStorage.removeItem(SESSION_USER_KEY);
   setLoggedIn(false);
   if (show) toast('已退出登录');
+}
+
+async function acceptLogin(data, message) {
+  state.token = 'cookie';
+  state.user = data.user;
+  localStorage.setItem(SESSION_USER_KEY, JSON.stringify(state.user));
+  setLoggedIn(true);
+  await loadOptions();
+  switchView('dashboard');
+  toast(message);
 }
 
 async function loginWithCredentials(credentials) {
   $('loginError').textContent = '';
   const data = await api('/api/login', { method: 'POST', body: JSON.stringify(credentials) });
-  state.token = 'cookie';
-  state.user = data.user;
-  localStorage.setItem('lp_user', JSON.stringify(state.user));
-  setLoggedIn(true);
-  await loadOptions();
-  switchView('dashboard');
-  toast('登录成功');
+  await acceptLogin(data, '登录成功');
 }
 
 async function loadRuntimeConfig() {
@@ -81,13 +85,7 @@ function renderDevToolsPanel() {
 async function loginAsDevAdmin() {
   $('loginError').textContent = '';
   const data = await api('/api/dev/login', { method: 'POST', body: JSON.stringify({}) });
-  state.token = 'cookie';
-  state.user = data.user;
-  localStorage.setItem('lp_user', JSON.stringify(state.user));
-  setLoggedIn(true);
-  await loadOptions();
-  switchView('dashboard');
-  toast('已用测试管理员登录');
+  await acceptLogin(data, '已用测试管理员登录');
 }
 
 async function loadDemoDatabase() {
@@ -271,10 +269,10 @@ function applySidebarState(collapsed) {
 function initSidebarToggle() {
   const toggle = $('sidebarToggle');
   if (!toggle) return;
-  applySidebarState(localStorage.getItem('lp_sidebar_collapsed') === '1');
+  applySidebarState(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1');
   toggle.addEventListener('click', () => {
     const collapsed = !$('shell').classList.contains('sidebar-collapsed');
-    localStorage.setItem('lp_sidebar_collapsed', collapsed ? '1' : '0');
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0');
     applySidebarState(collapsed);
   });
 }
@@ -715,18 +713,28 @@ async function handleActions(e) {
   const fromInventoryDetail = btn.closest('#inventoryDetailDialog');
   if (fromPositionMenu && action !== 'position-actions') closePositionActionMenu?.();
   if (fromInventoryDetail && action !== 'close-inventory-detail') closeInventoryDetailDialog?.();
-  await handleDetailActions(action, id);
-  await handleInventoryActions(action, id, btn);
-  await handleSpaceActions(action, id, btn);
-  await handlePickerActions(action, id, btn);
-  await handleAdminActions(action, id, btn);
+  if (await handleDetailActions(action, id)) return;
+  if (await handleInventoryActions(action, id, btn)) return;
+  if (await handleSpaceActions(action, id, btn)) return;
+  if (await handlePickerActions(action, id, btn)) return;
+  if (await handleAdminActions(action, id, btn)) return;
   await handleRegistrationActions(action, id);
 }
 
 async function handleDetailActions(action, id) {
-  if (action === 'edit-reagent') await editReagent(id);
-  if (action === 'detail-reagent') renderReagentDetail(await api(inventoryObjectDetailPath('reagent', id)));
-  if (action === 'detail-sample') renderSampleDetail(await api(inventoryObjectDetailPath('sample', id)));
+  if (action === 'edit-reagent') {
+    await editReagent(id);
+    return true;
+  }
+  if (action === 'detail-reagent') {
+    renderReagentDetail(await api(inventoryObjectDetailPath('reagent', id)));
+    return true;
+  }
+  if (action === 'detail-sample') {
+    renderSampleDetail(await api(inventoryObjectDetailPath('sample', id)));
+    return true;
+  }
+  return false;
 }
 
 async function handleInventoryActions(action, id, btn) {
@@ -735,53 +743,64 @@ async function handleInventoryActions(action, id, btn) {
     state.selectedItemId = id;
     state.selectedWell = '';
     await showInventoryItemDetailDialog('reagent', id);
+    return true;
   }
   if (action === 'inventory-sample-detail') {
     state.selectedItemType = 'sample';
     state.selectedItemId = id;
     state.selectedWell = '';
     await showInventoryItemDetailDialog('sample', id);
+    return true;
   }
-  if (action === 'inventory-row-edit') await openReagentEditor(id);
-  if (action === 'sample-row-edit') await openSampleEditor(id);
-  if (action === 'inventory-row-move') await openReagentMover(id);
-  if (action === 'sample-row-move') await openInventoryMover('sample', id);
-  if (action === 'inventory-row-checkout') await openCheckout('reagent', id);
-  if (action === 'sample-row-checkout') await openCheckout('sample', id);
-  if (action === 'bulk-download-template') await downloadBulkTemplate();
-  if (action === 'bulk-download-current') await downloadBulkCurrentInventory();
-  if (action === 'bulk-download-storage-map') await downloadStorageMap();
-  if (action === 'bulk-load-excel') await loadBulkExcel();
+  if (action === 'inventory-row-edit') { await openReagentEditor(id); return true; }
+  if (action === 'sample-row-edit') { await openSampleEditor(id); return true; }
+  if (action === 'inventory-row-move') { await openReagentMover(id); return true; }
+  if (action === 'sample-row-move') { await openInventoryMover('sample', id); return true; }
+  if (action === 'inventory-row-checkout') { await openCheckout('reagent', id); return true; }
+  if (action === 'sample-row-checkout') { await openCheckout('sample', id); return true; }
+  if (action === 'bulk-download-template') { await downloadBulkTemplate(); return true; }
+  if (action === 'bulk-download-current') { await downloadBulkCurrentInventory(); return true; }
+  if (action === 'bulk-download-storage-map') { await downloadStorageMap(); return true; }
+  if (action === 'bulk-load-excel') { await loadBulkExcel(); return true; }
   if (action === 'inventory-node') {
     state.selectedNodeId = id;
     state.selectedWell = '';
     state.selectedItemType = '';
     state.selectedItemId = null;
     await loadInventory();
+    return true;
   }
   if (action === 'inventory-well') {
     state.selectedWell = id;
     state.selectedItemType = btn.dataset.type || 'reagent';
     state.selectedItemId = btn.dataset.itemId || null;
     await showInventoryItemDetailDialog(state.selectedItemType, state.selectedItemId);
+    return true;
   }
   if (action === 'inventory-reagent') {
     state.selectedItemType = 'reagent';
     state.selectedItemId = id;
     state.selectedWell = '';
     await loadInventory();
+    return true;
   }
   if (action === 'inventory-item') {
     state.selectedItemType = btn.dataset.type || 'reagent';
     state.selectedItemId = id;
     state.selectedWell = '';
     await showInventoryItemDetailDialog(state.selectedItemType, id);
+    return true;
   }
-  if (action === 'close-inventory-detail') closeInventoryDetailDialog?.();
+  if (action === 'close-inventory-detail') {
+    closeInventoryDetailDialog?.();
+    return true;
+  }
   if (action === 'table-page') {
     state.tablePages[btn.dataset.table] = Number(btn.dataset.page || 1);
     await refreshPagedTable(btn.dataset.table);
+    return true;
   }
+  return false;
 }
 
 async function refreshPagedTable(tableKey = '') {
@@ -802,10 +821,10 @@ async function refreshPagedTable(tableKey = '') {
 async function handleSpaceActions(action, id, btn) {
   const nodeId = btn.dataset.nodeId || id;
   const well = btn.dataset.well || '';
-  if (action === 'new-root-space') await startNewRootSpace();
-  if (action === 'new-child-space') await startNewChildSpace(id, btn.dataset.row || '', btn.dataset.col || '');
-  if (action === 'edit-current-space') await openSpaceEditor(id);
-  if (action === 'delete-current-space') await deleteCurrentSpace(id);
+  if (action === 'new-root-space') { await startNewRootSpace(); return true; }
+  if (action === 'new-child-space') { await startNewChildSpace(id, btn.dataset.row || '', btn.dataset.col || ''); return true; }
+  if (action === 'edit-current-space') { await openSpaceEditor(id); return true; }
+  if (action === 'delete-current-space') { await deleteCurrentSpace(id); return true; }
   if (action === 'position-actions') {
     showPositionActions({
       nodeId,
@@ -815,35 +834,55 @@ async function handleSpaceActions(action, id, btn) {
       label: btn.dataset.label || '',
       anchor: btn,
     });
+    return true;
   }
-  if (action === 'new-sample-at') await startNewSampleAt(nodeId, well);
-  if (action === 'new-reagent-at') await startNewReagentAt(nodeId, well);
-  if (action === 'move-into-space') await startMoveIntoSpace(nodeId, well);
+  if (action === 'new-sample-at') { await startNewSampleAt(nodeId, well); return true; }
+  if (action === 'new-reagent-at') { await startNewReagentAt(nodeId, well); return true; }
+  if (action === 'move-into-space') { await startMoveIntoSpace(nodeId, well); return true; }
+  return false;
 }
 
 async function handlePickerActions(action, id, btn) {
-  if (action === 'open-location-picker') await openLocationPicker(btn.dataset.kind);
-  if (action === 'close-location-picker') await closeLocationPicker();
-  if (action === 'use-storage') applySelectedStorage(id);
-  if (action === 'picker-node') await browsePickerNode(btn.dataset.kind, id);
-  if (action === 'picker-current') await applyPickerNode(btn.dataset.kind, id);
-  if (action === 'picker-well') await setPickerWell(btn.dataset.kind, id);
-  if (action === 'picker-occupied-well') toast('该孔位已占用，请选择空孔位');
+  const actions = {
+    'open-location-picker': () => openLocationPicker(btn.dataset.kind),
+    'close-location-picker': () => closeLocationPicker(),
+    'use-storage': () => applySelectedStorage(id),
+    'picker-node': () => browsePickerNode(btn.dataset.kind, id),
+    'picker-current': () => applyPickerNode(btn.dataset.kind, id),
+    'picker-well': () => setPickerWell(btn.dataset.kind, id),
+    'picker-occupied-well': () => toast('该孔位已占用，请选择空孔位'),
+  };
+  const handler = actions[action];
+  if (!handler) return false;
+  await handler();
+  return true;
 }
 
 async function handleAdminActions(action, id, btn) {
-  if (action === 'edit-user') editUser(id);
-  if (action === 'reset-user-password') await resetUserPassword(id);
-  if (action === 'settings-add') addSettingsOption(id);
-  if (action === 'settings-remove') removeSettingsOption(btn);
-  if (action === 'download-backup') await downloadBackup(id);
-  if (action === 'delete-backup') await deleteBackup(id);
+  const actions = {
+    'edit-user': () => editUser(id),
+    'reset-user-password': () => resetUserPassword(id),
+    'settings-add': () => addSettingsOption(id),
+    'settings-remove': () => removeSettingsOption(btn),
+    'download-backup': () => downloadBackup(id),
+    'delete-backup': () => deleteBackup(id),
+  };
+  const handler = actions[action];
+  if (!handler) return false;
+  await handler();
+  return true;
 }
 
 async function handleRegistrationActions(action, id) {
-  if (action === 'repeat-order-fill') fillOrderFromRepeatItem();
-  if (action === 'aliquot-use-source-location') await useAliquotSourceLocation();
-  if (action === 'rollback-movement') await rollbackMovement(id);
+  const actions = {
+    'repeat-order-fill': () => fillOrderFromRepeatItem(),
+    'aliquot-use-source-location': () => useAliquotSourceLocation(),
+    'rollback-movement': () => rollbackMovement(id),
+  };
+  const handler = actions[action];
+  if (!handler) return false;
+  await handler();
+  return true;
 }
 
 async function submitPassword(e) {

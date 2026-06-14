@@ -4,6 +4,7 @@ import json
 import re
 from typing import Any
 
+from core.constants import REAGENT_STATUSES, SAMPLE_STATUSES, VALIDATION_STATUSES
 from core.config import OPTIONS_CONFIG_PATH
 
 
@@ -24,13 +25,13 @@ DEFAULT_DROPDOWN_SETTINGS = {
         "索莱宝",
         "翌圣生物",
     ],
-    "reagent_statuses": ["已订购", "可用", "停用", "已耗尽"],
-    "validation_statuses": ["未验证", "通过", "不通过", "待复核"],
+    "reagent_statuses": list(REAGENT_STATUSES),
+    "validation_statuses": list(VALIDATION_STATUSES),
     "validation_methods": ["WB", "荧光", "流式", "IHC", "ELISA", "qPCR", "其他"],
     "sample_prefixes": ["SMP"],
     "sample_names": ["血清", "血浆", "全血", "细胞悬液", "组织", "灌洗液", "尿液", "其他", "细胞", "匀浆"],
     "amount_units": ["mL", "uL", "L", "g", "mg", "ug", "ng"],
-    "sample_statuses": ["可用", "停用", "已耗尽"],
+    "sample_statuses": list(SAMPLE_STATUSES),
 }
 
 FIXED_DROPDOWN_SETTINGS = {

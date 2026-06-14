@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import quote
-
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 
@@ -112,11 +110,7 @@ def excel_tables(user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]
 def excel_export(request: Request, user: dict[str, Any] = Depends(require_user)) -> Response:
     require_admin(user)
     body, content_type, filename = admin.excel_export(query_params(request))
-    headers: dict[str, str] = {}
-    if filename:
-        quoted = filename.replace('"', "")
-        headers["Content-Disposition"] = f"attachment; filename=\"{quoted}\"; filename*=UTF-8''{quote(quoted)}"
-    return Response(content=body, media_type=content_type, headers=headers)
+    return Response(content=body, media_type=content_type, headers=download_headers(filename, "excel_export.xlsx"))
 
 
 @router.post("/excel/import")

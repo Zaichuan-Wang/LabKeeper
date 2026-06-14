@@ -4,13 +4,18 @@ import sqlite3
 from typing import Any
 
 from core.common import ApiError, now_text, row_dict, safe_float
+from core.constants import (
+    PHYSICAL_INVENTORY_STATUSES,
+    PHYSICAL_INVENTORY_STATUS_SQL,
+    STATUS_CONSUMED,
+    STATUS_DISABLED,
+    STATUS_ORDERED,
+)
 
 INVENTORY_TABLES = {
     "reagent": "reagents",
     "sample": "clinical_samples",
 }
-
-PHYSICAL_INVENTORY_STATUSES = ("可用", "停用")
 
 
 def occupies_storage(status: str | None) -> bool:
@@ -306,14 +311,14 @@ def attach_aliquot_totals(conn: sqlite3.Connection, items: list[dict[str, Any]])
 
 def storage_item_counts(conn: sqlite3.Connection) -> dict[int, int]:
     rows = conn.execute(
-        """
+        f"""
         SELECT storage_node_id, COUNT(*) AS n
         FROM (
             SELECT storage_node_id FROM reagents
-            WHERE storage_node_id IS NOT NULL AND COALESCE(status, '') IN ('可用', '停用')
+            WHERE storage_node_id IS NOT NULL AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
             UNION ALL
             SELECT storage_node_id FROM clinical_samples
-            WHERE storage_node_id IS NOT NULL AND status IN ('可用', '停用')
+            WHERE storage_node_id IS NOT NULL AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
         )
         GROUP BY storage_node_id
         """
@@ -323,18 +328,18 @@ def storage_item_counts(conn: sqlite3.Connection) -> dict[int, int]:
 
 def unplaced_item_count(conn: sqlite3.Connection) -> int:
     row = conn.execute(
-        """
+        f"""
         SELECT SUM(n) AS n
         FROM (
             SELECT COUNT(*) AS n
             FROM reagents
             WHERE storage_node_id IS NULL
-              AND COALESCE(status, '') IN ('可用', '停用')
+              AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
             UNION ALL
             SELECT COUNT(*) AS n
             FROM clinical_samples
             WHERE storage_node_id IS NULL
-              AND status IN ('可用', '停用')
+              AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
         )
         """
     ).fetchone()
@@ -352,10 +357,10 @@ def find_position_owner(
     if not clean_position:
         return None
     reagent = conn.execute(
-        """
+        f"""
         SELECT id, code, name FROM reagents
         WHERE storage_node_id = ? AND position_in_box = ?
-          AND COALESCE(status, '') IN ('可用', '停用')
+          AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
           AND NOT (? = 'reagent' AND id = ?)
         LIMIT 1
         """,
@@ -364,10 +369,10 @@ def find_position_owner(
     if reagent:
         return {"item_type": "reagent", "code": reagent["code"] or reagent["id"], "name": reagent["name"]}
     sample = conn.execute(
-        """
+        f"""
         SELECT id, code, aliquot_no, name FROM clinical_samples
         WHERE storage_node_id = ? AND position_in_box = ?
-          AND status IN ('可用', '停用')
+          AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
           AND NOT (? = 'sample' AND id = ?)
         LIMIT 1
         """,
@@ -433,14 +438,14 @@ def inventory_items_at_node(conn: sqlite3.Connection, node_id: int, direct_only:
     reagents = [
         normalize_reagent_item(row, conn)
         for row in conn.execute(
-            f"SELECT * FROM reagents WHERE storage_node_id IN ({placeholders}) AND COALESCE(status, '') IN ('可用', '停用')",
+            f"SELECT * FROM reagents WHERE storage_node_id IN ({placeholders}) AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}",
             node_ids,
         ).fetchall()
     ]
     samples = [
         normalize_sample_item(row, conn)
         for row in conn.execute(
-            f"SELECT * FROM clinical_samples WHERE storage_node_id IN ({placeholders}) AND status IN ('可用', '停用')",
+            f"SELECT * FROM clinical_samples WHERE storage_node_id IN ({placeholders}) AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}",
             node_ids,
         ).fetchall()
     ]
@@ -454,10 +459,10 @@ def unplaced_inventory_items(conn: sqlite3.Connection, limit: int = 500) -> list
     reagents = [
         normalize_reagent_item(row, conn)
         for row in conn.execute(
-            """
+            f"""
             SELECT * FROM reagents
             WHERE storage_node_id IS NULL
-              AND COALESCE(status, '') IN ('可用', '停用')
+              AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
             ORDER BY updated_at DESC, id DESC
             LIMIT ?
             """,
@@ -467,10 +472,10 @@ def unplaced_inventory_items(conn: sqlite3.Connection, limit: int = 500) -> list
     samples = [
         normalize_sample_item(row, conn)
         for row in conn.execute(
-            """
+            f"""
             SELECT * FROM clinical_samples
             WHERE storage_node_id IS NULL
-              AND status IN ('可用', '停用')
+              AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
             ORDER BY updated_at DESC, id DESC
             LIMIT ?
             """,
@@ -570,9 +575,9 @@ def refresh_inventory_locations_at_node(conn: sqlite3.Connection, node_id: int) 
 
 
 def reagent_is_consumed(status: str | None, quantity: Any) -> bool:
-    if status == "已耗尽":
+    if status == STATUS_CONSUMED:
         return True
-    if status == "已订购":
+    if status == STATUS_ORDERED:
         return False
     try:
         return quantity is not None and safe_float(quantity, 0) <= 0
@@ -587,7 +592,7 @@ def reagent_should_leave_storage(status: str | None, quantity: Any) -> bool:
 
 def normalize_consumed_reagent_fields(values: dict[str, Any]) -> None:
     if reagent_is_consumed(str(values.get("status", "")).strip() or None, values.get("quantity")):
-        values["status"] = "已耗尽"
+        values["status"] = STATUS_CONSUMED
         values["quantity"] = 0
 
 
@@ -602,10 +607,11 @@ def release_reagent_storage(conn: sqlite3.Connection, reagent_id: int, user_id: 
     if not had_position:
         return
     timestamp = now_text()
-    status = str(reagent["status"] or "").strip() or "停用"
-    target_location = "未放置（已耗尽）" if status == "已耗尽" else "未放置（未到货）"
-    reason = "试剂耗尽" if status == "已耗尽" else "订购状态调整"
-    note = "实物已从原位置取出，试剂和验证记录保留。" if status == "已耗尽" else "状态为已订购，未形成可占用位置的实物库存。"
+    status = str(reagent["status"] or "").strip() or STATUS_DISABLED
+    consumed = status == STATUS_CONSUMED
+    target_location = "未放置（已耗尽）" if consumed else "未放置（未到货）"
+    reason = "试剂耗尽" if consumed else "订购状态调整"
+    note = "实物已从原位置取出，试剂和验证记录保留。" if consumed else "状态为已订购，未形成可占用位置的实物库存。"
     assign_reagent_to_node(conn, reagent_id, None, user_id)
     if from_location:
         conn.execute(

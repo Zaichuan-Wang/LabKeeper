@@ -1,8 +1,17 @@
-﻿const state = {
+﻿const SESSION_USER_KEY = 'labkeeper_user';
+const SIDEBAR_COLLAPSED_KEY = 'labkeeper_sidebar_collapsed';
+const STATUS_ORDERED = '已订购';
+const STATUS_AVAILABLE = '可用';
+const STATUS_DISABLED = '停用';
+const STATUS_CONSUMED = '已耗尽';
+const VALIDATION_UNVERIFIED = '未验证';
+const PHYSICAL_INVENTORY_STATUSES = new Set([STATUS_AVAILABLE, STATUS_DISABLED]);
+
+const state = {
   // ── 会话 ──
   apiBase: getApiBase(),
-  token: localStorage.getItem('lp_user') ? 'cookie' : '',
-  user: JSON.parse(localStorage.getItem('lp_user') || 'null'),
+  token: localStorage.getItem(SESSION_USER_KEY) ? 'cookie' : '',
+  user: readStoredUser(),
   runtime: { dev_tools_enabled: false, dev_admin_username: '', demo_database_available: false },
   options: null,
   view: 'dashboard',
@@ -54,6 +63,15 @@ function getApiBase() {
   const { protocol, hostname, port } = window.location;
   if ((hostname === '127.0.0.1' || hostname === 'localhost') && port && port !== '8000') return `${protocol}//${hostname}:8000`;
   return '';
+}
+
+function readStoredUser() {
+  try {
+    return JSON.parse(localStorage.getItem(SESSION_USER_KEY) || 'null');
+  } catch {
+    localStorage.removeItem(SESSION_USER_KEY);
+    return null;
+  }
 }
 
 const $ = id => document.getElementById(id);
@@ -211,7 +229,7 @@ function inventoryObjectSelectLabel(item, fallbackType = 'reagent') {
 
 function inventoryObjectAvailable(item, fallbackType = 'reagent') {
   if (!item) return false;
-  return ['可用', '停用'].includes(item.status);
+  return PHYSICAL_INVENTORY_STATUSES.has(item.status);
 }
 
 async function searchInventoryObjects({ type = 'all', keyword = '', available = false, limit = 80, explicitId = null, params = {}, purpose = 'form' } = {}) {

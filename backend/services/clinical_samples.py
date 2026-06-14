@@ -4,7 +4,8 @@ import sqlite3
 from datetime import date
 from typing import Any
 
-from core.common import ApiError, create_audit, now_text, row_dict, safe_float
+from core.common import ApiError, clean_int_range, clean_optional_positive_int, create_audit, now_text, row_dict, safe_float
+from core.constants import STATUS_AVAILABLE
 from db.database import connect
 from services.options_config import dropdown_values
 from services.storage_inventory import (
@@ -78,21 +79,6 @@ def ensure_unique_sample_aliquot(
         raise ApiError(409, "该来源标本下已存在相同管号，请修改标本来源或管号。")
 
 
-def clean_optional_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        return None
-    return number if number > 0 else None
-
-
-def clean_count(value: Any, default: int = 1) -> int:
-    number = clean_optional_int(value)
-    return min(number or default, 300)
-
-
 def normalize_sample_rows(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
     return attach_aliquot_totals(conn, [normalize_sample_item(row, conn) for row in rows])
 
@@ -102,9 +88,9 @@ def list_samples(query: dict[str, list[str]]) -> dict[str, Any]:
     name = query.get("name", [""])[0].strip()
     category = query.get("category", [""])[0].strip()
     status = query.get("status", [""])[0].strip()
-    storage_node_id = int(query.get("storage_node_id", ["0"])[0] or 0)
+    storage_node_id = clean_int_range(query.get("storage_node_id", ["0"])[0], 0, 0, 1_000_000)
     include_descendants = query.get("include_descendants", ["1"])[0] != "0"
-    limit = min(int(query.get("limit", ["200"])[0] or 200), 500)
+    limit = clean_int_range(query.get("limit", ["200"])[0], 200, 1, 500)
     clauses: list[str] = []
     params: list[Any] = []
     if keyword:
@@ -243,7 +229,7 @@ def base_sample_values(data: dict[str, Any], user: dict[str, Any], source: str |
         "amount": None if data.get("amount") in (None, "") else safe_float(data.get("amount"), 0),
         "amount_unit": str(data.get("amount_unit", "") or "").strip(),
         "quantity": safe_float(data.get("quantity"), 1),
-        "status": str(data.get("status", "可用")).strip() or "可用",
+        "status": str(data.get("status", STATUS_AVAILABLE)).strip() or STATUS_AVAILABLE,
         "storage_node_id": None,
         "position_in_box": None,
         "entry_date": str(data.get("entry_date") or date.today().isoformat()),
@@ -262,9 +248,9 @@ def base_sample_values(data: dict[str, Any], user: dict[str, Any], source: str |
 
 def create_sample(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     values = base_sample_values(data, user)
-    tube_count = clean_count(data.get("tube_count"), 1)
+    tube_count = clean_int_range(data.get("tube_count"), 1, 1, 300)
     separate_items = bool(data.get("separate_items", True))
-    node_id = int(data.get("storage_node_id") or 0) or None
+    node_id = clean_optional_positive_int(data.get("storage_node_id"))
     start_position = str(data.get("position_in_box", "")).strip() or None
     with connect() as conn:
         if separate_items:
@@ -294,7 +280,7 @@ def update_sample(sample_id: int, data: dict[str, Any], user: dict[str, Any]) ->
     if "amount_unit" in updates:
         updates["amount_unit"] = str(updates["amount_unit"] or "").strip()
     if "status" in updates:
-        updates["status"] = str(updates["status"] or "").strip() or "可用"
+        updates["status"] = str(updates["status"] or "").strip() or STATUS_AVAILABLE
         if updates["status"] not in dropdown_values("sample_statuses"):
             raise ApiError(400, "标本状态不正确")
     if "quantity" in updates:
@@ -329,7 +315,7 @@ def update_sample(sample_id: int, data: dict[str, Any], user: dict[str, Any]) ->
         if not occupies_storage(current["status"]):
             release_sample_storage(conn, sample_id, user["id"])
         elif move_node_requested:
-            target_node_id = int(move_node_id or 0) or None
+            target_node_id = clean_optional_positive_int(move_node_id)
             assign_sample_to_node(conn, sample_id, target_node_id, user["id"], str(move_position or "").strip() or None)
         create_audit(conn, user["id"], "api_update_clinical_sample", "clinical_samples", sample_id, data, row_dict(old))
         conn.commit()
@@ -337,11 +323,11 @@ def update_sample(sample_id: int, data: dict[str, Any], user: dict[str, Any]) ->
 
 
 def create_aliquots(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
-    source_id = int(data.get("source_item_id") or 0)
+    source_id = clean_optional_positive_int(data.get("source_item_id")) or 0
     if not source_id:
         raise ApiError(400, "必须选择已有标本")
-    tube_count = clean_count(data.get("tube_count"), 1)
-    node_id = int(data.get("storage_node_id") or 0) or None
+    tube_count = clean_int_range(data.get("tube_count"), 1, 1, 300)
+    node_id = clean_optional_positive_int(data.get("storage_node_id"))
     start_position = str(data.get("position_in_box", "")).strip() or None
     with connect() as conn:
         source = conn.execute("SELECT * FROM clinical_samples WHERE id = ?", (source_id,)).fetchone()
@@ -356,7 +342,7 @@ def create_aliquots(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any
             "source_code": source["source_code"] or source["code"],
             "amount": source["amount"] if data.get("amount") in (None, "") else safe_float(data.get("amount"), 0),
             "amount_unit": str(data.get("amount_unit", "")).strip() or source["amount_unit"],
-            "status": "可用",
+            "status": STATUS_AVAILABLE,
             "entry_date": str(data.get("entry_date") or date.today().isoformat()),
             "note": f"由 {source['source_code'] or source['code']} 分装" + (f"；{note}" if note else ""),
         }

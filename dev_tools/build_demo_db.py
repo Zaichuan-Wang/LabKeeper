@@ -4,36 +4,44 @@ import os
 import sqlite3
 import sys
 from pathlib import Path
-from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
-SCHEMA_PATH = ROOT / "db" / "schema.sql"
+SCHEMA_PATH = ROOT / "backend" / "db" / "schema.sql"
 DEMO_DB_PATH = ROOT / "dev_tools" / "demo.sqlite3"
 
 # This script is a local demo-data builder. Keep it isolated from production
 # config so it can rebuild dev_tools/demo.sqlite3 from any checkout state.
-os.environ["LABKEEPER_ENV"] = "development"
-sys.path.insert(0, str(BACKEND))
+os.environ.setdefault("LABKEEPER_ENV", "development")
+if str(BACKEND) not in sys.path:
+    sys.path.insert(0, str(BACKEND))
 
 from services.auth import hash_password  # noqa: E402
+from core.constants import PHYSICAL_INVENTORY_STATUSES, PHYSICAL_INVENTORY_STATUS_SQL  # noqa: E402
 
-PHYSICAL_STATUSES = {"可用", "停用"}
 BULK_REAGENT_COUNT = 220
 BULK_SAMPLE_GROUP_COUNT = 120
 BULK_ORDER_COUNT = 80
 
 
 def main() -> None:
-    remove_sqlite_files(DEMO_DB_PATH)
-    DEMO_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(DEMO_DB_PATH) as conn:
+    path = build_demo_database()
+    print(f"Demo database written: {path}")
+
+
+def build_demo_database(path: Path = DEMO_DB_PATH) -> Path:
+    remove_sqlite_files(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         seed(conn)
         assert_integrity(conn)
-    print(f"Demo database written: {DEMO_DB_PATH}")
+    finally:
+        conn.close()
+    return path
 
 
 def remove_sqlite_files(path: Path) -> None:
@@ -209,7 +217,7 @@ def seed_reagents(conn: sqlite3.Connection, positions: PositionAllocator, now: s
         for offset in range(count):
             reagent_id = next_id
             code = f"RG{reagent_id:06d}"
-            placed_node_id = storage_node_id if status in PHYSICAL_STATUSES else None
+            placed_node_id = storage_node_id if status in PHYSICAL_INVENTORY_STATUSES else None
             position = positions.next(placed_node_id)
             conn.execute(
                 """
@@ -368,7 +376,7 @@ def seed_samples(conn: sqlite3.Connection, positions: PositionAllocator, now: st
         for offset in range(count):
             sample_id = next_id
             code = f"SP{sample_id:06d}"
-            placed_node_id = storage_node_id if status in PHYSICAL_STATUSES else None
+            placed_node_id = storage_node_id if status in PHYSICAL_INVENTORY_STATUSES else None
             position = positions.next(placed_node_id)
             conn.execute(
                 """
@@ -650,9 +658,9 @@ def seed_movements(
         movement_id += 1
 
     reagent_rows = conn.execute(
-        """
+        f"""
         SELECT id, entry_date FROM reagents
-        WHERE storage_node_id IS NOT NULL AND COALESCE(status, '') IN ('可用', '停用')
+        WHERE storage_node_id IS NOT NULL AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
         ORDER BY id
         """
     ).fetchall()
@@ -660,9 +668,9 @@ def seed_movements(
         add_movement("reagent", int(row["id"]), stamp(row["entry_date"], "10:30:00"), "Demo 入库", "随 Demo 数据自动生成")
 
     sample_rows = conn.execute(
-        """
+        f"""
         SELECT id, entry_date FROM clinical_samples
-        WHERE storage_node_id IS NOT NULL AND status IN ('可用', '停用')
+        WHERE storage_node_id IS NOT NULL AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
         ORDER BY id
         """
     ).fetchall()

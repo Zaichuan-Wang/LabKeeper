@@ -5,7 +5,8 @@ import re
 import math
 from typing import Any
 
-from core.common import ApiError
+from core.common import ApiError, clean_int_range
+from core.constants import PHYSICAL_INVENTORY_STATUS_SQL
 from db.database import connect
 from services.storage_inventory import (
     attach_aliquot_totals,
@@ -16,6 +17,18 @@ from services.storage_inventory import (
 )
 from services import clinical_samples
 from services import reagents
+
+
+REAGENT_PAYLOAD_KEYS = (
+    "code", "source_code", "name", "category", "brand", "catalog_no", "amount", "amount_unit",
+    "quantity", "status", "entry_date", "expiration_date", "validation_status",
+    "storage_node_id", "position_in_box", "separate_items", "note",
+)
+SAMPLE_PAYLOAD_KEYS = (
+    "code", "source_code", "name", "category", "tube_count", "amount", "amount_unit",
+    "quantity", "status", "entry_date", "expiration_date", "validation_status",
+    "storage_node_id", "position_in_box", "separate_items", "note",
+)
 
 
 def clean_item_type(value: Any) -> str:
@@ -34,11 +47,7 @@ def _copy_present(data: dict[str, Any], key: str, payload: dict[str, Any]) -> No
 
 def reagent_payload(data: dict[str, Any]) -> dict[str, Any]:
     payload: dict[str, Any] = {}
-    for key in (
-        "code", "source_code", "name", "category", "brand", "catalog_no", "amount", "amount_unit",
-        "quantity", "status", "entry_date", "expiration_date", "validation_status",
-        "storage_node_id", "position_in_box", "separate_items", "note",
-    ):
+    for key in REAGENT_PAYLOAD_KEYS:
         _copy_present(data, key, payload)
     return payload
 
@@ -47,11 +56,7 @@ def sample_payload(data: dict[str, Any]) -> dict[str, Any]:
     if str(data.get("brand") or "").strip() or str(data.get("catalog_no") or "").strip():
         raise ApiError(400, "临床标本不填写品牌或货号")
     payload: dict[str, Any] = {}
-    for key in (
-        "code", "source_code", "name", "category", "tube_count", "amount", "amount_unit",
-        "quantity", "status", "entry_date", "expiration_date", "validation_status",
-        "storage_node_id", "position_in_box", "separate_items", "note",
-    ):
+    for key in SAMPLE_PAYLOAD_KEYS:
         _copy_present(data, key, payload)
     return payload
 
@@ -93,25 +98,17 @@ def _clean_type(value: str) -> str:
 
 
 def _clean_limit(value: str) -> int:
-    try:
-        limit = int(value or 80)
-    except ValueError:
-        limit = 80
-    return max(1, min(limit, 500))
+    return clean_int_range(value, 80, 1, 500)
 
 
 def _clean_page(value: str) -> int:
-    try:
-        page = int(value or 1)
-    except ValueError:
-        page = 1
-    return max(1, page)
+    return clean_int_range(value, 1, 1, 1_000_000)
 
 
 def _pagination(query: dict[str, list[str]]) -> tuple[int, int, int]:
     page_size = _clean_limit(_query_value(query, "page_size") or _query_value(query, "limit", "80"))
     page = _clean_page(_query_value(query, "page", "1"))
-    offset = max(0, int(_query_value(query, "offset", "") or ((page - 1) * page_size)))
+    offset = clean_int_range(_query_value(query, "offset", ""), (page - 1) * page_size, 0, 1_000_000)
     return page, page_size, offset
 
 
@@ -184,7 +181,7 @@ def _storage_clause(
     params: list[Any],
     desc_cache: dict[int, list[int]] | None = None,
 ) -> None:
-    storage_node_id = int(_query_value(query, "storage_node_id", "0") or 0)
+    storage_node_id = clean_int_range(_query_value(query, "storage_node_id", "0"), 0, 0, 1_000_000)
     if not storage_node_id:
         return
     include_descendants = _query_value(query, "include_descendants", "1") != "0"
@@ -238,7 +235,7 @@ def _search_reagents(
         clauses.append("status = ?")
         params.append(status)
     if available_only:
-        clauses.append("COALESCE(status, '') IN ('可用', '停用')")
+        clauses.append(f"COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}")
     _append_keyword_clause(
         conn,
         "reagent",
@@ -289,7 +286,7 @@ def _search_samples(
         clauses.append("status = ?")
         params.append(status)
     if available_only:
-        clauses.append("status IN ('可用', '停用')")
+        clauses.append(f"status IN {PHYSICAL_INVENTORY_STATUS_SQL}")
     _append_keyword_clause(
         conn,
         "sample",
@@ -457,27 +454,49 @@ def _actor(row: Any) -> str:
     return str(row["actor_name"] or row["username"] or "") if "actor_name" in row.keys() else ""
 
 
+def _timeline_event(
+    *,
+    time: Any,
+    event_type: str,
+    title: str,
+    summary: str,
+    actor: str = "",
+    related_table: str,
+    related_id: Any,
+    **extra: Any,
+) -> dict[str, Any]:
+    event = {
+        "time": time,
+        "event_type": event_type,
+        "title": title,
+        "summary": summary,
+        "actor": actor,
+        "related_table": related_table,
+        "related_id": related_id,
+    }
+    event.update(extra)
+    return event
+
+
 def _sample_events(conn: Any, sample: Any) -> list[dict[str, Any]]:
     item_id = int(sample["id"])
-    events = [{
-        "time": sample["created_at"],
-        "event_type": "sample_created",
-        "title": "标本入库",
-        "summary": f"登记标本 {sample['code']}，样本号 {sample['name']}，类型 {sample['category'] or '未填写'}。",
-        "actor": "",
-        "related_table": "clinical_samples",
-        "related_id": item_id,
-    }]
+    events = [_timeline_event(
+        time=sample["created_at"],
+        event_type="sample_created",
+        title="标本入库",
+        summary=f"登记标本 {sample['code']}，样本号 {sample['name']}，类型 {sample['category'] or '未填写'}。",
+        related_table="clinical_samples",
+        related_id=item_id,
+    )]
     if sample["source_code"] and sample["source_code"] != sample["code"]:
-        events.append({
-            "time": sample["created_at"],
-            "event_type": "aliquot",
-            "title": "分装生成",
-            "summary": f"由 {sample['source_code']} 分装生成，当前管号 {sample['aliquot_no'] or '-'}。",
-            "actor": "",
-            "related_table": "clinical_samples",
-            "related_id": item_id,
-        })
+        events.append(_timeline_event(
+            time=sample["created_at"],
+            event_type="aliquot",
+            title="分装生成",
+            summary=f"由 {sample['source_code']} 分装生成，当前管号 {sample['aliquot_no'] or '-'}。",
+            related_table="clinical_samples",
+            related_id=item_id,
+        ))
     events.extend(_movement_events(conn, "sample", item_id))
     events.extend(_audit_events(conn, "clinical_samples", item_id, "信息修改"))
     return events
@@ -486,15 +505,14 @@ def _sample_events(conn: Any, sample: Any) -> list[dict[str, Any]]:
 def _reagent_events(conn: Any, reagent: Any) -> list[dict[str, Any]]:
     item_id = int(reagent["id"])
     catalog_no = str(reagent["catalog_no"] or "").strip()
-    events = [{
-        "time": reagent["created_at"],
-        "event_type": "reagent_created",
-        "title": "试剂入库",
-        "summary": f"登记试剂 {reagent['code']}，名称 {reagent['name']}。",
-        "actor": "",
-        "related_table": "reagents",
-        "related_id": item_id,
-    }]
+    events = [_timeline_event(
+        time=reagent["created_at"],
+        event_type="reagent_created",
+        title="试剂入库",
+        summary=f"登记试剂 {reagent['code']}，名称 {reagent['name']}。",
+        related_table="reagents",
+        related_id=item_id,
+    )]
     events.extend(_arrival_events(conn, item_id))
     if catalog_no:
         events.extend(_validation_events(conn, catalog_no))
@@ -515,16 +533,16 @@ def _arrival_events(conn: Any, reagent_id: int) -> list[dict[str, Any]]:
         (reagent_id,),
     ).fetchall()
     return [
-        {
-            "time": row["created_at"] or row["entry_date"],
-            "event_type": "arrival",
-            "title": "到货入库",
-            "summary": f"到货入库到 {row['location_snapshot'] or '未归位'}。",
-            "actor": _actor(row),
-            "to_location": row["location_snapshot"],
-            "related_table": "arrivals",
-            "related_id": row["id"],
-        }
+        _timeline_event(
+            time=row["created_at"] or row["entry_date"],
+            event_type="arrival",
+            title="到货入库",
+            summary=f"到货入库到 {row['location_snapshot'] or '未归位'}。",
+            actor=_actor(row),
+            related_table="arrivals",
+            related_id=row["id"],
+            to_location=row["location_snapshot"],
+        )
         for row in rows
     ]
 
@@ -541,13 +559,15 @@ def _validation_events(conn: Any, catalog_no: str) -> list[dict[str, Any]]:
         (catalog_no,),
     ).fetchall()
     return [
-        {
-            "time": row["created_at"] or row["validation_date"],
-            "event_type": "validation",
-            "title": "货号验证",
-            "summary": f"货号 {catalog_no} 在 {row['method'] or '未填写方法'} 中结果为 {row['result'] or '未填写'}。",
-            "actor": _actor(row),
-            "details": {
+        _timeline_event(
+            time=row["created_at"] or row["validation_date"],
+            event_type="validation",
+            title="货号验证",
+            summary=f"货号 {catalog_no} 在 {row['method'] or '未填写方法'} 中结果为 {row['result'] or '未填写'}。",
+            actor=_actor(row),
+            related_table="validations",
+            related_id=row["id"],
+            details={
                 "catalog_no": catalog_no,
                 "validation_date": row["validation_date"],
                 "method": row["method"],
@@ -557,9 +577,7 @@ def _validation_events(conn: Any, catalog_no: str) -> list[dict[str, Any]]:
                 "image_path": row["image_path"],
                 "created_at": row["created_at"],
             },
-            "related_table": "validations",
-            "related_id": row["id"],
-        }
+        )
         for row in rows
     ]
 
@@ -583,17 +601,17 @@ def _movement_events(conn: Any, item_type: str, item_id: int) -> list[dict[str, 
             title = "移动回滚"
         elif row["reverted_by_movement_id"]:
             title = "已被回滚的移动"
-        events.append({
-            "time": row["moved_at"],
-            "event_type": "movement",
-            "title": title,
-            "summary": f"从 {row['from_location_snapshot'] or '未归位'} 到 {row['to_location_snapshot'] or '未归位'}" + (f"，原因：{reason}" if reason else ""),
-            "actor": _actor(row),
-            "from_location": row["from_location_snapshot"],
-            "to_location": row["to_location_snapshot"],
-            "related_table": "movements",
-            "related_id": row["id"],
-        })
+        events.append(_timeline_event(
+            time=row["moved_at"],
+            event_type="movement",
+            title=title,
+            summary=f"从 {row['from_location_snapshot'] or '未归位'} 到 {row['to_location_snapshot'] or '未归位'}" + (f"，原因：{reason}" if reason else ""),
+            actor=_actor(row),
+            related_table="movements",
+            related_id=row["id"],
+            from_location=row["from_location_snapshot"],
+            to_location=row["to_location_snapshot"],
+        ))
     return events
 
 
@@ -613,13 +631,13 @@ def _audit_events(conn: Any, table: str, item_id: int, title: str) -> list[dict[
         action = str(row["action"] or "")
         if "create" in action:
             continue
-        events.append({
-            "time": row["created_at"],
-            "event_type": "audit",
-            "title": title,
-            "summary": "管理员或维护人员更新了该对象信息。",
-            "actor": _actor(row),
-            "related_table": "audit_logs",
-            "related_id": row["id"],
-        })
+        events.append(_timeline_event(
+            time=row["created_at"],
+            event_type="audit",
+            title=title,
+            summary="管理员或维护人员更新了该对象信息。",
+            actor=_actor(row),
+            related_table="audit_logs",
+            related_id=row["id"],
+        ))
     return events

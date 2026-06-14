@@ -3,13 +3,19 @@
 from datetime import date, timedelta
 from typing import Any
 
-from core.common import ApiError, create_audit, now_text, row_dict, rows_list, safe_float
+from core.common import ApiError, clean_int_range, clean_optional_positive_int, create_audit, now_text, row_dict, rows_list, safe_float
 from core.config import EXPIRATION_REMIND_DAYS
+from core.constants import (
+    PHYSICAL_INVENTORY_STATUS_SQL,
+    STATUS_AVAILABLE,
+    STATUS_CONSUMED,
+    STATUS_DISABLED,
+    VALIDATION_UNVERIFIED,
+)
 from db.database import connect
 from services.storage_inventory import (
     assign_reagent_to_node,
     attach_aliquot_totals,
-    computed_storage_location,
     descendant_node_ids,
     normalize_consumed_reagent_fields,
     normalize_reagent_item,
@@ -26,43 +32,45 @@ def dashboard() -> dict[str, Any]:
         total_samples = conn.execute("SELECT COUNT(*) AS n FROM clinical_samples").fetchone()["n"]
         total_inventory = total_reagents + total_samples
         unplaced_reagents = conn.execute(
-            "SELECT COUNT(*) AS n FROM reagents WHERE storage_node_id IS NULL AND COALESCE(status, '') IN ('可用', '停用')",
+            f"SELECT COUNT(*) AS n FROM reagents WHERE storage_node_id IS NULL AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}",
         ).fetchone()["n"]
         unplaced_samples = conn.execute(
-            "SELECT COUNT(*) AS n FROM clinical_samples WHERE storage_node_id IS NULL AND status IN ('可用', '停用')",
+            f"SELECT COUNT(*) AS n FROM clinical_samples WHERE storage_node_id IS NULL AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}",
         ).fetchone()["n"]
         pending_orders = conn.execute(
             """
             SELECT COUNT(*) AS n
             FROM orders o
-            WHERE COALESCE(o.status, '') != '停用'
+            WHERE COALESCE(o.status, '') != ?
               AND NOT EXISTS (SELECT 1 FROM arrivals a WHERE a.order_id = o.id)
-            """
+            """,
+            (STATUS_DISABLED,),
         ).fetchone()["n"]
         todo_validations = conn.execute(
-            """
+            f"""
             SELECT COUNT(*) AS n FROM reagents
-            WHERE validation_status IN ('未验证', '待复核')
-              AND COALESCE(status, '') IN ('可用', '停用')
-            """
+            WHERE validation_status IN (?, '待复核')
+              AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
+            """,
+            (VALIDATION_UNVERIFIED,),
         ).fetchone()["n"]
         today = date.today().isoformat()
         until = (date.today() + timedelta(days=EXPIRATION_REMIND_DAYS)).isoformat()
         overdue_count = conn.execute(
-            """
+            f"""
             SELECT COUNT(*) AS n FROM reagents
             WHERE expiration_date IS NOT NULL AND expiration_date != ''
               AND date(expiration_date) < date(?)
-              AND COALESCE(status, '') IN ('可用', '停用')
+              AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
             """,
             (today,),
         ).fetchone()["n"]
         upcoming_count = conn.execute(
-            """
+            f"""
             SELECT COUNT(*) AS n FROM reagents
             WHERE expiration_date IS NOT NULL AND expiration_date != ''
               AND date(expiration_date) >= date(?) AND date(expiration_date) <= date(?)
-              AND COALESCE(status, '') IN ('可用', '停用')
+              AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
             """,
             (today, until),
         ).fetchone()["n"]
@@ -113,9 +121,9 @@ def list_reagents(query: dict[str, list[str]]) -> dict[str, Any]:
     category = query.get("category", [""])[0].strip()
     status = query.get("status", [""])[0].strip()
     validation_status = query.get("validation_status", [""])[0].strip()
-    storage_node_id = int(query.get("storage_node_id", ["0"])[0] or 0)
+    storage_node_id = clean_int_range(query.get("storage_node_id", ["0"])[0], 0, 0, 1_000_000)
     include_descendants = query.get("include_descendants", ["1"])[0] != "0"
-    limit = min(int(query.get("limit", ["200"])[0] or 200), 500)
+    limit = clean_int_range(query.get("limit", ["200"])[0], 200, 1, 500)
     clauses: list[str] = []
     params: list[Any] = []
     if category:
@@ -191,14 +199,6 @@ def reagent_detail(reagent_id: int) -> dict[str, Any]:
     return {"item": items[0], "validations": rows_list(validations), "arrivals": rows_list(arrivals), "movements": rows_list(movements)}
 
 
-def clean_item_count(value: Any, default: int = 1) -> int:
-    try:
-        count = int(float(value if value not in (None, "") else default))
-    except (TypeError, ValueError):
-        count = default
-    return max(1, min(count, 300))
-
-
 def split_count_from_quantity(quantity: Any) -> int:
     try:
         number = float(quantity)
@@ -249,12 +249,12 @@ def create_reagent(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
         "amount": None if data.get("amount") in (None, "") else safe_float(data.get("amount"), 0),
         "amount_unit": str(data.get("amount_unit", "")).strip(),
         "quantity": safe_float(data.get("quantity"), 0),
-        "status": str(data.get("status", "可用")).strip() or "可用",
+        "status": str(data.get("status", STATUS_AVAILABLE)).strip() or STATUS_AVAILABLE,
         "storage_node_id": None,
         "position_in_box": str(data.get("position_in_box", "")).strip(),
         "entry_date": str(data.get("entry_date", "")).strip(),
         "expiration_date": str(data.get("expiration_date", "")).strip(),
-        "validation_status": str(data.get("validation_status", "未验证")).strip() or "未验证",
+        "validation_status": str(data.get("validation_status", VALIDATION_UNVERIFIED)).strip() or VALIDATION_UNVERIFIED,
         "note": str(data.get("note", "")).strip(),
         "created_by": user["id"],
         "updated_by": user["id"],
@@ -264,7 +264,7 @@ def create_reagent(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
     normalize_consumed_reagent_fields(values)
     separate_items = bool(data.get("separate_items", True))
     item_count = split_count_from_quantity(values["quantity"]) if separate_items else 1
-    node_id = int(data.get("storage_node_id") or 0) or None
+    node_id = clean_optional_positive_int(data.get("storage_node_id"))
     start_position = str(data.get("position_in_box", "")).strip() or None
     with connect() as conn:
         if separate_items and item_count > 1:
@@ -328,8 +328,8 @@ def update_reagent(reagent_id: int, data: dict[str, Any], user: dict[str, Any]) 
         quantity_for_rule = updates.get("quantity", old["quantity"])
         normalize_patch = {"status": status_for_rule, "quantity": quantity_for_rule}
         normalize_consumed_reagent_fields(normalize_patch)
-        if normalize_patch["status"] == "已耗尽":
-            updates["status"] = "已耗尽"
+        if normalize_patch["status"] == STATUS_CONSUMED:
+            updates["status"] = STATUS_CONSUMED
             updates["quantity"] = 0
         if updates:
             assignments = ", ".join(f"{key} = ?" for key in updates)
@@ -339,7 +339,7 @@ def update_reagent(reagent_id: int, data: dict[str, Any], user: dict[str, Any]) 
         if leave_storage:
             release_reagent_storage(conn, reagent_id, user["id"])
         elif move_node_requested:
-            target_node_id = int(move_node_id or 0) or None
+            target_node_id = clean_optional_positive_int(move_node_id)
             assign_reagent_to_node(conn, reagent_id, target_node_id, user["id"], str(move_position or "").strip() or None)
         create_audit(conn, user["id"], "api_update_reagent", "reagents", reagent_id, data, row_dict(old))
         conn.commit()
@@ -360,20 +360,12 @@ def _next_reagent_aliquot_no(conn: Any, source_code: str) -> int:
     return int(row["n"] or 0) + 1
 
 
-def _clean_aliquot_count(value: Any, default: int = 1) -> int:
-    try:
-        count = int(value or default)
-    except (TypeError, ValueError):
-        count = default
-    return max(1, min(count, 300))
-
-
 def create_reagent_aliquots(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
-    source_id = int(data.get("source_item_id") or 0)
+    source_id = clean_optional_positive_int(data.get("source_item_id")) or 0
     if not source_id:
         raise ApiError(400, "必须选择要分装的试剂/耗材")
-    aliquot_count = _clean_aliquot_count(data.get("tube_count"), 1)
-    node_id = int(data.get("storage_node_id") or 0) or None
+    aliquot_count = clean_int_range(data.get("tube_count"), 1, 1, 300)
+    node_id = clean_optional_positive_int(data.get("storage_node_id"))
     start_position = str(data.get("position_in_box", "")).strip() or None
     timestamp = now_text()
     with connect() as conn:
@@ -401,12 +393,12 @@ def create_reagent_aliquots(data: dict[str, Any], user: dict[str, Any]) -> dict[
                 "amount": source["amount"],
                 "amount_unit": source["amount_unit"] or "",
                 "quantity": quantity,
-                "status": source["status"] or "可用",
+                "status": source["status"] or STATUS_AVAILABLE,
                 "storage_node_id": None,
                 "position_in_box": None,
                 "entry_date": source["entry_date"] or date.today().isoformat(),
                 "expiration_date": source["expiration_date"] or "",
-                "validation_status": source["validation_status"] or "未验证",
+                "validation_status": source["validation_status"] or VALIDATION_UNVERIFIED,
                 "note": aliquot_note,
                 "created_by": user["id"],
                 "updated_by": user["id"],
@@ -434,27 +426,27 @@ def create_reagent_aliquots(data: dict[str, Any], user: dict[str, Any]) -> dict[
 def expiration(query: dict[str, list[str]] | None = None) -> dict[str, Any]:
     days = EXPIRATION_REMIND_DAYS
     if query is not None:
-        days = max(1, min(int(query.get("days", [str(EXPIRATION_REMIND_DAYS)])[0] or EXPIRATION_REMIND_DAYS), 180))
+        days = clean_int_range(query.get("days", [str(EXPIRATION_REMIND_DAYS)])[0], EXPIRATION_REMIND_DAYS, 1, 180)
     today = date.today().isoformat()
     until = (date.today() + timedelta(days=days)).isoformat()
     with connect() as conn:
         overdue = conn.execute(
-            """
+            f"""
             SELECT id, code, name, category, quantity, storage_node_id, position_in_box, expiration_date, status
             FROM reagents
             WHERE expiration_date IS NOT NULL AND expiration_date != '' AND date(expiration_date) < date(?)
-              AND COALESCE(status, '') IN ('可用', '停用')
+              AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
             ORDER BY expiration_date ASC LIMIT 100
             """,
             (today,),
         ).fetchall()
         upcoming = conn.execute(
-            """
+            f"""
             SELECT id, code, name, category, quantity, storage_node_id, position_in_box, expiration_date, status
             FROM reagents
             WHERE expiration_date IS NOT NULL AND expiration_date != ''
               AND date(expiration_date) >= date(?) AND date(expiration_date) <= date(?)
-              AND COALESCE(status, '') IN ('可用', '停用')
+              AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
             ORDER BY expiration_date ASC LIMIT 100
             """,
             (today, until),
@@ -465,21 +457,23 @@ def expiration(query: dict[str, list[str]] | None = None) -> dict[str, Any]:
                    0 AS arrival_count,
                    '未到货' AS arrival_status
             FROM orders o LEFT JOIN users u ON u.id = o.requester_id
-            WHERE COALESCE(o.status, '') != '停用'
+            WHERE COALESCE(o.status, '') != ?
               AND NOT EXISTS (SELECT 1 FROM arrivals a WHERE a.order_id = o.id)
             ORDER BY o.updated_at DESC LIMIT 500
-            """
+            """,
+            (STATUS_DISABLED,),
         ).fetchall()
         unvalidated_antibodies = conn.execute(
-            """
+            f"""
             SELECT id, code, name, category, brand, catalog_no, quantity,
                    storage_node_id, position_in_box, expiration_date, status, validation_status, updated_at
             FROM reagents
             WHERE (category LIKE '%抗体%' OR name LIKE '%抗体%' OR name LIKE '%antibody%' OR name LIKE '%Anti-%')
-              AND COALESCE(validation_status, '') IN ('未验证', '待复核')
-              AND COALESCE(status, '') IN ('可用', '停用')
+              AND COALESCE(validation_status, '') IN (?, '待复核')
+              AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
             ORDER BY updated_at DESC LIMIT 500
-            """
+            """,
+            (VALIDATION_UNVERIFIED,),
         ).fetchall()
     return {
         "overdue": attach_aliquot_totals(conn, [normalize_reagent_item(row, conn) for row in overdue]),

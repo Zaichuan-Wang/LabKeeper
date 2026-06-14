@@ -7,7 +7,7 @@ from fastapi import Request
 from services import auth
 from core.common import ApiError
 
-AUTH_COOKIE_NAME = "lp_token"
+AUTH_COOKIE_NAME = "labkeeper_token"
 
 
 def require_user(request: Request) -> dict[str, Any]:

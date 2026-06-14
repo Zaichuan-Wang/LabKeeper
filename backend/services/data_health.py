@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.common import now_text, row_dict
+from core.constants import PHYSICAL_INVENTORY_STATUS_SQL, STATUS_CONSUMED, STATUS_ORDERED
 from db.database import connect
 from services.storage_inventory import computed_storage_location
 
@@ -52,10 +53,11 @@ def _consumed_reagents_with_location(conn: Any) -> dict[str, Any]:
         """
         SELECT id, code, name, status, storage_node_id, position_in_box
         FROM reagents
-        WHERE status = '已耗尽' AND (storage_node_id IS NOT NULL OR COALESCE(position_in_box, '') != '')
+        WHERE status = ? AND (storage_node_id IS NOT NULL OR COALESCE(position_in_box, '') != '')
         ORDER BY updated_at DESC, id DESC
         LIMIT 200
-        """
+        """,
+        (STATUS_CONSUMED,),
     ).fetchall()
     examples = [
         {
@@ -67,7 +69,7 @@ def _consumed_reagents_with_location(conn: Any) -> dict[str, Any]:
         }
         for row in rows
     ]
-    return _item("consumed_reagent_has_location", "已耗尽试剂仍占位置", "error", examples)
+    return _item("consumed_reagent_has_location", "已耗尽试剂仍有位置记录", "error", examples)
 
 
 def _consumed_samples_with_location(conn: Any) -> dict[str, Any]:
@@ -75,10 +77,11 @@ def _consumed_samples_with_location(conn: Any) -> dict[str, Any]:
         """
         SELECT id, code, name, category, status, storage_node_id, position_in_box
         FROM clinical_samples
-        WHERE status = '已耗尽' AND (storage_node_id IS NOT NULL OR COALESCE(position_in_box, '') != '')
+        WHERE status = ? AND (storage_node_id IS NOT NULL OR COALESCE(position_in_box, '') != '')
         ORDER BY updated_at DESC, id DESC
         LIMIT 200
-        """
+        """,
+        (STATUS_CONSUMED,),
     ).fetchall()
     examples = [
         {
@@ -91,7 +94,7 @@ def _consumed_samples_with_location(conn: Any) -> dict[str, Any]:
         }
         for row in rows
     ]
-    return _item("consumed_sample_has_location", "已耗尽标本仍占位置", "error", examples)
+    return _item("consumed_sample_has_location", "已耗尽标本仍有位置记录", "error", examples)
 
 
 def _ordered_reagents_with_location(conn: Any) -> dict[str, Any]:
@@ -99,10 +102,11 @@ def _ordered_reagents_with_location(conn: Any) -> dict[str, Any]:
         """
         SELECT id, code, name, status, storage_node_id, position_in_box
         FROM reagents
-        WHERE status = '已订购' AND (storage_node_id IS NOT NULL OR COALESCE(position_in_box, '') != '')
+        WHERE status = ? AND (storage_node_id IS NOT NULL OR COALESCE(position_in_box, '') != '')
         ORDER BY updated_at DESC, id DESC
         LIMIT 200
-        """
+        """,
+        (STATUS_ORDERED,),
     ).fetchall()
     examples = [
         {
@@ -114,20 +118,20 @@ def _ordered_reagents_with_location(conn: Any) -> dict[str, Any]:
         }
         for row in rows
     ]
-    return _item("ordered_reagent_has_location", "已订购试剂仍占位置", "error", examples)
+    return _item("ordered_reagent_has_location", "已订购试剂仍有位置记录", "error", examples)
 
 
 def _inventory_missing_storage(conn: Any) -> dict[str, Any]:
     rows = conn.execute(
-        """
+        f"""
         SELECT 'reagent' AS item_type, id, code, name, status, storage_node_id, position_in_box
         FROM reagents
-        WHERE status IN ('可用', '停用') AND storage_node_id IS NOT NULL
+        WHERE status IN {PHYSICAL_INVENTORY_STATUS_SQL} AND storage_node_id IS NOT NULL
           AND storage_node_id NOT IN (SELECT id FROM storage_nodes)
         UNION ALL
         SELECT 'sample' AS item_type, id, code, name, status, storage_node_id, position_in_box
         FROM clinical_samples
-        WHERE status IN ('可用', '停用') AND storage_node_id IS NOT NULL
+        WHERE status IN {PHYSICAL_INVENTORY_STATUS_SQL} AND storage_node_id IS NOT NULL
           AND storage_node_id NOT IN (SELECT id FROM storage_nodes)
         LIMIT 200
         """
@@ -148,17 +152,17 @@ def _inventory_missing_storage(conn: Any) -> dict[str, Any]:
 
 def _duplicate_positions(conn: Any) -> dict[str, Any]:
     rows = conn.execute(
-        """
+        f"""
         SELECT storage_node_id, position_in_box, COUNT(*) AS n,
                GROUP_CONCAT(item_type || ':' || code || ' · ' || name, '；') AS objects
         FROM (
             SELECT '试剂' AS item_type, code, name, storage_node_id, position_in_box
             FROM reagents
-            WHERE storage_node_id IS NOT NULL AND COALESCE(position_in_box, '') != '' AND status IN ('可用', '停用')
+            WHERE storage_node_id IS NOT NULL AND COALESCE(position_in_box, '') != '' AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
             UNION ALL
             SELECT '标本' AS item_type, code, name, storage_node_id, position_in_box
             FROM clinical_samples
-            WHERE storage_node_id IS NOT NULL AND COALESCE(position_in_box, '') != '' AND status IN ('可用', '停用')
+            WHERE storage_node_id IS NOT NULL AND COALESCE(position_in_box, '') != '' AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
         )
         GROUP BY storage_node_id, position_in_box
         HAVING COUNT(*) > 1

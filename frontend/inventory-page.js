@@ -55,23 +55,39 @@ function syncInventoryObjectSelect(select, items, selectedId, placeholder, itemT
   return select?.value || null;
 }
 
-async function loadMoveItems() {
-  const form = $('movementForm');
+async function syncSelectableInventoryPicker({
+  form,
+  typeStateKey,
+  idStateKey,
+  itemsStateKey,
+  action,
+}) {
   if (!form) return;
-  if (state.moveItemType && optionExists(form.elements.item_type, state.moveItemType)) {
-    form.elements.item_type.value = state.moveItemType;
+  if (state[typeStateKey] && optionExists(form.elements.item_type, state[typeStateKey])) {
+    form.elements.item_type.value = state[typeStateKey];
   }
-  const type = inventoryObjectType(form.elements.item_type.value || state.moveItemType);
-  const keyword = form.elements.keyword.value.trim();
-  state.moveItemType = type;
-  state.moveItems = await fetchSelectableInventoryObjects(type, { keyword, explicitId: state.moveItemId });
-  state.moveItemId = syncInventoryObjectSelect(
+  const type = inventoryObjectType(form.elements.item_type.value || state[typeStateKey]);
+  const keyword = form.elements.keyword?.value.trim() || '';
+  state[typeStateKey] = type;
+  state[itemsStateKey] = await fetchSelectableInventoryObjects(type, { keyword, explicitId: state[idStateKey] });
+  state[idStateKey] = syncInventoryObjectSelect(
     form.elements.item_id,
-    state.moveItems,
-    state.moveItemId,
-    inventoryObjectSelectPlaceholder(type, 'move'),
+    state[itemsStateKey],
+    state[idStateKey],
+    inventoryObjectSelectPlaceholder(type, action),
     type
   );
+}
+
+async function loadMoveItems() {
+  const form = $('movementForm');
+  await syncSelectableInventoryPicker({
+    form,
+    typeStateKey: 'moveItemType',
+    idStateKey: 'moveItemId',
+    itemsStateKey: 'moveItems',
+    action: 'move',
+  });
   renderMoveSummary();
 }
 
@@ -118,10 +134,6 @@ async function loadInventory() {
 
 function optionExists(select, value) {
   return Boolean(select && [...select.options].some(option => String(option.value) === String(value)));
-}
-
-function setSelectValueIfPresent(select, value) {
-  if (value && optionExists(select, value)) select.value = value;
 }
 
 function syncInventoryFilterVisibility() {
@@ -174,21 +186,13 @@ function renderMoveSummary() {
 
 async function loadCheckoutItems() {
   const form = $('checkoutForm');
-  if (!form) return;
-  if (state.checkoutItemType && optionExists(form.elements.item_type, state.checkoutItemType)) {
-    form.elements.item_type.value = state.checkoutItemType;
-  }
-  const type = inventoryObjectType(form.elements.item_type.value || state.checkoutItemType);
-  const keyword = form.elements.keyword?.value.trim() || '';
-  state.checkoutItemType = type;
-  state.checkoutItems = await fetchSelectableInventoryObjects(type, { keyword, explicitId: state.checkoutItemId });
-  state.checkoutItemId = syncInventoryObjectSelect(
-    form.elements.item_id,
-    state.checkoutItems,
-    state.checkoutItemId,
-    inventoryObjectSelectPlaceholder(type, 'checkout'),
-    type
-  );
+  await syncSelectableInventoryPicker({
+    form,
+    typeStateKey: 'checkoutItemType',
+    idStateKey: 'checkoutItemId',
+    itemsStateKey: 'checkoutItems',
+    action: 'checkout',
+  });
   renderCheckoutSummary();
 }
 
@@ -717,12 +721,9 @@ function showPositionActions({ nodeId = state.selectedNodeId, well = '', row = '
 }
 
 function inventoryDetailActions(item) {
-  if (item.item_type === 'sample') {
-    return `<div class="detail-actions">${canManageInventory() ? actionButton('编辑', 'sample-row-edit', item.id) : ''}${inventoryObjectAvailable(item, 'sample') && canManageLocation() ? actionButton('移动', 'sample-row-move', item.id) : ''}${inventoryObjectAvailable(item, 'sample') ? actionButton('出库', 'sample-row-checkout', item.id, 'danger') : ''}</div>`;
-  }
-  return inventoryObjectAvailable(item, 'reagent')
-    ? `<div class="detail-actions">${canManageInventory() ? actionButton('编辑', 'inventory-row-edit', item.id) : ''}${canManageLocation() ? actionButton('移动', 'inventory-row-move', item.id) : ''}${actionButton('出库', 'inventory-row-checkout', item.id, 'danger')}</div>`
-    : '';
+  const type = inventoryObjectType(item, 'reagent');
+  const actions = inventoryActionButtons(item, type, { detail: false });
+  return actions ? `<div class="detail-actions">${actions}</div>` : '';
 }
 
 async function loadInventoryTimeline(itemType, id) {

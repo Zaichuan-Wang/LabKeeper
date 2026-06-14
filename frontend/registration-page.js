@@ -1,6 +1,6 @@
 ﻿function syncReagentStorageFields(form = $('reagentForm')) {
   if (!form) return;
-  const isConsumed = form.elements.status.value === '已耗尽' || Number(form.elements.quantity.value || 0) <= 0;
+  const isConsumed = form.elements.status.value === STATUS_CONSUMED || Number(form.elements.quantity.value || 0) <= 0;
   const storageField = form.elements.storage_node_id;
   const positionField = form.elements.position_in_box;
   const note = $('reagentStorageState');
@@ -32,7 +32,7 @@ async function loadReagentCache() {
 async function loadOrdersCache() {
   const data = await api('/api/orders');
   state.orders = data.items;
-  const pending = state.orders.filter(o => Number(o.arrival_count || 0) === 0 && o.status !== '停用');
+  const pending = state.orders.filter(o => Number(o.arrival_count || 0) === 0 && o.status !== STATUS_DISABLED);
   fillSelectObjects(document.querySelector('#arrivalForm select[name="order_id"]'), pending, { placeholder: '请选择未到货订单', label: o => `${o.id} | ${o.name} | ${o.category || '其他'} | 数量 ${o.quantity || 1}` });
   renderArrivalSummary();
   return data;
@@ -259,9 +259,8 @@ async function editReagent(id) {
 
 function renderReagentDetail(data) {
   const item = data.item;
-  const actions = inventoryObjectAvailable(item, 'reagent')
-    ? `<div class="detail-actions">${canManageLocation() ? actionButton('移动', 'inventory-row-move', item.id) : ''}${actionButton('出库', 'inventory-row-checkout', item.id, 'danger')}</div>`
-    : '';
+  const actionButtons = inventoryActionButtons(item, 'reagent', { detail: false, editAction: '' });
+  const actions = actionButtons ? `<div class="detail-actions">${actionButtons}</div>` : '';
   const aliquotText = reagentAliquotText(item);
   $('reagentDetail').innerHTML = `
     ${actions}
@@ -368,7 +367,8 @@ function renderSampleDetail(data) {
   const specText = amountText(item);
   const sourceText = item.code || '-';
   const tubeText = sampleTubeText(item) || '-';
-  const actions = `<div class="detail-actions">${canManageInventory() ? actionButton('编辑', 'sample-row-edit', item.id) : ''}${inventoryObjectAvailable(item, 'sample') && canManageLocation() ? actionButton('移动', 'sample-row-move', item.id) : ''}${inventoryObjectAvailable(item, 'sample') ? actionButton('出库', 'sample-row-checkout', item.id, 'danger') : ''}</div>`;
+  const actionButtons = inventoryActionButtons(item, 'sample', { detail: false });
+  const actions = actionButtons ? `<div class="detail-actions">${actionButtons}</div>` : '';
   detail.innerHTML = `
     ${actions}
     <h4>${esc(sourceText)} · ${esc(item.name)}</h4>
@@ -437,7 +437,7 @@ async function submitValidation(e) {
 async function submitReagent(e) {
   e.preventDefault();
   const form = e.currentTarget;
-  const consumed = form.elements.status.value === '已耗尽' || Number(form.elements.quantity.value || 0) <= 0;
+  const consumed = form.elements.status.value === STATUS_CONSUMED || Number(form.elements.quantity.value || 0) <= 0;
   if (consumed && form.elements.id.value && !confirm('确认把该试剂/耗材设为已耗尽？\n保存后会释放存放位置，但试剂和验证记录会继续保留。')) return;
   form.elements.storage_node_id.disabled = false;
   form.elements.position_in_box.disabled = false;

@@ -11,8 +11,6 @@ def _empty_to_none(value: Any) -> Any:
 
 OptionalInt = Annotated[int | None, BeforeValidator(_empty_to_none)]
 OptionalFloat = Annotated[float | None, BeforeValidator(_empty_to_none)]
-ReagentStatus = Literal["已订购", "可用", "停用", "已耗尽"]
-SampleStatus = Literal["可用", "停用", "已耗尽"]
 
 
 class ApiRequest(BaseModel):
