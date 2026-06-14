@@ -145,10 +145,29 @@ def create_movement(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any
     timestamp = now_text()
     with connect() as conn:
         to_node_id = to_node_id or None
+        position = position if to_node_id else None
         item, object_type, object_id = _load_movable_item(conn, item_type, item_id, "移动")
         from_node_id = item["storage_node_id"]
         from_position = str(item["position_in_box"] or "").strip() or None
         from_location = row_location_snapshot(conn, item)
+        if same_storage_position(item, to_node_id, position):
+            return {"item": {
+                "id": None,
+                "object_type": object_type,
+                "object_id": object_id,
+                "item_type": item_type,
+                "item_id": item_id,
+                "from_storage_node_id": from_node_id,
+                "from_position_in_box": from_position,
+                "to_storage_node_id": from_node_id,
+                "to_position_in_box": from_position,
+                "from_location": from_location,
+                "to_location": from_location,
+                "reason": str(data.get("reason", "")).strip(),
+                "note": str(data.get("note", "")).strip(),
+                "unchanged": True,
+                "can_rollback": False,
+            }}
         if item_type == "sample":
             assign_sample_to_node(conn, item_id, to_node_id, user["id"], position)
             updated = conn.execute("SELECT * FROM clinical_samples WHERE id = ?", (item_id,)).fetchone()

@@ -670,7 +670,7 @@ async function moveInventoryByDrop(payload, target) {
   const nodeId = target.dataset.dropNode;
   if (!nodeId && !toUnplaced) return;
   const well = toUnplaced ? '' : (target.dataset.dropWell || '');
-  await api('/api/movements', {
+  const result = await api('/api/movements', {
     method: 'POST',
     body: JSON.stringify({
       item_type: payload.item_type === 'sample' ? 'sample' : 'reagent',
@@ -684,7 +684,7 @@ async function moveInventoryByDrop(payload, target) {
   state.selectedWell = well;
   state.selectedItemType = payload.item_type === 'sample' ? 'sample' : 'reagent';
   state.selectedItemId = payload.item_id;
-  toast(well ? `已移动到格位 ${well}` : '已移动到未归位区');
+  toast(result?.item?.unchanged ? '位置未变化，未新增移动记录' : (well ? `已移动到格位 ${well}` : '已移动到未归位区'));
   await loadInventory();
 }
 

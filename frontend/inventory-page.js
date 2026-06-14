@@ -933,11 +933,11 @@ async function submitMovement(e) {
   data.item_id = data.item_id || state.moveItemId;
   data.to_storage_node_id = data.to_storage_node_id || state.moveTargetId || '';
   data.position_in_box = data.to_storage_node_id ? (data.position_in_box || state.moveWell || '') : '';
-  await api('/api/movements', { method: 'POST', body: JSON.stringify(data) });
+  const result = await api('/api/movements', { method: 'POST', body: JSON.stringify(data) });
   form.elements.note.value = '';
   state.moveItemId = null;
   state.moveWell = '';
-  toast('移动完成');
+  toast(result?.item?.unchanged ? '位置未变化，未新增移动记录' : '移动完成');
   await loadInventory();
   if (state.inventoryItemTypeFilter === 'sample' || state.inventoryTab === 'details') await searchInventory();
 }
@@ -949,8 +949,16 @@ async function submitSpace(e) {
   const id = data.id;
   delete data.id;
   if (!data.parent_id) delete data.parent_id;
-  if (id) await api(`/api/storage/nodes/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
-  else await api('/api/storage/nodes', { method: 'POST', body: JSON.stringify(data) });
-  toast('空间已保存');
+  const result = id
+    ? await api(`/api/storage/nodes/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+    : await api('/api/storage/nodes', { method: 'POST', body: JSON.stringify(data) });
+  const cleared = result?.cleared_out_of_bounds || {};
+  const clearedInventory = Number(cleared.reagents || 0) + Number(cleared.samples || 0);
+  const clearedSpaces = Number(cleared.storage_nodes || 0);
+  const clearedText = [
+    clearedInventory ? `${clearedInventory} 件库存` : '',
+    clearedSpaces ? `${clearedSpaces} 个下级空间` : '',
+  ].filter(Boolean).join('、');
+  toast(clearedText ? `空间已保存；${clearedText}已移到未指定格位` : '空间已保存');
   await loadInventory();
 }

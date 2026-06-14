@@ -20,6 +20,7 @@ from services.storage_inventory import (
     inventory_items_at_node,
     node_full_path,
     occupied_positions,
+    position_options_for_node,
     refresh_inventory_locations_at_node,
     storage_item_counts,
     storage_location_text,
@@ -346,6 +347,64 @@ def create_storage_node(data: dict[str, Any], user: dict[str, Any]) -> dict[str,
     return {"item": row_dict(row)}
 
 
+def _clear_out_of_bounds_grid_assignments(conn: Any, node: Any, user_id: int | None) -> dict[str, int]:
+    node_id = int(node["id"])
+    rows, cols = default_grid_for_node(str(node["node_type"]), node["rows"], node["cols"])
+    timestamp = now_text()
+    counts = {"storage_nodes": 0, "reagents": 0, "samples": 0}
+
+    child_rows = conn.execute(
+        """
+        SELECT id FROM storage_nodes
+        WHERE parent_id = ?
+          AND grid_row IS NOT NULL
+          AND grid_col IS NOT NULL
+          AND (grid_row > ? OR grid_col > ?)
+        """,
+        (node_id, rows, cols),
+    ).fetchall()
+    child_ids = [int(row["id"]) for row in child_rows]
+    if child_ids:
+        placeholders = ",".join("?" for _ in child_ids)
+        conn.execute(
+            f"""
+            UPDATE storage_nodes
+            SET grid_row = NULL, grid_col = NULL, updated_by = ?, updated_at = ?
+            WHERE id IN ({placeholders})
+            """,
+            [user_id, timestamp, *child_ids],
+        )
+        counts["storage_nodes"] = len(child_ids)
+
+    allowed_positions = set(position_options_for_node(node))
+    for table, key in (("reagents", "reagents"), ("clinical_samples", "samples")):
+        base_params: list[Any] = [node_id]
+        where = """
+            storage_node_id = ?
+            AND position_in_box IS NOT NULL
+            AND TRIM(COALESCE(position_in_box, '')) != ''
+        """
+        if allowed_positions:
+            placeholders = ",".join("?" for _ in allowed_positions)
+            where += f" AND position_in_box NOT IN ({placeholders})"
+            base_params.extend(sorted(allowed_positions))
+        matching = conn.execute(f"SELECT id FROM {table} WHERE {where}", base_params).fetchall()
+        ids = [int(row["id"]) for row in matching]
+        if not ids:
+            continue
+        placeholders = ",".join("?" for _ in ids)
+        conn.execute(
+            f"""
+            UPDATE {table}
+            SET position_in_box = NULL, updated_by = ?, updated_at = ?
+            WHERE id IN ({placeholders})
+            """,
+            [user_id, timestamp, *ids],
+        )
+        counts[key] = len(ids)
+    return counts
+
+
 def update_storage_node(node_id: int, data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     allowed = ["parent_id", "name", "node_type", "location_code", "rows", "cols", "grid_row", "grid_col", "note", "sort_order"]
     updates = {key: data[key] for key in allowed if key in data}
@@ -394,6 +453,12 @@ def update_storage_node(node_id: int, data: dict[str, Any], user: dict[str, Any]
         from_grid_label = storage_node_grid_label(conn, old_parent_id, old_grid_row, old_grid_col) if moved_space else None
         assignments = ", ".join(f"{key} = ?" for key in updates)
         conn.execute(f"UPDATE storage_nodes SET {assignments} WHERE id = ?", list(updates.values()) + [node_id])
+        updated_node = get_node(conn, node_id)
+        cleared = (
+            _clear_out_of_bounds_grid_assignments(conn, updated_node, user["id"])
+            if updated_node is not None and any(key in data for key in ("node_type", "rows", "cols"))
+            else {"storage_nodes": 0, "reagents": 0, "samples": 0}
+        )
 
         for nid in descendant_node_ids(conn, node_id, True):
             refresh_inventory_locations_at_node(conn, nid)
@@ -414,10 +479,11 @@ def update_storage_node(node_id: int, data: dict[str, Any], user: dict[str, Any]
                     "空间移动", f"{old['name']} 的上级或格位已调整",
                 ),
             )
-        create_audit(conn, user["id"], "api_update_storage_node", "storage_nodes", node_id, data, row_dict(old))
+        audit_new_value = {**data, "cleared_out_of_bounds": cleared} if any(cleared.values()) else data
+        create_audit(conn, user["id"], "api_update_storage_node", "storage_nodes", node_id, audit_new_value, row_dict(old))
         conn.commit()
         row = get_node(conn, node_id)
-    return {"item": row_dict(row)}
+    return {"item": row_dict(row), "cleared_out_of_bounds": cleared}
 
 
 def _clear_deleted_storage_history_references(conn: Any, deleted_ids: list[int]) -> dict[str, int]:

@@ -177,12 +177,53 @@ function renderInventoryCenter(data) {
   return `${unplaced}${renderContainerGrid(data)}`;
 }
 
+function stableText(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function compareText(a, b) {
+  return stableText(a).localeCompare(stableText(b), 'zh-Hans-CN', { numeric: true, sensitivity: 'base' });
+}
+
+function compareBy(valuesA, valuesB) {
+  const length = Math.max(valuesA.length, valuesB.length);
+  for (let index = 0; index < length; index += 1) {
+    const left = valuesA[index];
+    const right = valuesB[index];
+    if (typeof left === 'number' || typeof right === 'number') {
+      const diff = Number(left || 0) - Number(right || 0);
+      if (diff) return diff;
+    } else {
+      const diff = compareText(left, right);
+      if (diff) return diff;
+    }
+  }
+  return 0;
+}
+
+function compareUnplacedSpace(a, b) {
+  return compareBy(
+    [Number(a.sort_order || 0), a.name, a.location_code, Number(a.id || 0)],
+    [Number(b.sort_order || 0), b.name, b.location_code, Number(b.id || 0)],
+  );
+}
+
+function compareUnplacedInventory(a, b) {
+  const typeOrder = { sample: 0, reagent: 1 };
+  return compareBy(
+    [typeOrder[inventoryItemType(a)] ?? 9, inventoryDisplayName(a), a.code, Number(a.id || 0)],
+    [typeOrder[inventoryItemType(b)] ?? 9, inventoryDisplayName(b), b.code, Number(b.id || 0)],
+  );
+}
+
 function unplacedInventoryItems(data) {
-  return (data.direct_items || []).filter(item => !item.position_in_box);
+  return (data.direct_items || []).filter(item => !item.position_in_box).sort(compareUnplacedInventory);
 }
 
 function unplacedStorageChildren(data) {
-  return (data.children || []).filter(child => child.is_unplaced || !(child.grid_row && child.grid_col));
+  return (data.children || [])
+    .filter(child => child.is_unplaced || !(child.grid_row && child.grid_col))
+    .sort(compareUnplacedSpace);
 }
 
 function positionedStorageChildren(data) {

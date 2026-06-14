@@ -102,6 +102,42 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
     assert sample_items[0]["code"] in occupied["A1"]
     assert reagent["code"] in occupied["B1"]
 
+    shrink_sample = api_ok(
+        app_client.post(
+            "/api/inventory/items",
+            headers=auth_headers,
+            json={
+                "item_type": "sample",
+                "name": "P-SHRINK-001",
+                "category": "组织",
+                "tube_count": 1,
+                "status": "可用",
+                "storage_node_id": box["id"],
+                "position_in_box": "A9",
+            },
+        ),
+        201,
+    )["item"]
+    shrink_result = api_ok(
+        app_client.patch(
+            f"/api/storage/nodes/{box['id']}",
+            headers=auth_headers,
+            json={"cols": 8},
+        )
+    )
+    assert shrink_result["cleared_out_of_bounds"]["samples"] == 1
+    shrink_detail = api_ok(
+        app_client.get(f"/api/inventory/items/sample/{shrink_sample['id']}", headers=auth_headers)
+    )["item"]
+    assert shrink_detail["storage_node_id"] == box["id"]
+    assert shrink_detail["position_in_box"] in ("", None)
+    box_visual = api_ok(app_client.get(f"/api/storage/visual?node_id={box['id']}", headers=auth_headers))
+    direct_ids_without_position = {
+        item["id"] for item in box_visual["direct_items"]
+        if item["item_type"] == "sample" and not item.get("position_in_box")
+    }
+    assert shrink_sample["id"] in direct_ids_without_position
+
     freezer_search = api_ok(
         app_client.get(f"/api/inventory/search?type=reagent&storage_node_id={freezer['id']}", headers=auth_headers)
     )
@@ -185,6 +221,24 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
     )["item"]
     assert moved["to_storage_node_id"] == freezer["id"]
 
+    import db.database as database
+
+    with database.connect() as conn:
+        movement_count = conn.execute("SELECT COUNT(*) AS n FROM movements").fetchone()["n"]
+    unchanged_move = api_ok(
+        app_client.post(
+            "/api/movements",
+            headers=auth_headers,
+            json={"item_type": "sample", "item_id": sample_items[1]["id"], "to_storage_node_id": freezer["id"], "reason": "拖拽移动"},
+        ),
+        201,
+    )["item"]
+    assert unchanged_move["unchanged"] is True
+    assert unchanged_move["to_storage_node_id"] == freezer["id"]
+    assert unchanged_move["can_rollback"] is False
+    with database.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) AS n FROM movements").fetchone()["n"] == movement_count
+
     checkout = api_ok(
         app_client.post(
             "/api/checkouts",
@@ -255,7 +309,6 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
         ),
         201,
     )["item"]
-    import db.database as database
 
     with database.connect() as conn:
         conn.execute(
