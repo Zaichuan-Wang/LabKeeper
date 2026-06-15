@@ -846,6 +846,7 @@ function fillSpaceForm(current, mode = 'edit', options = {}) {
     $('spaceFormTitle').textContent = mode === 'new-root' ? '新建空间' : '新建下级空间';
     form.elements.parent_id.value = parentId;
     form.elements.name.value = '新空间';
+    if (form.elements.space_type) form.elements.space_type.value = '5';
     form.elements.rows.value = layout.rows;
     form.elements.cols.value = layout.cols;
     form.elements.grid_row.value = options.gridRow || '';
@@ -858,6 +859,7 @@ function fillSpaceForm(current, mode = 'edit', options = {}) {
   }
   $('spaceFormTitle').textContent = `编辑空间：${current.name}`;
   setFormValues(form, current);
+  ensureSpaceTypeSelectValue(form.elements.space_type, current.space_type);
   deleteButton?.classList.toggle('hidden', !current?.id || !isAdmin());
   updateNodeDimensionLabels();
 }
@@ -888,7 +890,7 @@ async function searchInventory() {
     params.set('validation_status', $('inventoryValidationStatus').value);
   }
   params.set('purpose', 'global');
-  if (type === 'all' || type === 'space') params.set('type', type);
+  if (type === 'all' || type === 'space') params.set('item_type', type);
   const data = type === 'all' || type === 'space'
     ? await api(`/api/inventory/search?${params}`)
     : await api(inventoryObjectListPath(type, params));

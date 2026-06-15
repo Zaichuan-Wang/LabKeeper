@@ -13,9 +13,6 @@ from services.excel_utils import clean_excel_cell, excel_export_cell, parse_exce
 from services.options_config import load_dropdown_options, save_dropdown_options
 
 
-INTERNAL_TABLE_NAMES = {"schema_migrations"}
-
-
 def options() -> dict[str, Any]:
     dropdowns = load_dropdown_options()
     return {
@@ -31,9 +28,10 @@ def dropdown_options() -> dict[str, Any]:
 
 
 def update_dropdown_options(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    old_options = load_dropdown_options()
     clean = save_dropdown_options(data)
     with connect() as conn:
-        create_audit(conn, user["id"], "api_update_dropdown_options", "dropdown_options", None, clean)
+        create_audit(conn, user["id"], "api_update_dropdown_options", "dropdown_options", None, clean, old_options)
         conn.commit()
     return {"item": clean}
 
@@ -247,7 +245,7 @@ def _table_names(conn: Any) -> list[str]:
 
 
 def _is_excel_user_table(name: str) -> bool:
-    return name not in INTERNAL_TABLE_NAMES
+    return True
 
 
 def _table_columns(conn: Any, table: str) -> list[str]:

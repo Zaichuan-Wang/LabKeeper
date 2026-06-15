@@ -147,6 +147,7 @@ class CheckoutCreateRequest(ApiRequest):
 class StorageNodeCreateRequest(ApiRequest):
     parent_id: OptionalInt = None
     name: str = ""
+    space_type: int = 5
     location_code: str = ""
     rows: OptionalInt = None
     cols: OptionalInt = None
@@ -159,6 +160,7 @@ class StorageNodeCreateRequest(ApiRequest):
 class StorageNodeUpdateRequest(ApiRequest):
     parent_id: OptionalInt = None
     name: str | None = None
+    space_type: OptionalInt = None
     location_code: str | None = None
     rows: OptionalInt = None
     cols: OptionalInt = None
@@ -178,6 +180,7 @@ class DropdownSettingsRequest(ApiRequest):
     sample_names: list[str]
     amount_units: list[str]
     sample_statuses: list[str]
+    space_types: list[str]
 
 
 class UserCreateRequest(ApiRequest):

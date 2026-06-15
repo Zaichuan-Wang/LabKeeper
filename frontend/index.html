@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>实验室库存管理系统</title>
-    <link rel="stylesheet" href="./styles.css?v=20260614-box-tiles" />
+    <link rel="stylesheet" href="./styles.css?v=20260614-space-type-theme" />
   </head>
   <body>
     <div id="shell" class="shell">
@@ -51,16 +51,16 @@
               </div>
             </article>
             <div class="workbench-tab active-tab" data-tab-scope="expiration" data-tab-panel="overdue">
-              <article class="panel critical"><div class="panel-head"><h3>已过期</h3><span>已超过有效期</span></div><div class="table-wrap"><table id="overdueTable"></table></div><div id="overdueTablePager" class="table-pager"></div></article>
+              <article class="panel"><div class="panel-head"><h3>已过期</h3><span>已超过有效期</span></div><div class="table-wrap"><table id="overdueTable"></table></div><div id="overdueTablePager" class="table-pager"></div></article>
             </div>
             <div class="workbench-tab" data-tab-scope="expiration" data-tab-panel="upcoming">
-              <article class="panel warm"><div class="panel-head"><h3>即将到期</h3><span id="upcomingWindowText"></span></div><div class="toolbar compact"><label>关注窗口<input id="expirationDays" type="range" min="1" max="180" value="30" /></label><span id="expirationDaysText" class="stat-chip">30 天</span><button id="refreshExpiration" class="primary">刷新</button></div><div class="table-wrap"><table id="upcomingTable"></table></div><div id="upcomingTablePager" class="table-pager"></div></article>
+              <article class="panel"><div class="panel-head"><h3>即将到期</h3><span id="upcomingWindowText"></span></div><div class="toolbar compact"><label>关注窗口<input id="expirationDays" type="range" min="1" max="180" value="30" /></label><span id="expirationDaysText" class="stat-chip">30 天</span><button id="refreshExpiration" class="primary">刷新</button></div><div class="table-wrap"><table id="upcomingTable"></table></div><div id="upcomingTablePager" class="table-pager"></div></article>
             </div>
             <div class="workbench-tab" data-tab-scope="expiration" data-tab-panel="pending">
-              <article class="panel warm"><div class="panel-head"><h3>未到货</h3><span>订购后尚未入库</span></div><div class="table-wrap"><table id="pendingOrderTable"></table></div><div id="pendingOrderTablePager" class="table-pager"></div></article>
+              <article class="panel"><div class="panel-head"><h3>未到货</h3><span>订购后尚未入库</span></div><div class="table-wrap"><table id="pendingOrderTable"></table></div><div id="pendingOrderTablePager" class="table-pager"></div></article>
             </div>
             <div class="workbench-tab" data-tab-scope="expiration" data-tab-panel="unvalidated">
-              <article class="panel critical"><div class="panel-head"><h3>未验证抗体</h3><span>未验证或待复核</span></div><div class="table-wrap"><table id="unvalidatedAntibodyTable"></table></div><div id="unvalidatedAntibodyTablePager" class="table-pager"></div></article>
+              <article class="panel"><div class="panel-head"><h3>未验证抗体</h3><span>未验证或待复核</span></div><div class="table-wrap"><table id="unvalidatedAntibodyTable"></table></div><div id="unvalidatedAntibodyTablePager" class="table-pager"></div></article>
             </div>
           </section>
           <section id="registration" class="view">
@@ -280,7 +280,7 @@
               <article class="panel form-panel move-layout"><div class="panel-head"><h3>移动库存</h3><span>试剂 / 临床标本</span></div><form id="movementForm" class="stack-form"><div id="moveSummary" class="move-summary"></div><div class="grid-form move-fields"><label>库存类型<select name="item_type"><option value="reagent">试剂</option><option value="sample">临床标本</option></select></label><label>关键词<input name="keyword" placeholder="名称 / 编号 / 样本号 / 位置" /></label><label class="full">库存对象<select name="item_id"></select></label><input type="hidden" name="to_storage_node_id" /><input type="hidden" name="grid_cell" /><div id="movementStoragePicker" class="location-picker full"></div></div><label>原因<input name="reason" value="库存移动" /></label><label>备注<textarea name="note" rows="2"></textarea></label><button class="primary" type="submit">确认移动</button></form></article>
             </div>
             <div class="inventory-tab" data-tab-panel="spaces">
-              <article class="panel form-panel"><div class="panel-head"><h3 id="spaceFormTitle">空间编辑</h3><span>从空间总览选择新建入口</span></div><form id="nodeForm" class="grid-form"><input type="hidden" name="id" /><input type="hidden" name="grid_row" /><input type="hidden" name="grid_col" /><label>父级<select name="parent_id"></select></label><label>名称<input name="name" required /></label><label>位置码<input name="location_code" /></label><label><span id="rowsLabel">框架行数</span><input name="rows" type="number" min="1" max="50" value="1" /></label><label><span id="colsLabel">框架列数</span><input name="cols" type="number" min="1" max="50" value="1" /></label><div class="full frame-setting-row"><button id="unframedSpaceBtn" class="ghost" type="button">设为无框架</button><span id="spaceFrameHelp">行和列都为 1 时，该空间按无框架处理；行列大于 1 时显示统一空间框架和格位。</span></div><label class="full">备注<textarea name="note" rows="2"></textarea></label><button class="primary" type="submit">保存空间</button><button id="deleteSpaceBtn" class="danger hidden" type="button">删除空间</button></form></article>
+              <article class="panel form-panel"><div class="panel-head"><h3 id="spaceFormTitle">空间编辑</h3><span>从空间总览选择新建入口</span></div><form id="nodeForm" class="grid-form"><input type="hidden" name="id" /><input type="hidden" name="grid_row" /><input type="hidden" name="grid_col" /><label>父级<select name="parent_id"></select></label><label>名称<input name="name" required /></label><label>空间类型<select name="space_type"></select></label><label>位置码<input name="location_code" /></label><label><span id="rowsLabel">框架行数</span><input name="rows" type="number" min="1" max="50" value="1" /></label><label><span id="colsLabel">框架列数</span><input name="cols" type="number" min="1" max="50" value="1" /></label><div class="full frame-setting-row"><button id="unframedSpaceBtn" class="ghost" type="button">设为无框架</button><span id="spaceFrameHelp">行和列都为 1 时，该空间按无框架处理；行列大于 1 时显示统一空间框架和格位。</span></div><label class="full">备注<textarea name="note" rows="2"></textarea></label><button class="primary" type="submit">保存空间</button><button id="deleteSpaceBtn" class="danger hidden" type="button">删除空间</button></form></article>
             </div>
           </section>
         </section>
@@ -291,6 +291,6 @@
     <datalist id="amountUnitOptions"></datalist>
     <div id="toast" class="toast hidden"></div>
     <div id="locationPickerDialog" class="detail-dialog-backdrop location-dialog-backdrop hidden"></div>
-    <script type="module" src="./main.js?v=20260614-box-tiles"></script>
+    <script type="module" src="./main.js?v=20260615-inventory-drag"></script>
   </body>
 </html>

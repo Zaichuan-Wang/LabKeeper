@@ -23,10 +23,19 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
         app_client.post(
             "/api/storage/nodes",
             headers=auth_headers,
-            json={"parent_id": root_id, "name": "Freezer-1", "rows": 2, "cols": 3},
+            json={"parent_id": root_id, "name": "Freezer-1", "space_type": "2", "rows": 2, "cols": 3},
         ),
         201,
     )["item"]
+    assert freezer["space_type"] == 2
+    freezer_update = api_ok(
+        app_client.patch(
+            f"/api/storage/nodes/{freezer['id']}",
+            headers=auth_headers,
+            json={"space_type": "1"},
+        )
+    )["item"]
+    assert freezer_update["space_type"] == 1
     rack = api_ok(
         app_client.post(
             "/api/storage/nodes",
@@ -127,7 +136,7 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
     )
     assert shrink_result["cleared_out_of_bounds"]["samples"] == 1
     shrink_detail = api_ok(
-        app_client.get(f"/api/inventory/items/sample/{shrink_sample['id']}", headers=auth_headers)
+        app_client.get(f"/api/inventory/item?item_type=sample&id={shrink_sample['id']}", headers=auth_headers)
     )["item"]
     assert shrink_detail["storage_node_id"] == frame_space["id"]
     assert shrink_detail["grid_cell"] in ("", None)
@@ -139,17 +148,17 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
     assert shrink_sample["id"] in direct_ids_without_position
 
     freezer_search = api_ok(
-        app_client.get(f"/api/inventory/search?type=reagent&storage_node_id={freezer['id']}", headers=auth_headers)
+        app_client.get(f"/api/inventory/search?item_type=reagent&storage_node_id={freezer['id']}", headers=auth_headers)
     )
     assert any(item["id"] == reagent["id"] for item in freezer_search["items"])
 
     path_keyword_search = api_ok(
-        app_client.get("/api/inventory/search?type=all&keyword=Freezer-1", headers=auth_headers)
+        app_client.get("/api/inventory/search?item_type=all&keyword=Freezer-1", headers=auth_headers)
     )
     assert any(item["item_type"] == "reagent" and item["id"] == reagent["id"] for item in path_keyword_search["items"])
 
     keyword_search = api_ok(
-        app_client.get("/api/inventory/search?type=reagent&keyword=SMOKE-CAT&page=1&page_size=1", headers=auth_headers)
+        app_client.get("/api/inventory/search?item_type=reagent&keyword=SMOKE-CAT&page=1&page_size=1", headers=auth_headers)
     )
     assert keyword_search["total"] >= 1
     assert keyword_search["page"] == 1
@@ -157,7 +166,7 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
     assert keyword_search["items"][0]["id"] == reagent["id"]
 
     forgiving_search = api_ok(
-        app_client.get("/api/inventory/search?type=reagent&page=bad&page_size=9999&storage_node_id=bad", headers=auth_headers)
+        app_client.get("/api/inventory/search?item_type=reagent&page=bad&page_size=9999&storage_node_id=bad", headers=auth_headers)
     )
     assert forgiving_search["page"] == 1
     assert forgiving_search["page_size"] == 500
@@ -173,7 +182,7 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
     assert excel_export.status_code == 200
 
     sample_search = api_ok(
-        app_client.get("/api/inventory/search?type=sample&keyword=P-SMOKE-001&available=1", headers=auth_headers)
+        app_client.get("/api/inventory/search?item_type=sample&keyword=P-SMOKE-001&available=1", headers=auth_headers)
     )
     assert sample_search["count"] >= 2
 
@@ -273,7 +282,7 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
     limited_login = api_ok(app_client.post("/api/login", json={"username": "limited", "password": "secret123"}))
     limited_headers = {"Authorization": f"Bearer {limited_login['token']}"}
 
-    denied_search = app_client.get("/api/inventory/search?type=all&keyword=Ab-test&purpose=global", headers=limited_headers)
+    denied_search = app_client.get("/api/inventory/search?item_type=all&keyword=Ab-test&purpose=global", headers=limited_headers)
     assert denied_search.status_code == 403
     denied_move = app_client.post(
         "/api/movements",

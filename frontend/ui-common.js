@@ -262,6 +262,33 @@ function rootStorageNode() {
 
 function currentOptions(key) { return state.options?.[key] || []; }
 
+function currentSpaceTypes() {
+  return normalizeSpaceTypeLabels(currentOptions('space_types'));
+}
+
+function normalizeSpaceTypeLabels(values = []) {
+  const defaults = ['盒子', '冰箱', '液氮罐', '架子', '其他'];
+  if (!Array.isArray(values) || values.length === 0) return defaults;
+  const source = values;
+  const result = [];
+  for (let index = 0; index < 4; index += 1) {
+    const value = String(index < source.length ? source[index] : defaults[index]).trim();
+    result.push(value && value !== '其他' ? value : '');
+  }
+  return result.concat('其他');
+}
+
+function spaceTypeText(node) {
+  const code = Math.max(1, Math.min(5, Number(node?.space_type || 5)));
+  return currentSpaceTypes()[code - 1] || (code < 5 ? `类型 ${code}` : '其他');
+}
+
+function spaceTypeOptions() {
+  return currentSpaceTypes()
+    .map((label, index) => ({ value: String(index + 1), label }))
+    .filter(item => item.value === '5' || item.label);
+}
+
 function isUnframedNode(node) {
   return Boolean(node && Number(node.rows || 1) === 1 && Number(node.cols || 1) === 1);
 }
@@ -343,6 +370,9 @@ async function loadOptions() {
   document.querySelectorAll('#sampleForm select[name="category"], #sampleEditForm select[name="category"]').forEach(sel => fillSelect(sel, currentOptions('sample_names')));
   document.querySelectorAll('select[name="validation_status"], select[name="result"]').forEach(sel => fillSelect(sel, currentOptions('validation_statuses')));
   document.querySelectorAll('select[name="method"]').forEach(sel => fillSelect(sel, currentOptions('validation_methods')));
+  document.querySelectorAll('#nodeForm select[name="space_type"]').forEach(sel => {
+    fillSelectObjects(sel, spaceTypeOptions(), { valueKey: 'value', label: item => item.label });
+  });
   document.querySelectorAll('input[name="brand"]').forEach(input => input.setAttribute('list', 'brandOptions'));
   fillDatalist($('brandOptions'), currentOptions('brands'));
   fillDatalist($('samplePrefixOptions'), currentOptions('sample_prefixes'));
@@ -379,7 +409,26 @@ function setDefaultDropdownValues() {
   }
   const aliquotForm = $('aliquotForm');
   if (aliquotForm) aliquotForm.elements.tube_count.value ||= 1;
+  const nodeForm = $('nodeForm');
+  if (nodeForm && !nodeForm.elements.id.value && nodeForm.elements.space_type) {
+    nodeForm.elements.space_type.value = '5';
+  }
   document.querySelectorAll('form').forEach(syncMultiRegisterFields);
+}
+
+function ensureSpaceTypeSelectValue(select, value) {
+  if (!select) return;
+  const code = String(Math.max(1, Math.min(5, Number(value || 5))));
+  if ([...select.options].some(option => option.value === code)) {
+    select.value = code;
+    return;
+  }
+  const option = document.createElement('option');
+  option.value = code;
+  option.textContent = `${spaceTypeText({ space_type: code })}（已隐藏）`;
+  option.hidden = true;
+  select.appendChild(option);
+  select.value = code;
 }
 
 async function loadStorageTree() {

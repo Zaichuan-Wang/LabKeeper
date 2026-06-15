@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS storage_nodes (
     parent_id INTEGER,
     name TEXT NOT NULL,
     node_type TEXT NOT NULL DEFAULT 'space',
+    space_type INTEGER NOT NULL DEFAULT 5,
     location_code TEXT,
     rows INTEGER,
     cols INTEGER,

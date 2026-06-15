@@ -3,6 +3,7 @@ function renderInventoryWorkbench(data) {
   const capacityText = grid.is_framed === false ? '无框架' : `框架 ${grid.rows}x${grid.cols}`;
   const statText = `下级 ${data.stats.children} · 直接 ${data.stats.direct} · 总计 ${data.stats.total} · ${capacityText}`;
   const isVirtualUnplaced = isVirtualUnplacedNode(data.current);
+  const themeClass = currentSpaceThemeClass(data.current);
   const deleteAction = isAdmin() ? `<button class="danger" type="button" data-action="delete-current-space" data-id="${data.current.id}">删除当前</button>` : '';
   const maintenanceActions = isVirtualUnplaced || !canManageLocation()
     ? ''
@@ -13,7 +14,7 @@ function renderInventoryWorkbench(data) {
   $('inventoryWorkbench').innerHTML = `
     <div class="inventory-shell overview-shell">
           <aside class="inventory-tree">${renderOverviewNavigation(data)}</aside>
-      <main class="inventory-main">
+      <main class="inventory-main ${themeClass}">
         <div class="storage-hero compact-hero">
           <div><h3>${esc(data.current.name)}</h3>${metaLine(storageContext(data.current))}</div>
           <div class="overview-stat-line">${esc(statText)}</div>
@@ -29,6 +30,11 @@ function renderInventoryWorkbench(data) {
       </main>
     </div>
   `;
+}
+
+function currentSpaceThemeClass(node) {
+  const slot = Math.max(1, Math.min(5, Number(node?.space_type || 5)));
+  return `space-theme-${slot}`;
 }
 
 function renderOverviewNavigation(data, options = {}) {
@@ -96,7 +102,7 @@ function overviewNodeButton(node, depth = 0, options = {}) {
     : '';
   const dropNode = withDrop ? ` data-drop-node="${node.id}"` : '';
   const systemClass = virtual ? ' system-node' : '';
-  const meta = virtual ? '' : storageParentName(node);
+  const meta = virtual ? '' : [spaceTypeText(node), storageParentName(node)].filter(Boolean).join(' · ');
   return `<button class="tree-node ${node.selected ? 'active' : ''}${systemClass}" data-action="${esc(action)}" data-id="${node.id}"${kindAttr}${dropNode}${storageDrop} style="padding-left:${10 + depth * 12}px"><span><span class="tree-name">${esc(node.name)}</span>${metaLine(meta)}</span><span class="badge">${node.total_items ?? 0}</span></button>`;
 }
 
@@ -134,7 +140,7 @@ function tileBody({ coord = '', name = '', sub = '' } = {}) {
 }
 
 function storageSummaryText(item) {
-  return `空间 · ${item.total ?? 0} 件`;
+  return `${spaceTypeText(item)} · ${item.total ?? 0} 件`;
 }
 
 function renderSpaceCell(item, coord = '', options = {}) {
@@ -154,19 +160,20 @@ function renderSpaceCell(item, coord = '', options = {}) {
 
 function renderInventoryCell(item, coord = '', options = {}) {
   const itemType = inventoryItemType(item);
-  const tag = options.tag || 'button';
+  const tag = options.tag || 'div';
   const action = options.action === undefined ? 'inventory-item' : options.action;
   const kindAttr = options.kind ? ` data-kind="${esc(options.kind)}"` : '';
   const actionId = options.actionId ?? item.id;
   const activeClass = options.active ? ' active' : '';
   const coordClass = coord ? ' has-coord' : ' no-coord';
-  const draggable = options.drag !== false && tag === 'button';
+  const draggable = options.drag !== false;
   const dragAttrs = draggable
     ? ` data-drag-type="${esc(itemType)}" data-drag-id="${item.id}" draggable="${canManageLocation() ? 'true' : 'false'}"`
     : '';
   const typeAttr = tag === 'button' ? ' type="button"' : '';
   const actionAttr = action === null || action === '' ? '' : ` data-action="${esc(action)}"`;
-  return `<${tag} class="frame-cell occupied ${inventoryItemClass(itemType)}${coordClass}${activeClass}"${typeAttr}${actionAttr} data-type="${esc(itemType)}" data-id="${esc(actionId)}"${kindAttr}${dragAttrs}>${tileBody({ coord, name: inventoryDisplayName(item), sub: inventorySubtypeText(item) })}</${tag}>`;
+  const roleAttr = tag === 'button' || !actionAttr ? '' : ' role="button" tabindex="0"';
+  return `<${tag} class="frame-cell occupied ${inventoryItemClass(itemType)}${coordClass}${activeClass}"${typeAttr}${roleAttr}${actionAttr} data-type="${esc(itemType)}" data-id="${esc(actionId)}"${kindAttr}${dragAttrs}>${tileBody({ coord, name: inventoryDisplayName(item), sub: inventorySubtypeText(item) })}</${tag}>`;
 }
 
 function renderInventoryItemCard(r) {
@@ -411,7 +418,7 @@ function renderLocationPickerDialog(data, kind, title) {
       <div class="picker-head"><span>${esc(selectedText)}</span><button class="primary mini-btn" type="button" data-action="picker-current" data-kind="${kind}" data-id="${data.current.id}">使用当前空间</button></div>
       <div class="location-picker-grid inventory-shell">
         <aside class="location-tree inventory-tree">${renderOverviewNavigation(data, { action: 'picker-node', kind, drop: false })}</aside>
-        <main class="location-canvas inventory-main">${renderPickerCenter(data, kind)}</main>
+        <main class="location-canvas inventory-main ${currentSpaceThemeClass(data.current)}">${renderPickerCenter(data, kind)}</main>
       </div>
     </article>
   `;

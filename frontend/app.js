@@ -318,6 +318,13 @@ function wireEvents() {
   document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => btn.addEventListener('click', () => setWorkbenchTab(btn.dataset.tabScope || 'inventory', btn.dataset.tab)));
   document.querySelectorAll('[data-manual-mode]').forEach(btn => btn.addEventListener('click', () => setManualMode(btn.dataset.manualMode)));
   document.body.addEventListener('click', handleActions);
+  document.body.addEventListener('keydown', e => {
+    if (!['Enter', ' '].includes(e.key)) return;
+    const target = e.target.closest?.('[role="button"][data-action]');
+    if (!target) return;
+    e.preventDefault();
+    target.click();
+  });
   $('locationPickerDialog')?.addEventListener('click', e => {
     if (e.target.id === 'locationPickerDialog') void closeLocationPicker();
   });

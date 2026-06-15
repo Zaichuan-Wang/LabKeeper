@@ -1,4 +1,4 @@
-const ASSET_VERSION = '20260614-box-tiles';
+const ASSET_VERSION = '20260615-inventory-drag';
 const APP_SCRIPTS = [
   'core.js',
   'ui-common.js',

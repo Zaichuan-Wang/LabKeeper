@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import shutil
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -9,7 +8,7 @@ from typing import Any
 from services import backup
 from core import config
 from core.common import ApiError, now_text
-from db.database import init_db
+from db import database
 
 
 def runtime_config() -> dict[str, Any]:
@@ -40,9 +39,8 @@ def load_demo_database() -> dict[str, Any]:
     backup.stop_scheduler()
     try:
         backup_path = _backup_current_database(db_path)
-        _remove_sqlite_files(db_path)
-        shutil.copy2(demo_db_path, db_path)
-        init_db()
+        _replace_database_with_demo(demo_db_path, db_path)
+        database.init_db()
     finally:
         backup.start_scheduler()
     stats = _database_stats(db_path)
@@ -110,10 +108,19 @@ def _backup_current_database(db_path: Path) -> Path | None:
     return backup_path
 
 
-def _remove_sqlite_files(path: Path) -> None:
-    for candidate in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
-        if candidate.exists():
-            candidate.unlink()
+def _replace_database_with_demo(demo_db_path: Path, db_path: Path) -> None:
+    source = sqlite3.connect(demo_db_path)
+    target = sqlite3.connect(db_path)
+    try:
+        target.execute("PRAGMA busy_timeout = 5000")
+        source.backup(target)
+        target.commit()
+        target.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.Error as exc:
+        raise ApiError(500, "Demo 数据库载入失败，请关闭其他正在使用数据库的程序后重试") from exc
+    finally:
+        target.close()
+        source.close()
 
 
 def _database_stats(path: Path) -> dict[str, int]:

@@ -25,6 +25,7 @@ from services.storage_inventory import (
     unplaced_item_count,
     validate_storage_parent,
 )
+from services.options_config import clean_space_type_code
 
 
 VIRTUAL_UNPLACED_NODE_ID = -1
@@ -298,12 +299,13 @@ def create_storage_node(data: dict[str, Any], user: dict[str, Any]) -> dict[str,
         cur = conn.execute(
             """
             INSERT INTO storage_nodes
-                (parent_id, name, node_type, location_code, rows, cols, grid_row, grid_col, note, sort_order, created_by, updated_by, created_at, updated_at)
-            VALUES (?, ?, 'space', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (parent_id, name, node_type, space_type, location_code, rows, cols, grid_row, grid_col, note, sort_order, created_by, updated_by, created_at, updated_at)
+            VALUES (?, ?, 'space', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 parent_id,
                 name,
+                clean_space_type(data.get("space_type")),
                 str(data.get("location_code", "")).strip() or None,
                 rows_value,
                 cols_value,
@@ -318,6 +320,13 @@ def create_storage_node(data: dict[str, Any], user: dict[str, Any]) -> dict[str,
         conn.commit()
         row = conn.execute("SELECT * FROM storage_nodes WHERE id = ?", (cur.lastrowid,)).fetchone()
     return {"item": row_dict(row)}
+
+
+def clean_space_type(value: Any) -> int:
+    try:
+        return clean_space_type_code(value)
+    except ValueError as exc:
+        raise ApiError(400, "空间类型必须是 1 到 5") from exc
 
 
 def _clear_out_of_bounds_grid_assignments(conn: Any, node: Any, user_id: int | None) -> dict[str, int]:
@@ -379,7 +388,7 @@ def _clear_out_of_bounds_grid_assignments(conn: Any, node: Any, user_id: int | N
 
 
 def update_storage_node(node_id: int, data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
-    allowed = ["parent_id", "name", "location_code", "rows", "cols", "grid_row", "grid_col", "note", "sort_order"]
+    allowed = ["parent_id", "name", "space_type", "location_code", "rows", "cols", "grid_row", "grid_col", "note", "sort_order"]
     updates = {key: data[key] for key in allowed if key in data}
     if not updates:
         raise ApiError(400, "没有可更新字段")
@@ -387,6 +396,8 @@ def update_storage_node(node_id: int, data: dict[str, Any], user: dict[str, Any]
         updates["parent_id"] = clean_optional_positive_int(updates["parent_id"])
         if updates["parent_id"] == node_id:
             raise ApiError(400, "父级空间不能是自己")
+    if "space_type" in updates:
+        updates["space_type"] = clean_space_type(updates["space_type"])
     if "sort_order" in updates:
         updates["sort_order"] = clean_int_range(updates["sort_order"], 0, 0, 100_000)
     updates["updated_by"] = user["id"]
