@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import sqlite3
 
@@ -14,8 +14,6 @@ from core.config import (
 
 logger = get_logger("lab.database")
 
-SCHEMA_VERSION = 2
-
 LIGHTWEIGHT_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_reagents_expiration ON reagents(expiration_date)",
     "CREATE INDEX IF NOT EXISTS idx_reagents_updated ON reagents(updated_at DESC, id DESC)",
@@ -23,7 +21,7 @@ LIGHTWEIGHT_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_reagents_category_updated ON reagents(category, updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_reagents_validation_updated ON reagents(validation_status, updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_reagents_storage_status_updated ON reagents(storage_node_id, status, updated_at DESC, id DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_reagents_storage_position_status ON reagents(storage_node_id, position_in_box, status)",
+    "CREATE INDEX IF NOT EXISTS idx_reagents_storage_position_status ON reagents(storage_node_id, grid_cell, status)",
     "CREATE INDEX IF NOT EXISTS idx_reagents_catalog_updated ON reagents(catalog_no, updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_reagents_source_aliquot ON reagents(COALESCE(source_code, code, id), aliquot_no)",
     "CREATE INDEX IF NOT EXISTS idx_clinical_samples_code ON clinical_samples(code)",
@@ -32,7 +30,7 @@ LIGHTWEIGHT_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_clinical_samples_name_updated ON clinical_samples(name, updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_clinical_samples_category_updated ON clinical_samples(category, updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_clinical_samples_storage_status_updated ON clinical_samples(storage_node_id, status, updated_at DESC, id DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_clinical_samples_storage_position_status ON clinical_samples(storage_node_id, position_in_box, status)",
+    "CREATE INDEX IF NOT EXISTS idx_clinical_samples_storage_position_status ON clinical_samples(storage_node_id, grid_cell, status)",
     "CREATE INDEX IF NOT EXISTS idx_clinical_samples_source_aliquot ON clinical_samples(COALESCE(source_code, code, id), aliquot_no)",
     "CREATE INDEX IF NOT EXISTS idx_arrivals_storage_node ON arrivals(storage_node_id)",
     "CREATE INDEX IF NOT EXISTS idx_arrivals_item_created ON arrivals(item_type, item_id, created_at DESC)",
@@ -63,7 +61,6 @@ OBSOLETE_INDEX_NAMES = (
     "idx_movements_object",
     "idx_movements_to_snapshot_moved",
     "idx_storage_nodes_parent",
-    "idx_storage_nodes_type",
     "idx_audit_logs_created",
 )
 
@@ -84,7 +81,6 @@ def init_db() -> None:
     conn = connect()
     try:
         _apply_base_schema(conn)
-        _apply_migrations(conn)
         _ensure_indexes(conn)
         _ensure_admin_user(conn)
         _ensure_root_storage_node(conn)
@@ -96,100 +92,6 @@ def init_db() -> None:
 
 def _apply_base_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-
-
-def _apply_migrations(conn: sqlite3.Connection) -> None:
-    _ensure_schema_migrations_table(conn)
-    current_version = _schema_version(conn)
-    if current_version > SCHEMA_VERSION:
-        raise RuntimeError(f"数据库 schema 版本 {current_version} 高于当前程序支持的版本 {SCHEMA_VERSION}")
-    _sync_table_columns(conn)
-    if current_version < SCHEMA_VERSION:
-        _set_schema_version(conn, SCHEMA_VERSION)
-        logger.info("数据库 schema 版本已更新到 %s", SCHEMA_VERSION)
-
-
-def _ensure_schema_migrations_table(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS schema_migrations (
-            version INTEGER PRIMARY KEY,
-            applied_at TEXT NOT NULL
-        )
-        """
-    )
-
-
-def _schema_version(conn: sqlite3.Connection) -> int:
-    row = conn.execute("SELECT MAX(version) AS version FROM schema_migrations").fetchone()
-    return int(row["version"] or 0)
-
-
-def _set_schema_version(conn: sqlite3.Connection, version: int) -> None:
-    conn.execute(
-        "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-        (version, now_text()),
-    )
-
-
-def _sync_table_columns(conn: sqlite3.Connection) -> None:
-    expected = _schema_table_columns()
-    for table, columns in expected.items():
-        existing = _table_column_names(conn, table)
-        if not existing:
-            continue
-        for column_name, column_sql in columns.items():
-            if column_name in existing:
-                continue
-            if _is_add_column_safe(column_sql):
-                conn.execute(f'ALTER TABLE "{table}" ADD COLUMN {column_sql}')
-                logger.info("数据库自动补齐字段：%s.%s", table, column_name)
-            else:
-                logger.warning("数据库缺少字段但不能自动补齐：%s.%s", table, column_name)
-
-
-def _schema_table_columns() -> dict[str, dict[str, str]]:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    try:
-        conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-        tables = [
-            str(row["name"])
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
-            )
-        ]
-        return {table: _table_column_sql(conn, table) for table in tables}
-    finally:
-        conn.close()
-
-
-def _table_column_sql(conn: sqlite3.Connection, table: str) -> dict[str, str]:
-    rows = conn.execute(f'PRAGMA table_info("{table}")').fetchall()
-    result: dict[str, str] = {}
-    for row in rows:
-        parts = [f'"{row["name"]}"', str(row["type"] or "").strip()]
-        if int(row["notnull"]) == 1:
-            parts.append("NOT NULL")
-        if row["dflt_value"] is not None:
-            parts.append(f'DEFAULT {row["dflt_value"]}')
-        if int(row["pk"]) > 0:
-            continue
-        result[str(row["name"])] = " ".join(part for part in parts if part)
-    return result
-
-
-def _table_column_names(conn: sqlite3.Connection, table: str) -> set[str]:
-    return {str(row["name"]) for row in conn.execute(f'PRAGMA table_info("{table}")').fetchall()}
-
-
-def _is_add_column_safe(column_sql: str) -> bool:
-    upper = column_sql.upper()
-    if "PRIMARY KEY" in upper or "UNIQUE" in upper or "REFERENCES" in upper:
-        return False
-    if "NOT NULL" in upper and "DEFAULT" not in upper:
-        return False
-    return True
 
 
 def _ensure_indexes(conn: sqlite3.Connection) -> None:
@@ -271,9 +173,9 @@ def _ensure_root_storage_node(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
         INSERT INTO storage_nodes
-            (id, parent_id, name, node_type, location_code, rows, cols, grid_row, grid_col, note, sort_order,
+            (id, parent_id, name, node_type, space_type, location_code, rows, cols, grid_row, grid_col, note, sort_order,
              created_by, updated_by, created_at, updated_at)
-        VALUES (1, NULL, '研究所', 'space', '研究所', NULL, NULL, NULL, NULL, '默认根节点', 0, ?, ?, ?, ?)
+        VALUES (1, NULL, '研究所', 'space', 5, '研究所', NULL, NULL, NULL, NULL, '默认根节点', 0, ?, ?, ?, ?)
         """,
         (admin_id, admin_id, timestamp, timestamp),
     )
@@ -288,7 +190,7 @@ def _repair_storage_references(conn: sqlite3.Connection) -> None:
         cursor = conn.execute(
             f"""
             UPDATE {table}
-            SET storage_node_id = NULL, position_in_box = NULL
+            SET storage_node_id = NULL, grid_cell = NULL
             WHERE storage_node_id IS NOT NULL
               AND storage_node_id NOT IN (SELECT id FROM storage_nodes)
             """

@@ -16,6 +16,15 @@ from core.security import require_permission, require_user
 router = APIRouter(prefix="/api")
 
 
+def inventory_item_query(request: Request) -> tuple[str, int]:
+    query = query_params(request)
+    item_type = query.get("item_type", ["reagent"])[0]
+    item_id = clean_optional_positive_int(query.get("id", [""])[0]) or 0
+    if not item_id:
+        raise ApiError(400, "库存对象不存在")
+    return item_type, item_id
+
+
 @router.get("/inventory/search")
 def inventory_search_route(request: Request, user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
     query = query_params(request)
@@ -48,26 +57,24 @@ def create_inventory_item(data: InventoryItemCreateRequest, user: dict[str, Any]
     return json_response(inventory.create_item(data.payload(), user), 201)
 
 
-@router.get("/inventory/items/{item_type}/{item_id}")
-def inventory_item_detail(item_type: str, item_id: int, user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
+@router.get("/inventory/item")
+def inventory_item_detail(request: Request, user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
     require_permission(user, "inventory.search")
+    item_type, item_id = inventory_item_query(request)
     return inventory.item_detail(item_type, item_id)
 
 
 @router.get("/inventory/timeline")
 def inventory_item_timeline(request: Request, user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
     require_permission(user, "inventory.search")
-    query = query_params(request)
-    item_type = query.get("item_type", ["reagent"])[0]
-    item_id = clean_optional_positive_int(query.get("id", [""])[0]) or 0
-    if not item_id:
-        raise ApiError(400, "库存对象不存在")
+    item_type, item_id = inventory_item_query(request)
     return inventory.timeline(item_type, item_id)
 
 
-@router.patch("/inventory/items/{item_type}/{item_id}")
-def update_inventory_item(item_type: str, item_id: int, data: InventoryItemUpdateRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
+@router.patch("/inventory/item")
+def update_inventory_item(request: Request, data: InventoryItemUpdateRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
     require_permission(user, "inventory.manage")
+    item_type, item_id = inventory_item_query(request)
     return json_response(inventory.update_item(item_type, item_id, data.payload(patch=True), user))
 
 

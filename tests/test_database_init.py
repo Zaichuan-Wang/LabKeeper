@@ -16,47 +16,15 @@ def _fresh_database(monkeypatch, tmp_path):
     return config, database
 
 
-def test_init_db_records_schema_version(monkeypatch, tmp_path):
+def test_init_db_uses_schema_without_migration_table(monkeypatch, tmp_path):
     config, database = _fresh_database(monkeypatch, tmp_path)
 
     database.init_db()
 
     with sqlite3.connect(config.DB_PATH) as conn:
-        version = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
-    assert version == database.SCHEMA_VERSION
-
-
-def test_init_db_adds_missing_safe_columns(monkeypatch, tmp_path):
-    config, database = _fresh_database(monkeypatch, tmp_path)
-    db_path = config.DB_PATH
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            """
-            CREATE TABLE users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                display_name TEXT,
-                password_hash TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT 'user',
-                is_active INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            INSERT INTO users (username, display_name, password_hash, role, is_active, created_at, updated_at)
-            VALUES ('admin', '管理员', 'placeholder', 'admin', 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00')
-            """
-        )
-        conn.commit()
-
-    database.init_db()
-
-    with sqlite3.connect(db_path) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
         columns = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+    assert "schema_migrations" not in tables
     assert "permissions" in columns
 
 
@@ -77,3 +45,27 @@ def test_init_db_uses_lightweight_indexes(monkeypatch, tmp_path):
     assert "idx_reagents_updated" in names
     assert "idx_reagents_storage_status_updated" in names
     assert "idx_validations_catalog_date" in names
+
+
+def test_storage_nodes_schema_uses_single_space_model(monkeypatch, tmp_path):
+    config, database = _fresh_database(monkeypatch, tmp_path)
+
+    database.init_db()
+
+    with sqlite3.connect(config.DB_PATH) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(storage_nodes)").fetchall()}
+        root = conn.execute("SELECT node_type, space_type FROM storage_nodes WHERE id = 1").fetchone()
+    assert {
+        "id",
+        "parent_id",
+        "name",
+        "node_type",
+        "space_type",
+        "location_code",
+        "rows",
+        "cols",
+        "grid_row",
+        "grid_col",
+        "sort_order",
+    } <= columns
+    assert root == ("space", 5)

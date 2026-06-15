@@ -1,4 +1,4 @@
-﻿async function loadExcel() {
+async function loadExcel() {
   const data = await api('/api/excel/tables');
   state.excelTables = data.items;
   $('excelTableCount').textContent = `可操作 ${data.count} 张底层表`;
@@ -53,7 +53,7 @@ function renderHealthItem(item) {
 }
 
 function healthExampleKeys(examples) {
-  const priority = ['item_type', 'id', 'code', 'source_code', 'name', 'category', 'catalog_no', 'aliquot_no', 'storage_node_id', 'position_in_box', 'count', 'location', 'names', 'objects', 'message'];
+  const priority = ['item_type', 'id', 'code', 'source_code', 'name', 'category', 'catalog_no', 'aliquot_no', 'storage_node_id', 'grid_cell', 'count', 'location', 'names', 'objects', 'message'];
   const existing = new Set(examples.flatMap(row => Object.keys(row || {})));
   return priority.filter(key => existing.has(key)).concat([...existing].filter(key => !priority.includes(key))).slice(0, 8);
 }
@@ -69,7 +69,7 @@ function healthKeyLabel(key) {
     catalog_no: '货号',
     aliquot_no: '管号',
     storage_node_id: '空间ID',
-    position_in_box: '孔位',
+    grid_cell: '孔位',
     count: '数量',
     location: '位置',
     names: '名称',
@@ -184,12 +184,14 @@ const SETTINGS_GROUPS = [
   { key: 'sample_names', title: '样本类型', scope: '临床标本', note: '用于临床标本入库和筛选，例如血清、组织、灌洗液。' },
   { key: 'amount_units', title: '规格单位', scope: '试剂/标本', note: '用于规格量的常用单位，也可以在表单里临时手动输入。' },
   { key: 'sample_statuses', title: '标本状态', scope: '临床标本', fixed: true, note: '内置状态用于判断标本是否占位和是否耗尽，不能删除或改名；可按实验室习惯添加新状态。' },
+  { key: 'space_types', title: '空间类型', scope: '库存空间', fixed: true, kind: 'space-types', note: '固定 5 类；前四个名称可以改，第五个固定为其他。' },
 ];
 
 const FIXED_OPTION_VALUES = {
   reagent_statuses: [STATUS_ORDERED, STATUS_AVAILABLE, STATUS_DISABLED, STATUS_CONSUMED],
   validation_statuses: [VALIDATION_UNVERIFIED, '通过', '不通过', '待复核'],
   sample_statuses: [STATUS_AVAILABLE, STATUS_DISABLED, STATUS_CONSUMED],
+  space_types: ['其他'],
 };
 
 function fillSettingsForms() {
@@ -198,22 +200,43 @@ function fillSettingsForms() {
   if (!container) return;
   $('settingsGroupCount').textContent = `${SETTINGS_GROUPS.length} 组`;
   container.innerHTML = SETTINGS_GROUPS.map(group => {
-    const values = state.options[group.key] || [];
+    const values = group.kind === 'space-types' ? currentSpaceTypes() : (state.options[group.key] || []);
+    const itemCount = group.kind === 'space-types'
+      ? values.filter((value, index) => index === 4 || value).length
+      : values.length;
     const fixed = Boolean(group.fixed);
+    const isSpaceTypes = group.kind === 'space-types';
     return `
-      <article class="settings-card${fixed ? ' fixed-settings-card' : ''}" data-settings-key="${esc(group.key)}" data-settings-fixed="${fixed ? '1' : '0'}">
+      <article class="settings-card${fixed ? ' fixed-settings-card' : ''}${isSpaceTypes ? ' space-type-settings-card' : ''}" data-settings-key="${esc(group.key)}" data-settings-fixed="${fixed ? '1' : '0'}">
         <div class="settings-card-head">
-          <div><h4>${esc(group.title)}</h4><span>${esc(group.scope)} · <b data-settings-count>${values.length}</b> 项${fixed ? ' · 含内置项' : ''}</span></div>
+          <div><h4>${esc(group.title)}</h4><span>${esc(group.scope)} · <b data-settings-count>${itemCount}</b> 项${fixed ? ' · 含内置项' : ''}</span></div>
         </div>
         <p class="settings-note">${esc(group.note)}</p>
-        <div class="settings-options">${values.map(value => renderSettingsChip(value, { fixed: isFixedOption(group.key, value) })).join('') || '<span class="settings-empty">暂无选项</span>'}</div>
+        ${isSpaceTypes
+          ? renderSpaceTypeEditor(values)
+          : `<div class="settings-options">${values.map(value => renderSettingsChip(value, { fixed: isFixedOption(group.key, value) })).join('') || '<span class="settings-empty">暂无选项</span>'}</div>
         <div class="settings-add-row">
           <input data-settings-input="${esc(group.key)}" placeholder="输入新选项" autocomplete="off" />
           <button class="ghost" type="button" data-action="settings-add" data-id="${esc(group.key)}">添加</button>
-        </div>
+        </div>`}
       </article>
     `;
   }).join('');
+}
+
+function renderSpaceTypeEditor(values) {
+  const normalized = normalizeSpaceTypeSettings(values);
+  const editable = normalized.slice(0, 4).map((value, index) => `
+    <label class="space-type-slot space-type-slot-${index + 1}">
+      <span>类型 ${index + 1}</span>
+      <input data-space-type-slot="${index}" value="${esc(value)}" maxlength="24" />
+    </label>
+  `).join('');
+  return `<div class="space-type-editor">${editable}<label class="space-type-slot space-type-slot-5"><span>类型 5</span><input value="其他" disabled /></label></div>`;
+}
+
+function normalizeSpaceTypeSettings(values = []) {
+  return normalizeSpaceTypeLabels(values);
 }
 
 function isFixedOption(key, value) {
@@ -226,12 +249,20 @@ function renderSettingsChip(value, { fixed = false } = {}) {
 }
 
 function settingsValuesFor(card) {
+  if (card.dataset.settingsKey === 'space_types') {
+    return normalizeSpaceTypeSettings([...card.querySelectorAll('[data-space-type-slot]')].map(input => input.value));
+  }
   return [...card.querySelectorAll('.option-chip')].map(chip => chip.dataset.value).filter(Boolean);
 }
 
 function refreshSettingsCard(card) {
   const count = card.querySelector('[data-settings-count]');
-  if (count) count.textContent = settingsValuesFor(card).length;
+  if (count) {
+    const values = settingsValuesFor(card);
+    count.textContent = card.dataset.settingsKey === 'space_types'
+      ? values.filter((value, index) => index === 4 || value).length
+      : values.length;
+  }
   const options = card.querySelector('.settings-options');
   if (options && !options.querySelector('.option-chip')) {
     options.innerHTML = '<span class="settings-empty">暂无选项</span>';
@@ -266,9 +297,17 @@ function removeSettingsOption(button) {
   refreshSettingsCard(card);
 }
 
+function spaceTypePayload(values = []) {
+  return normalizeSpaceTypeSettings(values);
+}
+
 function settingsPayload() {
   return Object.fromEntries(SETTINGS_GROUPS.map(group => {
     const card = document.querySelector(`.settings-card[data-settings-key="${CSS.escape(group.key)}"]`);
+    if (group.key === 'space_types') {
+      const values = card ? [...card.querySelectorAll('[data-space-type-slot]')].map(input => input.value) : (state.options[group.key] || []);
+      return [group.key, spaceTypePayload(values)];
+    }
     return [group.key, card ? settingsValuesFor(card) : state.options[group.key] || []];
   }));
 }

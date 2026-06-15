@@ -53,7 +53,7 @@ class ArrivalCreateRequest(ApiRequest):
     separate_items: bool = True
     expiration_date: str = ""
     storage_node_id: OptionalInt = None
-    position_in_box: str = ""
+    grid_cell: str = ""
     note: str = ""
 
 
@@ -75,7 +75,7 @@ class ValidationCreateRequest(ApiRequest):
 
 class StorageTargetRequest(ApiRequest):
     storage_node_id: OptionalInt = None
-    position_in_box: str = ""
+    grid_cell: str = ""
 
 
 class InventoryItemCreateRequest(StorageTargetRequest):
@@ -114,7 +114,7 @@ class InventoryItemUpdateRequest(StorageTargetRequest):
     validation_status: str | None = None
     note: str | None = None
     storage_node_id: OptionalInt = Field(default=None)
-    position_in_box: str | None = None
+    grid_cell: str | None = None
 
 
 class AliquotCreateRequest(StorageTargetRequest):
@@ -132,7 +132,7 @@ class MovementCreateRequest(ApiRequest):
     item_type: Literal["sample", "reagent"]
     item_id: int
     to_storage_node_id: OptionalInt = None
-    position_in_box: str = ""
+    grid_cell: str = ""
     reason: str = ""
     note: str = ""
 
@@ -147,7 +147,7 @@ class CheckoutCreateRequest(ApiRequest):
 class StorageNodeCreateRequest(ApiRequest):
     parent_id: OptionalInt = None
     name: str = ""
-    node_type: Literal["space", "box"] = "space"
+    space_type: int = 5
     location_code: str = ""
     rows: OptionalInt = None
     cols: OptionalInt = None
@@ -160,7 +160,7 @@ class StorageNodeCreateRequest(ApiRequest):
 class StorageNodeUpdateRequest(ApiRequest):
     parent_id: OptionalInt = None
     name: str | None = None
-    node_type: Literal["space", "box"] | None = None
+    space_type: OptionalInt = None
     location_code: str | None = None
     rows: OptionalInt = None
     cols: OptionalInt = None
@@ -180,6 +180,7 @@ class DropdownSettingsRequest(ApiRequest):
     sample_names: list[str]
     amount_units: list[str]
     sample_statuses: list[str]
+    space_types: list[str]
 
 
 class UserCreateRequest(ApiRequest):

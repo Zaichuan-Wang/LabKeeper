@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import date, timedelta
 from typing import Any
@@ -21,7 +21,7 @@ from services.storage_inventory import (
     occupies_storage,
     reagent_should_leave_storage,
     release_reagent_storage,
-    sequential_box_positions,
+    sequential_frame_positions,
 )
 
 
@@ -77,8 +77,8 @@ def dashboard() -> dict[str, Any]:
             """
             SELECT
               COUNT(*) AS storage_nodes,
-              SUM(CASE WHEN node_type = 'box' THEN 1 ELSE 0 END) AS box_nodes,
-              SUM(CASE WHEN node_type != 'box' AND COALESCE(rows, 1) = 1 AND COALESCE(cols, 1) = 1 THEN 1 ELSE 0 END) AS unframed_spaces
+              SUM(CASE WHEN COALESCE(rows, 1) = 1 AND COALESCE(cols, 1) = 1 THEN 1 ELSE 0 END) AS unframed_spaces,
+              SUM(CASE WHEN NOT (COALESCE(rows, 1) = 1 AND COALESCE(cols, 1) = 1) THEN 1 ELSE 0 END) AS framed_spaces
             FROM storage_nodes
             """
         ).fetchone()
@@ -107,8 +107,8 @@ def dashboard() -> dict[str, Any]:
             "upcoming": upcoming_count,
             "remind_days": EXPIRATION_REMIND_DAYS,
             "storage_nodes": int(storage_stats["storage_nodes"] or 0),
-            "box_nodes": int(storage_stats["box_nodes"] or 0),
             "unframed_spaces": int(storage_stats["unframed_spaces"] or 0),
+            "framed_spaces": int(storage_stats["framed_spaces"] or 0),
         },
         "category_breakdown": rows_list(category_rows),
         "status_breakdown": rows_list(status_rows),
@@ -209,7 +209,7 @@ def create_reagent(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
         "quantity": safe_float(data.get("quantity"), 0),
         "status": str(data.get("status", STATUS_AVAILABLE)).strip() or STATUS_AVAILABLE,
         "storage_node_id": None,
-        "position_in_box": str(data.get("position_in_box", "")).strip(),
+        "grid_cell": str(data.get("grid_cell", "")).strip(),
         "entry_date": str(data.get("entry_date", "")).strip(),
         "expiration_date": str(data.get("expiration_date", "")).strip(),
         "validation_status": str(data.get("validation_status", VALIDATION_UNVERIFIED)).strip() or VALIDATION_UNVERIFIED,
@@ -223,10 +223,10 @@ def create_reagent(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
     separate_items = bool(data.get("separate_items", True))
     item_count = split_count_from_quantity(values["quantity"]) if separate_items else 1
     node_id = clean_optional_positive_int(data.get("storage_node_id"))
-    start_position = str(data.get("position_in_box", "")).strip() or None
+    start_position = str(data.get("grid_cell", "")).strip() or None
     with connect() as conn:
         if separate_items and item_count > 1:
-            positions = sequential_box_positions(conn, node_id, item_count, start_position) if node_id else [None] * item_count
+            positions = sequential_frame_positions(conn, node_id, item_count, start_position) if node_id else [None] * item_count
             items = []
             source_code = str(values.get("source_code") or "").strip() or None
             for index in range(item_count):
@@ -256,12 +256,12 @@ def create_reagent(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
 def update_reagent(reagent_id: int, data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     allowed = [
         "code", "source_code", "name", "category", "brand", "catalog_no", "amount", "amount_unit", "quantity", "status",
-        "storage_node_id", "position_in_box", "entry_date", "expiration_date", "validation_status", "note",
+        "storage_node_id", "grid_cell", "entry_date", "expiration_date", "validation_status", "note",
     ]
     move_node_requested = "storage_node_id" in data
     move_node_id = data.get("storage_node_id") if move_node_requested else None
-    move_position = data.get("position_in_box", "")
-    updates = {key: data[key] for key in allowed if key in data and key not in {"storage_node_id", "position_in_box"}}
+    move_position = data.get("grid_cell", "")
+    updates = {key: data[key] for key in allowed if key in data and key not in {"storage_node_id", "grid_cell"}}
     if not updates and not move_node_requested:
         raise ApiError(400, "没有可更新字段")
     if "quantity" in updates:
@@ -324,7 +324,7 @@ def create_reagent_aliquots(data: dict[str, Any], user: dict[str, Any]) -> dict[
         raise ApiError(400, "必须选择要分装的试剂/耗材")
     aliquot_count = clean_int_range(data.get("tube_count"), 1, 1, 300)
     node_id = clean_optional_positive_int(data.get("storage_node_id"))
-    start_position = str(data.get("position_in_box", "")).strip() or None
+    start_position = str(data.get("grid_cell", "")).strip() or None
     timestamp = now_text()
     with connect() as conn:
         source = conn.execute("SELECT * FROM reagents WHERE id = ?", (source_id,)).fetchone()
@@ -334,7 +334,7 @@ def create_reagent_aliquots(data: dict[str, Any], user: dict[str, Any]) -> dict[
             raise ApiError(409, "只有已入库的试剂/耗材可以分装")
         source_code = str(source["source_code"] or source["code"] or source["id"])
         first_aliquot = _next_reagent_aliquot_no(conn, source_code)
-        positions = sequential_box_positions(conn, node_id, aliquot_count, start_position) if node_id else [None] * aliquot_count
+        positions = sequential_frame_positions(conn, node_id, aliquot_count, start_position) if node_id else [None] * aliquot_count
         note = str(data.get("note", "")).strip()
         quantity = safe_float(data.get("quantity"), source["quantity"] if source["quantity"] not in (None, "") else 1)
         inserted_ids: list[int] = []
@@ -353,7 +353,7 @@ def create_reagent_aliquots(data: dict[str, Any], user: dict[str, Any]) -> dict[
                 "quantity": quantity,
                 "status": source["status"] or STATUS_AVAILABLE,
                 "storage_node_id": None,
-                "position_in_box": None,
+                "grid_cell": None,
                 "entry_date": source["entry_date"] or date.today().isoformat(),
                 "expiration_date": source["expiration_date"] or "",
                 "validation_status": source["validation_status"] or VALIDATION_UNVERIFIED,
@@ -390,7 +390,7 @@ def expiration(query: dict[str, list[str]] | None = None) -> dict[str, Any]:
     with connect() as conn:
         overdue = conn.execute(
             f"""
-            SELECT id, code, name, category, quantity, storage_node_id, position_in_box, expiration_date, status
+            SELECT id, code, name, category, quantity, storage_node_id, grid_cell, expiration_date, status
             FROM reagents
             WHERE expiration_date IS NOT NULL AND expiration_date != '' AND expiration_date < ?
               AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
@@ -400,7 +400,7 @@ def expiration(query: dict[str, list[str]] | None = None) -> dict[str, Any]:
         ).fetchall()
         upcoming = conn.execute(
             f"""
-            SELECT id, code, name, category, quantity, storage_node_id, position_in_box, expiration_date, status
+            SELECT id, code, name, category, quantity, storage_node_id, grid_cell, expiration_date, status
             FROM reagents
             WHERE expiration_date IS NOT NULL AND expiration_date != ''
               AND expiration_date >= ? AND expiration_date <= ?
@@ -424,7 +424,7 @@ def expiration(query: dict[str, list[str]] | None = None) -> dict[str, Any]:
         unvalidated_antibodies = conn.execute(
             f"""
             SELECT id, code, name, category, brand, catalog_no, quantity,
-                   storage_node_id, position_in_box, expiration_date, status, validation_status, updated_at
+                   storage_node_id, grid_cell, expiration_date, status, validation_status, updated_at
             FROM reagents
             WHERE (category LIKE '%抗体%' OR name LIKE '%抗体%' OR name LIKE '%antibody%' OR name LIKE '%Anti-%')
               AND COALESCE(validation_status, '') IN (?, '待复核')

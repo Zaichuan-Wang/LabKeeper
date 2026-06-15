@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from io import BytesIO
@@ -6,22 +6,17 @@ from typing import Any
 
 from services import backup as database_backup
 from core.common import ApiError, clean_int_range, create_audit, now_text, row_dict
-from core.constants import BOX_SPECS, DEFAULT_USER_PERMISSIONS, NODE_TYPE_LABELS, PERMISSIONS, ROLES
+from core.constants import DEFAULT_USER_PERMISSIONS, PERMISSIONS, ROLES
 from db.database import connect
 from services.auth import hash_password, user_permissions
 from services.excel_utils import clean_excel_cell, excel_export_cell, parse_excel_data_url
 from services.options_config import load_dropdown_options, save_dropdown_options
 
 
-INTERNAL_TABLE_NAMES = {"schema_migrations"}
-
-
 def options() -> dict[str, Any]:
     dropdowns = load_dropdown_options()
     return {
         **dropdowns,
-        "node_type_labels": NODE_TYPE_LABELS,
-        "box_specs": BOX_SPECS,
         "roles": ROLES,
         "permissions": PERMISSIONS,
         "default_user_permissions": DEFAULT_USER_PERMISSIONS,
@@ -33,9 +28,10 @@ def dropdown_options() -> dict[str, Any]:
 
 
 def update_dropdown_options(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    old_options = load_dropdown_options()
     clean = save_dropdown_options(data)
     with connect() as conn:
-        create_audit(conn, user["id"], "api_update_dropdown_options", "dropdown_options", None, clean)
+        create_audit(conn, user["id"], "api_update_dropdown_options", "dropdown_options", None, clean, old_options)
         conn.commit()
     return {"item": clean}
 
@@ -249,7 +245,7 @@ def _table_names(conn: Any) -> list[str]:
 
 
 def _is_excel_user_table(name: str) -> bool:
-    return name not in INTERNAL_TABLE_NAMES
+    return True
 
 
 def _table_columns(conn: Any, table: str) -> list[str]:
@@ -309,7 +305,7 @@ def _import_sheet(conn: Any, table: str, sheet: Any, mode: str) -> dict[str, Any
         if table == "users" and "password_hash" in allowed_columns and not record.get("password_hash"):
             record["password_hash"] = hash_password("123456")
         if table == "arrivals" and not record.get("storage_node_id"):
-            record["position_in_box"] = None
+            record["grid_cell"] = None
             record["location_snapshot"] = record.get("location_snapshot") or "未归位"
         if mode == "append" and "id" in record and "id" in pk_cols:
             record.pop("id", None)

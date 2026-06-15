@@ -1,16 +1,13 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Any
 
 from core.common import ApiError, clean_int_range, clean_optional_positive_int, create_audit, now_text, row_dict, rows_list
-from core.constants import NODE_TYPE_LABELS
 from db.database import connect
 from services.storage_inventory import (
     assign_grid_positions,
     batch_node_paths_and_descendants,
-    clean_node_dimension,
     clean_positive_int,
-    coord_list,
     default_grid_for_node,
     descendant_node_ids,
     get_node,
@@ -28,6 +25,7 @@ from services.storage_inventory import (
     unplaced_item_count,
     validate_storage_parent,
 )
+from services.options_config import clean_space_type_code
 
 
 VIRTUAL_UNPLACED_NODE_ID = -1
@@ -47,7 +45,7 @@ def _grid_label_for_parent(conn: Any, parent_id: int | None, grid_row: Any, grid
     parent = get_node(conn, parent_id)
     if parent is None:
         return None
-    _, cols = default_grid_for_node(str(parent["node_type"]), parent["rows"], parent["cols"])
+    _, cols = default_grid_for_node(parent["rows"], parent["cols"])
     return grid_label((int(grid_row) - 1) * int(cols or 1) + int(grid_col), int(cols or 1))
 
 
@@ -99,7 +97,6 @@ def storage_tree() -> dict[str, Any]:
         for row in rows:
             item = row_dict(row) or {}
             nid = int(item["id"])
-            item["type_label"] = NODE_TYPE_LABELS.get(item["node_type"], item["node_type"])
             item["path"] = path_cache.get(nid, "")
             item["direct_items"] = counts.get(nid, 0)
             item["total_items"] = sum(counts.get(i, 0) for i in desc_cache.get(nid, [nid]))
@@ -114,7 +111,6 @@ def storage_child_items(conn: Any, rows: list[Any], direct_counts: dict[int, int
             continue
         item = row_dict(row) or {}
         nid = int(item["id"])
-        item["type_label"] = NODE_TYPE_LABELS.get(item["node_type"], item["node_type"])
         item["path"] = path_cache.get(nid, "") if path_cache else node_full_path(conn, nid)
         item["children"] = len(conn.execute("SELECT id FROM storage_nodes WHERE parent_id = ?", (item["id"],)).fetchall())
         ids = desc_cache.get(nid, [nid]) if desc_cache else descendant_node_ids(conn, nid, True)
@@ -157,8 +153,6 @@ def storage_visual(
             "id": VIRTUAL_UNPLACED_NODE_ID,
             "parent_id": None,
             "name": "未归位",
-            "node_type": "unplaced",
-            "type_label": "未归位",
             "path": "未归位",
             "depth": 0,
             "selected": selected_virtual,
@@ -169,7 +163,6 @@ def storage_visual(
         for row in rows:
             item = row_dict(row) or {}
             nid = int(item["id"])
-            item["type_label"] = NODE_TYPE_LABELS.get(item["node_type"], item["node_type"])
             item["depth"] = depth_for(nid)
             item["selected"] = not selected_virtual and nid == int(node_id or 0)
             item["path"] = path_cache.get(nid, "")
@@ -206,8 +199,6 @@ def storage_visual(
                 "id": VIRTUAL_UNPLACED_NODE_ID,
                 "parent_id": None,
                 "name": "未归位",
-                "node_type": "unplaced",
-                "type_label": "未归位",
                 "path": "未归位",
                 "rows": 1,
                 "cols": 1,
@@ -221,7 +212,6 @@ def storage_visual(
                 "tree": tree,
                 "children": unplaced_spaces,
                 "frame_items": [],
-                "wells": [],
                 "direct_items": direct_items,
                 "items": direct_items[:80],
                 "selected_well": "",
@@ -245,28 +235,18 @@ def storage_visual(
         for item in tree:
             item["selected"] = int(item["id"]) == int(node_id or 0)
 
-        current_grid_rows, current_grid_cols = default_grid_for_node(current["node_type"], current["rows"], current["cols"])
-        is_framed = current["node_type"] == "box" or not (current_grid_rows == 1 and current_grid_cols == 1)
+        current_grid_rows, current_grid_cols = default_grid_for_node(current["rows"], current["cols"])
+        is_framed = not (current_grid_rows == 1 and current_grid_cols == 1)
         child_items = storage_child_items(conn, children, direct_counts, node_id, path_cache, desc_cache)
         positioned_children = [item for item in child_items if not item["is_unplaced"]]
         max_child_position = assign_grid_positions(positioned_children, current_grid_cols)
         frame_items = []
-        if current["node_type"] != "box" and is_framed:
-            frame_items = [item for item in direct_items if item.get("position_in_box")]
+        if is_framed:
+            frame_items = [item for item in direct_items if item.get("grid_cell")]
 
-        wells = []
         selected_item = None
-        if current["node_type"] == "box":
-            rows_count = int(current["rows"] or 9)
-            cols_count = int(current["cols"] or 9)
-            occupied = occupied_positions(conn, node_id)
-            for coord in coord_list(rows_count, cols_count):
-                item = occupied.get(coord)
-                if coord == selected_well:
-                    selected_item = item
-                wells.append({"coord": coord, "occupied": bool(item), "selected": coord == selected_well, "item": item})
-        elif selected_well:
-            selected_item = next((item for item in frame_items if item.get("position_in_box") == selected_well), None)
+        if selected_well:
+            selected_item = next((item for item in frame_items if item.get("grid_cell") == selected_well), None)
 
         if selected_item_data is None and selected_item:
             selected_item_data = inventory_item_by_id(conn, selected_item.get("item_type", "reagent"), int(selected_item["id"]))
@@ -288,9 +268,8 @@ def storage_visual(
             ).fetchall()
 
         grid_capacity = max(current_grid_rows * current_grid_cols, max_child_position)
-        occupied_slots = sum(1 for well in wells if well["occupied"]) if wells else len(child_items) + len(frame_items)
+        occupied_slots = len(child_items) + len(frame_items)
         current_item = row_dict(current) or {}
-        current_item["type_label"] = NODE_TYPE_LABELS.get(current["node_type"], current["node_type"])
         current_item["path"] = path_cache.get(node_id, "")
         return {
             "current": current_item,
@@ -298,39 +277,35 @@ def storage_visual(
             "tree": tree,
             "children": child_items,
             "frame_items": frame_items,
-            "wells": wells,
             "direct_items": direct_items,
             "items": all_items,
             "selected_well": selected_well,
             "selected_item": selected_item_data,
             "selected_validations": rows_list(selected_validations),
-            "stats": {"nodes": len(rows), "children": len(children), "direct": direct_item_count, "total": total_item_count, "occupied": occupied_slots, "capacity": len(wells) if wells else grid_capacity},
+            "stats": {"nodes": len(rows), "children": len(children), "direct": direct_item_count, "total": total_item_count, "occupied": occupied_slots, "capacity": grid_capacity},
         }
 
 
 def create_storage_node(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     name = str(data.get("name", "")).strip()
-    node_type = str(data.get("node_type", "space")).strip() or "space"
     if not name:
         raise ApiError(400, "空间名称不能为空")
-    if node_type not in NODE_TYPE_LABELS:
-        raise ApiError(400, "空间类型不正确")
-    rows_value = clean_node_dimension(node_type, "rows", data.get("rows"))
-    cols_value = clean_node_dimension(node_type, "cols", data.get("cols"))
+    rows_value = clean_positive_int(data.get("rows"))
+    cols_value = clean_positive_int(data.get("cols"))
     timestamp = now_text()
     with connect() as conn:
         parent_id = clean_optional_positive_int(data.get("parent_id"))
-        validate_storage_parent(conn, node_type, parent_id)
+        validate_storage_parent(conn, parent_id)
         cur = conn.execute(
             """
             INSERT INTO storage_nodes
-                (parent_id, name, node_type, location_code, rows, cols, grid_row, grid_col, note, sort_order, created_by, updated_by, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (parent_id, name, node_type, space_type, location_code, rows, cols, grid_row, grid_col, note, sort_order, created_by, updated_by, created_at, updated_at)
+            VALUES (?, ?, 'space', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 parent_id,
                 name,
-                node_type,
+                clean_space_type(data.get("space_type")),
                 str(data.get("location_code", "")).strip() or None,
                 rows_value,
                 cols_value,
@@ -347,9 +322,16 @@ def create_storage_node(data: dict[str, Any], user: dict[str, Any]) -> dict[str,
     return {"item": row_dict(row)}
 
 
+def clean_space_type(value: Any) -> int:
+    try:
+        return clean_space_type_code(value)
+    except ValueError as exc:
+        raise ApiError(400, "空间类型必须是 1 到 5") from exc
+
+
 def _clear_out_of_bounds_grid_assignments(conn: Any, node: Any, user_id: int | None) -> dict[str, int]:
     node_id = int(node["id"])
-    rows, cols = default_grid_for_node(str(node["node_type"]), node["rows"], node["cols"])
+    rows, cols = default_grid_for_node(node["rows"], node["cols"])
     timestamp = now_text()
     counts = {"storage_nodes": 0, "reagents": 0, "samples": 0}
 
@@ -381,12 +363,12 @@ def _clear_out_of_bounds_grid_assignments(conn: Any, node: Any, user_id: int | N
         base_params: list[Any] = [node_id]
         where = """
             storage_node_id = ?
-            AND position_in_box IS NOT NULL
-            AND TRIM(COALESCE(position_in_box, '')) != ''
+            AND grid_cell IS NOT NULL
+            AND TRIM(COALESCE(grid_cell, '')) != ''
         """
         if allowed_positions:
             placeholders = ",".join("?" for _ in allowed_positions)
-            where += f" AND position_in_box NOT IN ({placeholders})"
+            where += f" AND grid_cell NOT IN ({placeholders})"
             base_params.extend(sorted(allowed_positions))
         matching = conn.execute(f"SELECT id FROM {table} WHERE {where}", base_params).fetchall()
         ids = [int(row["id"]) for row in matching]
@@ -396,7 +378,7 @@ def _clear_out_of_bounds_grid_assignments(conn: Any, node: Any, user_id: int | N
         conn.execute(
             f"""
             UPDATE {table}
-            SET position_in_box = NULL, updated_by = ?, updated_at = ?
+            SET grid_cell = NULL, updated_by = ?, updated_at = ?
             WHERE id IN ({placeholders})
             """,
             [user_id, timestamp, *ids],
@@ -406,16 +388,16 @@ def _clear_out_of_bounds_grid_assignments(conn: Any, node: Any, user_id: int | N
 
 
 def update_storage_node(node_id: int, data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
-    allowed = ["parent_id", "name", "node_type", "location_code", "rows", "cols", "grid_row", "grid_col", "note", "sort_order"]
+    allowed = ["parent_id", "name", "space_type", "location_code", "rows", "cols", "grid_row", "grid_col", "note", "sort_order"]
     updates = {key: data[key] for key in allowed if key in data}
     if not updates:
         raise ApiError(400, "没有可更新字段")
-    if "node_type" in updates and updates["node_type"] not in NODE_TYPE_LABELS:
-        raise ApiError(400, "空间类型不正确")
     if "parent_id" in updates:
         updates["parent_id"] = clean_optional_positive_int(updates["parent_id"])
         if updates["parent_id"] == node_id:
             raise ApiError(400, "父级空间不能是自己")
+    if "space_type" in updates:
+        updates["space_type"] = clean_space_type(updates["space_type"])
     if "sort_order" in updates:
         updates["sort_order"] = clean_int_range(updates["sort_order"], 0, 0, 100_000)
     updates["updated_by"] = user["id"]
@@ -424,15 +406,14 @@ def update_storage_node(node_id: int, data: dict[str, Any], user: dict[str, Any]
         old = get_node(conn, node_id)
         if old is None:
             raise ApiError(404, "空间节点不存在")
-        final_type = updates.get("node_type", old["node_type"])
         final_parent_id = updates.get("parent_id", old["parent_id"])
         if final_parent_id and int(final_parent_id) in descendant_node_ids(conn, node_id, True):
             raise ApiError(400, "不能把空间移动到自己的下级")
-        validate_storage_parent(conn, final_type, final_parent_id)
+        validate_storage_parent(conn, final_parent_id)
         if "rows" in updates:
-            updates["rows"] = clean_node_dimension(final_type, "rows", updates["rows"])
+            updates["rows"] = clean_positive_int(updates["rows"])
         if "cols" in updates:
-            updates["cols"] = clean_node_dimension(final_type, "cols", updates["cols"])
+            updates["cols"] = clean_positive_int(updates["cols"])
         if "grid_row" in updates:
             updates["grid_row"] = clean_positive_int(updates["grid_row"])
         if "grid_col" in updates:
@@ -456,7 +437,7 @@ def update_storage_node(node_id: int, data: dict[str, Any], user: dict[str, Any]
         updated_node = get_node(conn, node_id)
         cleared = (
             _clear_out_of_bounds_grid_assignments(conn, updated_node, user["id"])
-            if updated_node is not None and any(key in data for key in ("node_type", "rows", "cols"))
+            if updated_node is not None and any(key in data for key in ("rows", "cols"))
             else {"storage_nodes": 0, "reagents": 0, "samples": 0}
         )
 
@@ -468,8 +449,8 @@ def update_storage_node(node_id: int, data: dict[str, Any], user: dict[str, Any]
             conn.execute(
                 """
                 INSERT INTO movements
-                    (object_type, object_id, item_type, item_id, from_storage_node_id, from_position_in_box,
-                     to_storage_node_id, to_position_in_box, from_location_snapshot, to_location_snapshot,
+                    (object_type, object_id, item_type, item_id, from_storage_node_id, from_grid_cell,
+                     to_storage_node_id, to_grid_cell, from_location_snapshot, to_location_snapshot,
                      moved_by, moved_at, reason, note)
                 VALUES (?, ?, 'space', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -494,7 +475,7 @@ def _clear_deleted_storage_history_references(conn: Any, deleted_ids: list[int])
         deleted_ids,
     ).fetchone()["n"] or 0)
     conn.execute(
-        f"UPDATE arrivals SET storage_node_id = NULL, position_in_box = NULL, location_snapshot = COALESCE(NULLIF(location_snapshot, ''), '未归位') WHERE storage_node_id IN ({placeholders})",
+        f"UPDATE arrivals SET storage_node_id = NULL, grid_cell = NULL, location_snapshot = COALESCE(NULLIF(location_snapshot, ''), '未归位') WHERE storage_node_id IN ({placeholders})",
         deleted_ids,
     )
     for column in ("from_storage_node_id", "to_storage_node_id"):

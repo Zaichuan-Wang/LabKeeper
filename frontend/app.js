@@ -1,4 +1,4 @@
-﻿function setLoggedIn(isLoggedIn) {
+function setLoggedIn(isLoggedIn) {
   $('loginView').classList.toggle('hidden', isLoggedIn);
   $('appView').classList.toggle('hidden', !isLoggedIn);
   $('userPanel').classList.toggle('hidden', !isLoggedIn);
@@ -179,7 +179,7 @@ async function loadDashboard() {
   $('statusPills').innerHTML = data.status_breakdown.map(i => `<span class="badge">${esc(i.status)} · ${i.n}</span>`).join('') || '<p>暂无状态数据</p>';
   $('spacePills').innerHTML = [
     ['空间节点', m.storage_nodes],
-    ['盒子', m.box_nodes],
+    ['带框架空间', m.framed_spaces],
     ['无框架空间', m.unframed_spaces],
   ].map(([label, value]) => `<span class="badge">${label} · ${value}</span>`).join('');
   await loadExpiration();
@@ -318,6 +318,13 @@ function wireEvents() {
   document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => btn.addEventListener('click', () => setWorkbenchTab(btn.dataset.tabScope || 'inventory', btn.dataset.tab)));
   document.querySelectorAll('[data-manual-mode]').forEach(btn => btn.addEventListener('click', () => setManualMode(btn.dataset.manualMode)));
   document.body.addEventListener('click', handleActions);
+  document.body.addEventListener('keydown', e => {
+    if (!['Enter', ' '].includes(e.key)) return;
+    const target = e.target.closest?.('[role="button"][data-action]');
+    if (!target) return;
+    e.preventDefault();
+    target.click();
+  });
   $('locationPickerDialog')?.addEventListener('click', e => {
     if (e.target.id === 'locationPickerDialog') void closeLocationPicker();
   });
@@ -325,8 +332,6 @@ function wireEvents() {
     if (e.target.matches?.('.overview-quick-actions[open]')) requestAnimationFrame(clampOpenOverviewMenus);
   }, true);
   window.addEventListener('resize', clampOpenOverviewMenus);
-  setupWellTooltips();
-
   $('orderForm').addEventListener('submit', guard(async e => {
     e.preventDefault();
     const form = e.currentTarget;
@@ -375,7 +380,7 @@ function wireEvents() {
   wireLocationFields('reagent', {
     extraFields: ['status', 'quantity'],
     onBeforeLoad: e => {
-      if (['status', 'quantity', 'storage_node_id', 'position_in_box'].includes(e.target.name)) syncReagentStorageFields(e.currentTarget);
+      if (['status', 'quantity', 'storage_node_id', 'grid_cell'].includes(e.target.name)) syncReagentStorageFields(e.currentTarget);
       if (e.target.name === 'quantity') syncMultiRegisterFields(e.currentTarget);
     },
   });
@@ -417,7 +422,7 @@ function wireEvents() {
       state.moveItemId = e.target.value;
       renderMoveSummary();
     }
-    if (e.target.name === 'position_in_box') {
+    if (e.target.name === 'grid_cell') {
       state.moveWell = e.target.value;
       renderMoveSummary();
       await loadLocationPicker('movement');
@@ -475,14 +480,6 @@ function wireEvents() {
       addSettingsOption(e.target.dataset.settingsInput);
     }
   });
-  $('nodeForm').elements.node_type.addEventListener('change', e => {
-    const form = $('nodeForm');
-    const layout = defaultSpaceLayout(e.target.value);
-    if (!form.elements.rows.value) form.elements.rows.value = layout.rows;
-    if (!form.elements.cols.value) form.elements.cols.value = layout.cols;
-    updateNodeDimensionLabels();
-  });
-  $('boxSpec').addEventListener('change', e => { const spec = state.options.box_specs[e.target.value]; if (spec) { $('nodeForm').elements.rows.value = spec[0]; $('nodeForm').elements.cols.value = spec[1]; } });
   $('unframedSpaceBtn')?.addEventListener('click', setSpaceUnframed);
   $('deleteSpaceBtn')?.addEventListener('click', guard(async () => { await deleteCurrentSpace($('nodeForm').elements.id.value); }));
   $('nodeForm').addEventListener('submit', guard(submitSpace));
@@ -494,83 +491,6 @@ function wireEvents() {
   });
   $('inventorySearchBtn').addEventListener('click', searchInventory);
   setupInventoryDragMove();
-}
-
-function setupWellTooltips() {
-  let activeTarget = null;
-  let tooltip = null;
-  const ensureTooltip = () => {
-    if (tooltip) return tooltip;
-    tooltip = document.createElement('div');
-    tooltip.className = 'well-tooltip hidden';
-    document.body.appendChild(tooltip);
-    return tooltip;
-  };
-  const tooltipTarget = target => target?.closest?.('.well[data-tooltip]');
-  const placeTooltip = target => {
-    if (!tooltip) return;
-    if (!target?.isConnected) {
-      hideTooltip();
-      return;
-    }
-    const targetRect = target.getBoundingClientRect();
-    const tooltipRect = tooltip.getBoundingClientRect();
-    const gap = 10;
-    const margin = 8;
-    const centeredLeft = targetRect.left + targetRect.width / 2 - tooltipRect.width / 2;
-    const left = Math.max(margin, Math.min(centeredLeft, window.innerWidth - tooltipRect.width - margin));
-    const aboveTop = targetRect.top - tooltipRect.height - gap;
-    const belowTop = targetRect.bottom + gap;
-    const showBelow = aboveTop < margin && belowTop + tooltipRect.height <= window.innerHeight - margin;
-    const top = showBelow
-      ? Math.min(belowTop, window.innerHeight - tooltipRect.height - margin)
-      : Math.max(margin, aboveTop);
-    const arrowLeft = Math.max(14, Math.min(targetRect.left + targetRect.width / 2 - left, tooltipRect.width - 14));
-    tooltip.style.left = `${left}px`;
-    tooltip.style.top = `${top}px`;
-    tooltip.style.setProperty('--arrow-left', `${arrowLeft}px`);
-    tooltip.classList.toggle('below', showBelow);
-  };
-  const showTooltip = target => {
-    const text = target?.dataset.tooltip;
-    if (!text) return;
-    activeTarget = target;
-    const el = ensureTooltip();
-    el.textContent = text;
-    el.classList.remove('hidden');
-    placeTooltip(target);
-    requestAnimationFrame(() => el.classList.add('visible'));
-  };
-  const hideTooltip = target => {
-    if (target && activeTarget && target !== activeTarget) return;
-    activeTarget = null;
-    if (!tooltip) return;
-    tooltip.classList.remove('visible');
-    tooltip.classList.add('hidden');
-  };
-  const handleTooltipEnter = e => {
-    const target = tooltipTarget(e.target);
-    if (target && target !== activeTarget) showTooltip(target);
-  };
-  const handleTooltipLeave = e => {
-    const target = tooltipTarget(e.target);
-    if (target && !target.contains(e.relatedTarget)) hideTooltip(target);
-  };
-  document.body.addEventListener('pointerover', handleTooltipEnter);
-  document.body.addEventListener('pointerout', handleTooltipLeave);
-  document.body.addEventListener('mouseover', handleTooltipEnter);
-  document.body.addEventListener('mouseout', handleTooltipLeave);
-  document.body.addEventListener('focusin', e => {
-    const target = tooltipTarget(e.target);
-    if (target) showTooltip(target);
-  });
-  document.body.addEventListener('focusout', e => {
-    const target = tooltipTarget(e.target);
-    if (target) hideTooltip(target);
-  });
-  document.body.addEventListener('click', () => hideTooltip());
-  window.addEventListener('scroll', () => activeTarget ? placeTooltip(activeTarget) : hideTooltip(), true);
-  window.addEventListener('resize', () => activeTarget ? placeTooltip(activeTarget) : hideTooltip());
 }
 
 function setupInventoryDragMove() {
@@ -627,9 +547,9 @@ async function moveStorageNodeByDrop(payload, target) {
   }
   const targetNode = nodeById(target.dataset.dropNode);
   const toUnplaced = target.dataset.dropUnplaced === '1' || isVirtualUnplacedId(target.dataset.dropNode);
-  const parentId = toUnplaced ? '' : (target.dataset.dropStorageParent || (targetNode && !isBox(targetNode) ? target.dataset.dropNode : ''));
+  const parentId = toUnplaced ? '' : (target.dataset.dropStorageParent || (targetNode ? target.dataset.dropNode : ''));
   if (!toUnplaced && !parentId) {
-    toast('空间只能拖到框架空位、非盒子空间或未归位');
+    toast('空间只能拖到框架空位、空间卡片或未归位');
     return;
   }
   if (parentId && Number(payload.item_id) === Number(parentId)) {
@@ -660,11 +580,7 @@ async function moveInventoryByDrop(payload, target) {
   }
   const toUnplaced = target.dataset.dropUnplaced === '1' || isVirtualUnplacedId(target.dataset.dropNode);
   if (target.dataset.dropStorageParent && !target.dataset.dropNode && !toUnplaced) {
-    toast('库存请拖到具体空间、盒内孔位或未归位区');
-    return;
-  }
-  if (target.classList.contains('well') && target.classList.contains('occupied')) {
-    toast('目标孔位已占用，请拖到空孔位或未归位区');
+    toast('库存请拖到具体空间、格位或未归位区');
     return;
   }
   const nodeId = target.dataset.dropNode;
@@ -676,7 +592,7 @@ async function moveInventoryByDrop(payload, target) {
       item_type: payload.item_type === 'sample' ? 'sample' : 'reagent',
       item_id: payload.item_id,
       to_storage_node_id: toUnplaced ? '' : nodeId,
-      position_in_box: well,
+      grid_cell: well,
       reason: '拖拽移动',
     }),
   });
@@ -769,13 +685,6 @@ async function handleInventoryActions(action, id, btn) {
     await loadInventory();
     return true;
   }
-  if (action === 'inventory-well') {
-    state.selectedWell = id;
-    state.selectedItemType = btn.dataset.type || 'reagent';
-    state.selectedItemId = btn.dataset.itemId || null;
-    await showInventoryItemDetailDialog(state.selectedItemType, state.selectedItemId);
-    return true;
-  }
   if (action === 'inventory-reagent') {
     state.selectedItemType = 'reagent';
     state.selectedItemId = id;
@@ -849,7 +758,7 @@ async function handlePickerActions(action, id, btn) {
     'picker-node': () => browsePickerNode(btn.dataset.kind, id),
     'picker-current': () => applyPickerNode(btn.dataset.kind, id),
     'picker-well': () => setPickerWell(btn.dataset.kind, id),
-    'picker-occupied-well': () => toast('该孔位已占用，请选择空孔位'),
+    'picker-occupied-well': () => toast('该格位已占用，请选择空格位'),
   };
   const handler = actions[action];
   if (!handler) return false;

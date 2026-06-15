@@ -1,4 +1,4 @@
-﻿function setManualMode(mode = 'reagent') {
+function setManualMode(mode = 'reagent') {
   const cleanMode = mode === 'sample' ? 'sample' : 'reagent';
   state.manualMode = cleanMode;
   document.querySelectorAll('[data-manual-mode]').forEach(btn => {
@@ -28,7 +28,7 @@ async function openSampleEditor(id) {
   const form = $('sampleEditForm');
   $('sampleEditTitle').textContent = `编辑标本：${item.code || item.id}`;
   setFormValues(form, item);
-  fillPositionSelect(form.elements.position_in_box, item.storage_node_id, item.position_in_box || '');
+  fillPositionSelect(form.elements.grid_cell, item.storage_node_id, item.grid_cell || '');
   await loadLocationPicker('sampleEdit');
 }
 
@@ -112,8 +112,8 @@ async function loadMovements() {
   const form = $('movementForm');
   if (form) {
     form.elements.to_storage_node_id.value = state.moveTargetId || '';
-    fillPositionSelect(form.elements.position_in_box, form.elements.to_storage_node_id.value, state.moveWell);
-    if (state.moveWell) form.elements.position_in_box.value = state.moveWell;
+    fillPositionSelect(form.elements.grid_cell, form.elements.to_storage_node_id.value, state.moveWell);
+    if (state.moveWell) form.elements.grid_cell.value = state.moveWell;
   }
   renderMoveSummary();
   await loadLocationPicker('movement');
@@ -149,11 +149,11 @@ function syncInventoryFilterVisibility() {
   const keyword = $('inventoryKeyword');
   if (keyword) {
     keyword.placeholder = type === 'all'
-      ? '关键词：名称 / 编号 / 货号 / 样本号 / 盒号 / 孔位 / 空间路径'
+      ? '关键词：名称 / 编号 / 货号 / 样本号 / 孔位 / 空间路径'
       : (type === 'sample'
         ? '关键词：系统编号 / 样本号 / 样本类型 / 管号 / 位置 / 备注'
         : (type === 'space'
-          ? '关键词：空间名称 / 盒号 / 位置码 / 空间路径'
+          ? '关键词：空间名称 / 位置码 / 空间路径'
           : '关键词：名称 / 编号 / 货号 / 品牌 / 位置'));
   }
 }
@@ -172,7 +172,7 @@ function renderMoveSummary() {
   } else {
     state.moveItemId = form.elements.item_id.value || null;
   }
-  fillPositionSelect(form.elements.position_in_box, state.moveTargetId, state.moveWell);
+  fillPositionSelect(form.elements.grid_cell, state.moveTargetId, state.moveWell);
   const item = state.moveItems.find(r => Number(r.id) === Number(form.elements.item_id.value || state.moveItemId));
   const typeLabel = inventoryObjectTypeLabel(state.moveItemType);
   const targetPosition = target
@@ -180,7 +180,7 @@ function renderMoveSummary() {
     : '未归位';
   summary.innerHTML = `
     <div><span>待移动</span><b>${esc(inventoryObjectName(item, state.moveItemType))}</b>${metaLine(`${typeLabel} · ${locationText(item?.storage_location)}`)}</div>
-    <div><span>移动到</span><b>${esc(targetPosition)}</b>${metaLine(target ? (isBox(target) ? '盒内孔位可从下方选择' : '目标空间本身或下级空间') : '清空具体空间')}</div>
+    <div><span>移动到</span><b>${esc(targetPosition)}</b>${metaLine(target ? '目标空间本身或下级空间' : '清空具体空间')}</div>
   `;
 }
 
@@ -206,7 +206,7 @@ function renderCheckoutSummary() {
   state.checkoutItemId = itemId || null;
   summary.innerHTML = `
     <div><span>出库对象</span><b>${esc(inventoryObjectName(item, state.checkoutItemType, '请选择出库对象'))}</b>${metaLine(typeLabel)}</div>
-    <div><span>当前位置</span><b>${esc(locationText(item?.storage_location))}</b>${metaLine(item?.position_in_box ? `孔位 ${item.position_in_box}` : '出库后释放占用位置')}</div>
+    <div><span>当前位置</span><b>${esc(locationText(item?.storage_location))}</b>${metaLine(item?.grid_cell ? `孔位 ${item.grid_cell}` : '出库后释放占用位置')}</div>
   `;
 }
 
@@ -402,13 +402,13 @@ async function loadManualEditor() {
   await loadStorageTree();
   const reagentForm = $('reagentForm');
   if (reagentForm) {
-    fillPositionSelect(reagentForm.elements.position_in_box, reagentForm.elements.storage_node_id.value, reagentForm.elements.position_in_box.value);
+    fillPositionSelect(reagentForm.elements.grid_cell, reagentForm.elements.storage_node_id.value, reagentForm.elements.grid_cell.value);
     syncReagentStorageFields(reagentForm);
     await loadLocationPicker('reagent');
   }
   const sampleForm = $('sampleEditForm');
   if (sampleForm) {
-    fillPositionSelect(sampleForm.elements.position_in_box, sampleForm.elements.storage_node_id.value, sampleForm.elements.position_in_box.value);
+    fillPositionSelect(sampleForm.elements.grid_cell, sampleForm.elements.storage_node_id.value, sampleForm.elements.grid_cell.value);
     await loadLocationPicker('sampleEdit');
   }
 }
@@ -503,32 +503,23 @@ async function setPickerWell(kind, well) {
 function updateNodeDimensionLabels() {
   const form = $('nodeForm');
   if (!form) return;
-  const type = form.elements.node_type.value;
-  const boxLabel = $('boxSpecLabel');
-  if (boxLabel) boxLabel.classList.toggle('hidden', type !== 'box');
-  $('rowsLabel').textContent = type === 'box' ? '孔位行数' : '框架行数';
-  $('colsLabel').textContent = type === 'box' ? '孔位列数' : '框架列数';
+  $('rowsLabel').textContent = '框架行数';
+  $('colsLabel').textContent = '框架列数';
   form.elements.rows.min = '1';
   form.elements.cols.min = '1';
-  form.elements.rows.max = type === 'box' ? '26' : '50';
+  form.elements.rows.max = '50';
   form.elements.cols.max = '50';
   const unframedButton = $('unframedSpaceBtn');
-  if (unframedButton) unframedButton.classList.toggle('hidden', type === 'box');
+  if (unframedButton) unframedButton.classList.remove('hidden');
   const help = $('spaceFrameHelp');
   if (help) {
-    help.textContent = type === 'box'
-      ? '盒子按孔位管理；1x1 表示一个孔位，不按无框架处理。'
-      : '行和列都为 1 时，该空间按无框架处理；不显示行列框架。库存明细请到“明细查询”查看，盒内孔位仍在空间总览中显示。';
+    help.textContent = '行和列都为 1 时，该空间按无框架处理；行列大于 1 时显示统一空间框架和格位。';
   }
 }
 
 function setSpaceUnframed() {
   const form = $('nodeForm');
   if (!form) return;
-  if (form.elements.node_type.value === 'box') {
-    toast('盒子按孔位管理，不设置为无框架');
-    return;
-  }
   form.elements.rows.value = 1;
   form.elements.cols.value = 1;
   updateNodeDimensionLabels();
@@ -641,7 +632,7 @@ async function startNewSampleAt(nodeId = state.selectedNodeId, well = '') {
   resetForm(form);
   setDefaultDropdownValues();
   setDefaultDates();
-  setFormStorageTarget(form, 'storage_node_id', 'position_in_box', targetNodeId, targetNodeId ? well : '');
+  setFormStorageTarget(form, 'storage_node_id', 'grid_cell', targetNodeId, targetNodeId ? well : '');
   await loadLocationPicker('sample');
   toast(targetNodeId ? (well ? `标本入库位置已填入：${well}` : '标本入库位置已填入') : '标本将登记为未归位');
 }
@@ -660,7 +651,7 @@ async function startNewReagentAt(nodeId = state.selectedNodeId, well = '') {
   await loadManualEditor();
   await startNewReagent({ refreshPicker: false });
   const form = $('reagentForm');
-  setFormStorageTarget(form, 'storage_node_id', 'position_in_box', targetNodeId, targetNodeId ? well : '');
+  setFormStorageTarget(form, 'storage_node_id', 'grid_cell', targetNodeId, targetNodeId ? well : '');
   syncReagentStorageFields(form);
   await loadLocationPicker('reagent');
   toast(targetNodeId ? (well ? `试剂/耗材位置已填入：${well}` : '试剂/耗材位置已填入') : '试剂/耗材将登记为未归位');
@@ -668,7 +659,7 @@ async function startNewReagentAt(nodeId = state.selectedNodeId, well = '') {
 
 function positionActionButtons({ nodeId, well = '', row = '', col = '', node }) {
   const isVirtualUnplaced = isVirtualUnplacedNode(node || nodeId);
-  const childButton = canManageLocation() && row && col && !isBox(node) && !isVirtualUnplaced
+  const childButton = canManageLocation() && row && col && !isVirtualUnplaced
     ? `<button class="ghost mini-btn" type="button" data-action="new-child-space" data-id="${nodeId}" data-row="${esc(row)}" data-col="${esc(col)}">新建下级空间</button>`
     : '';
   const createButtons = !canManageInventory()
@@ -838,14 +829,8 @@ function applySelectedStorage(target) {
   toast(nodeId ? `${config.label}已填入当前选中位置` : `${config.label}已设为未归位`);
 }
 
-function defaultSpaceLayout(nodeType) {
-  if (nodeType === 'box') return { rows: 9, cols: 9 };
+function defaultSpaceLayout() {
   return { rows: 1, cols: 1 };
-}
-
-function defaultChildType(parent) {
-  if (!parent) return 'space';
-  return parent.node_type === 'space' ? 'space' : 'box';
 }
 
 function fillSpaceForm(current, mode = 'edit', options = {}) {
@@ -857,18 +842,11 @@ function fillSpaceForm(current, mode = 'edit', options = {}) {
     let parentId = mode === 'new-root'
       ? (options.parentId || rootStorageNode()?.id || DEFAULT_ROOT_STORAGE_NODE_ID)
       : (options.parentId || state.selectedNodeId || '');
-    let parent = nodeById(parentId);
-    if (parent?.node_type === 'box') {
-      parentId = parent.parent_id || '';
-      parent = nodeById(parentId);
-      toast('盒子是末端空间，已切换到它的父级下新建');
-    }
-    const nodeType = defaultChildType(parent);
-    const layout = defaultSpaceLayout(nodeType);
+    const layout = defaultSpaceLayout();
     $('spaceFormTitle').textContent = mode === 'new-root' ? '新建空间' : '新建下级空间';
     form.elements.parent_id.value = parentId;
-    form.elements.node_type.value = nodeType;
-    form.elements.name.value = mode === 'new-root' ? '新空间' : (nodeType === 'box' ? '新盒子' : '新空间');
+    form.elements.name.value = '新空间';
+    if (form.elements.space_type) form.elements.space_type.value = '5';
     form.elements.rows.value = layout.rows;
     form.elements.cols.value = layout.cols;
     form.elements.grid_row.value = options.gridRow || '';
@@ -881,6 +859,7 @@ function fillSpaceForm(current, mode = 'edit', options = {}) {
   }
   $('spaceFormTitle').textContent = `编辑空间：${current.name}`;
   setFormValues(form, current);
+  ensureSpaceTypeSelectValue(form.elements.space_type, current.space_type);
   deleteButton?.classList.toggle('hidden', !current?.id || !isAdmin());
   updateNodeDimensionLabels();
 }
@@ -911,7 +890,7 @@ async function searchInventory() {
     params.set('validation_status', $('inventoryValidationStatus').value);
   }
   params.set('purpose', 'global');
-  if (type === 'all' || type === 'space') params.set('type', type);
+  if (type === 'all' || type === 'space') params.set('item_type', type);
   const data = type === 'all' || type === 'space'
     ? await api(`/api/inventory/search?${params}`)
     : await api(inventoryObjectListPath(type, params));
@@ -932,7 +911,7 @@ async function submitMovement(e) {
   data.item_type = data.item_type || state.moveItemType || 'reagent';
   data.item_id = data.item_id || state.moveItemId;
   data.to_storage_node_id = data.to_storage_node_id || state.moveTargetId || '';
-  data.position_in_box = data.to_storage_node_id ? (data.position_in_box || state.moveWell || '') : '';
+  data.grid_cell = data.to_storage_node_id ? (data.grid_cell || state.moveWell || '') : '';
   const result = await api('/api/movements', { method: 'POST', body: JSON.stringify(data) });
   form.elements.note.value = '';
   state.moveItemId = null;

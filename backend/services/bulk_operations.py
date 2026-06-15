@@ -4,12 +4,7 @@ from io import BytesIO
 from typing import Any
 
 from core.common import ApiError, create_audit, now_text, row_dict
-from core.constants import (
-    NODE_TYPE_LABELS,
-    PHYSICAL_INVENTORY_STATUS_SQL,
-    STATUS_AVAILABLE,
-    VALIDATION_UNVERIFIED,
-)
+from core.constants import PHYSICAL_INVENTORY_STATUS_SQL, STATUS_AVAILABLE, VALIDATION_UNVERIFIED
 from db.database import connect
 from services import clinical_samples
 from services import movements
@@ -144,7 +139,7 @@ def _append_template_help_sheet(wb: Any, operation: str, item_type: str) -> None
         ("编号 / 系统编号", "试剂填写试剂编号，例如 RG000001；临床标本的系统编号可在导入时留空自动生成。批量编辑、移动、出库必须填写已有系统编号。"),
         ("样本号", "临床标本的业务样本号，允许重复；例如同一样本号可以分别登记血清和组织。"),
         ("存放空间ID / 目标空间ID", "只填写数字 ID。请点击“下载空间对应表”，从其中复制空间ID；不要填写空间名称或路径。"),
-        ("孔位", "只有盒子或带框架的空间需要填写，例如 A1、B3；不需要孔位时留空。"),
+        ("孔位", "只有带框架的空间需要填写，例如 A1、B3；不需要孔位时留空。"),
         ("空白单元格", "批量编辑时，空白单元格不会覆盖原值；只会修改你填写且与原值不同的字段。"),
     ]
     operation_notes = {
@@ -169,7 +164,7 @@ def _append_template_help_sheet(wb: Any, operation: str, item_type: str) -> None
 
 
 def storage_map() -> tuple[bytes, str, str]:
-    columns = ["空间ID", "空间名称", "类型", "完整层级位置", "父级ID", "父级名称", "行数", "列数", "可填孔位/格位", "备注"]
+    columns = ["空间ID", "空间名称", "完整层级位置", "父级ID", "父级名称", "行数", "列数", "可填孔位/格位", "备注"]
     wb = new_workbook()
     ws = wb.active
     ws.title = "空间对应表"
@@ -188,7 +183,6 @@ def storage_map() -> tuple[bytes, str, str]:
             ws.append([
                 node.get("id"),
                 node.get("name"),
-                NODE_TYPE_LABELS.get(str(node.get("node_type")), str(node.get("node_type") or "")),
                 node_full_path(conn, int(node["id"])),
                 node.get("parent_id") or "",
                 node.get("parent_name") or "",
@@ -207,7 +201,7 @@ def _current_inventory_row(item: dict[str, Any], item_type: str) -> list[Any]:
             "临床标本", item.get("code") or item.get("id"), item.get("name") or "",
             item.get("category") or "", "", "", item.get("amount"), item.get("amount_unit") or "",
             item.get("quantity") or "", item.get("status") or "", "", item.get("entry_date") or "",
-            "", item.get("storage_node_id") or "", item.get("position_in_box") or "", item.get("note") or "",
+            "", item.get("storage_node_id") or "", item.get("grid_cell") or "", item.get("note") or "",
         ]
     return [
         "试剂/耗材", item.get("code") or item.get("id"), item.get("name") or "",
@@ -215,7 +209,7 @@ def _current_inventory_row(item: dict[str, Any], item_type: str) -> list[Any]:
         item.get("amount"), item.get("amount_unit") or "", item.get("quantity"),
         item.get("status") or "", item.get("validation_status") or "", item.get("entry_date") or "",
         item.get("expiration_date") or "", item.get("storage_node_id") or "",
-        item.get("position_in_box") or "", item.get("note") or "",
+        item.get("grid_cell") or "", item.get("note") or "",
     ]
 
 
@@ -284,7 +278,7 @@ def _find_item(conn: Any, item_type: str, code: Any) -> Any:
 
 def _normalize_import_row(conn: Any, item_type: str, row: dict[str, Any]) -> dict[str, Any]:
     node_id = _resolve_storage_node(conn, row)
-    location_requested = any(str(row.get(key) or "").strip() for key in ("存放空间ID", "storage_node_id", "孔位", "position_in_box"))
+    location_requested = any(str(row.get(key) or "").strip() for key in ("存放空间ID", "storage_node_id", "孔位", "grid_cell"))
     if item_type == "sample":
         name = str(row.get("样本号") or row.get("名称") or row.get("name") or "").strip()
         code = str(row.get("系统编号") or row.get("编号") or row.get("code") or "").strip()
@@ -300,7 +294,7 @@ def _normalize_import_row(conn: Any, item_type: str, row: dict[str, Any]) -> dic
             "status": str(row.get("状态") or row.get("status") or STATUS_AVAILABLE).strip() or STATUS_AVAILABLE,
             "entry_date": str(row.get("入库日期") or row.get("entry_date") or "").strip(),
             "storage_node_id": node_id,
-            "position_in_box": str(row.get("孔位") or row.get("position_in_box") or "").strip(),
+            "grid_cell": str(row.get("孔位") or row.get("grid_cell") or "").strip(),
             "note": str(row.get("备注") or row.get("note") or "").strip(),
             "_location_requested": location_requested,
         }
@@ -321,7 +315,7 @@ def _normalize_import_row(conn: Any, item_type: str, row: dict[str, Any]) -> dic
         "entry_date": str(row.get("入库日期") or row.get("entry_date") or "").strip(),
         "expiration_date": str(row.get("有效期") or row.get("expiration_date") or "").strip(),
         "storage_node_id": node_id,
-        "position_in_box": str(row.get("孔位") or row.get("position_in_box") or "").strip(),
+        "grid_cell": str(row.get("孔位") or row.get("grid_cell") or "").strip(),
         "note": str(row.get("备注") or row.get("note") or "").strip(),
         "_location_requested": location_requested,
     }
@@ -349,7 +343,7 @@ FIELD_LABELS = {
     "entry_date": "入库日期",
     "expiration_date": "有效期",
     "storage_node_id": "存放空间ID",
-    "position_in_box": "孔位",
+    "grid_cell": "孔位",
     "note": "备注",
 }
 
@@ -398,16 +392,16 @@ def _normalize_edit_row(conn: Any, item_type: str, row: dict[str, Any]) -> dict[
         if value not in ("", None) and not _same_value(item[key], value):
             updates[key] = value
             changes.append(f"{FIELD_LABELS.get(key, key)}：{item[key] if item[key] not in (None, '') else '空'} → {value}")
-    has_location = any(str(row.get(key) or "").strip() for key in ("存放空间ID", "storage_node_id", "孔位", "position_in_box"))
+    has_location = any(str(row.get(key) or "").strip() for key in ("存放空间ID", "storage_node_id", "孔位", "grid_cell"))
     if has_location:
         node_id = _resolve_storage_node(conn, row)
-        position = str(row.get("孔位") or row.get("position_in_box") or "").strip()
+        position = str(row.get("孔位") or row.get("grid_cell") or "").strip()
         if not _same_value(item["storage_node_id"], node_id):
             updates["storage_node_id"] = node_id
             changes.append(f"存放空间ID：{item['storage_node_id'] if item['storage_node_id'] not in (None, '') else '空'} → {node_id if node_id is not None else '空'}")
-        if not _same_value(item["position_in_box"], position):
-            updates["position_in_box"] = position
-            changes.append(f"孔位：{item['position_in_box'] if item['position_in_box'] not in (None, '') else '空'} → {position or '空'}")
+        if not _same_value(item["grid_cell"], position):
+            updates["grid_cell"] = position
+            changes.append(f"孔位：{item['grid_cell'] if item['grid_cell'] not in (None, '') else '空'} → {position or '空'}")
     if len(updates) <= 2:
         raise ApiError(400, "没有字段发生变化")
     updates["_changes"] = changes
@@ -431,7 +425,7 @@ def _preview_one(conn: Any, operation: str, item_type: str, mode: str, row: dict
     if operation == "move":
         ref_type, item = _normalize_item_ref(conn, row, item_type)
         node_id = _resolve_storage_node(conn, row, "目标空间ID")
-        return {"action": "移动", "normalized": {"item_type": ref_type, "item_id": item["id"], "to_storage_node_id": node_id, "position_in_box": str(row.get("孔位") or "").strip()}}
+        return {"action": "移动", "normalized": {"item_type": ref_type, "item_id": item["id"], "to_storage_node_id": node_id, "grid_cell": str(row.get("孔位") or "").strip()}}
     if operation == "edit":
         normalized = _normalize_edit_row(conn, item_type, row)
         return {"action": "编辑", "normalized": normalized, "summary": "；".join(normalized.get("_changes") or [])}
@@ -473,7 +467,7 @@ def _commit_import(item_type: str, mode: str, normalized: dict[str, Any], user: 
             raise ApiError(409, "编号已存在")
         if not location_requested:
             payload.pop("storage_node_id", None)
-            payload.pop("position_in_box", None)
+            payload.pop("grid_cell", None)
         if item_type == "sample":
             return clinical_samples.update_sample(int(existing["id"]), payload, user)["item"]
         return reagents.update_reagent(int(existing["id"]), payload, user)["item"]

@@ -12,7 +12,7 @@ Note: The English version is still under development. The interface and document
 
 - 试剂、抗体、耗材、试剂盒
 - 临床标本、冻存管、分装样本
-- 冰箱、液氮罐、抽屉、冻存盒和盒内孔位
+- 冰箱、液氮罐、抽屉、带框架空间和格位/孔位
 - 订购、到货、验证、入库、移动、出库和备份记录
 
 ## 一句话理解
@@ -201,7 +201,7 @@ python backend/server.py --compact
 建议在这些操作前备份：
 
 - 大批量导入 Excel
-- 调整冰箱、盒子、孔位结构
+- 调整冰箱、空间、格位/孔位结构
 - 系统升级
 - 手动压缩数据库
 

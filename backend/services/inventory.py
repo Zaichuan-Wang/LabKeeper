@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import sqlite3
 import math
@@ -7,6 +7,7 @@ from typing import Any
 from core.common import ApiError, clean_int_range
 from core.constants import PHYSICAL_INVENTORY_STATUS_SQL
 from db.database import connect
+from services.options_config import load_dropdown_options, space_type_label
 from services.storage_inventory import (
     attach_aliquot_totals,
     batch_node_paths_and_descendants,
@@ -21,12 +22,12 @@ from services import reagents
 REAGENT_PAYLOAD_KEYS = (
     "code", "source_code", "name", "category", "brand", "catalog_no", "amount", "amount_unit",
     "quantity", "status", "entry_date", "expiration_date", "validation_status",
-    "storage_node_id", "position_in_box", "separate_items", "note",
+    "storage_node_id", "grid_cell", "separate_items", "note",
 )
 SAMPLE_PAYLOAD_KEYS = (
     "code", "source_code", "name", "category", "tube_count", "amount", "amount_unit",
     "quantity", "status", "entry_date", "expiration_date", "validation_status",
-    "storage_node_id", "position_in_box", "separate_items", "note",
+    "storage_node_id", "grid_cell", "separate_items", "note",
 )
 
 
@@ -165,11 +166,13 @@ def _keyword_node_ids(
         return []
     lowered = keyword.lower()
     ids: set[int] = set()
-    rows = conn.execute("SELECT id, name, location_code, node_type, note FROM storage_nodes ORDER BY id LIMIT 1000").fetchall()
+    space_labels = load_dropdown_options().get("space_types")
+    rows = conn.execute("SELECT id, name, space_type, location_code, note FROM storage_nodes ORDER BY id LIMIT 1000").fetchall()
     for row in rows:
         node_id = int(row["id"])
         path = path_cache.get(node_id, "")
-        haystack = " ".join(str(value or "") for value in (row["name"], row["location_code"], row["node_type"], row["note"], path)).lower()
+        label = space_type_label(row["space_type"], space_labels)
+        haystack = " ".join(str(value or "") for value in (row["name"], label, row["location_code"], row["note"], path)).lower()
         if lowered in haystack:
             ids.update(desc_cache.get(node_id, [node_id]))
     return sorted(ids)
@@ -201,7 +204,7 @@ def _search_reagents(
         conn,
         "reagent",
         keyword,
-        ["name", "code", "source_code", "catalog_no", "brand", "category", "amount", "amount_unit", "note", "position_in_box"],
+        ["name", "code", "source_code", "catalog_no", "brand", "category", "amount", "amount_unit", "note", "grid_cell"],
         path_cache,
         desc_cache,
         clauses,
@@ -252,7 +255,7 @@ def _search_samples(
         conn,
         "sample",
         keyword,
-        ["code", "name", "category", "amount", "amount_unit", "note", "position_in_box"],
+        ["code", "name", "category", "amount", "amount_unit", "note", "grid_cell"],
         path_cache,
         desc_cache,
         clauses,
@@ -273,9 +276,7 @@ def _search_spaces(conn: sqlite3.Connection, keyword: str, limit: int, offset: i
     params: list[Any] = []
     where = ""
     if keyword:
-        like = f"%{keyword}%"
-        where = "WHERE name LIKE ? OR location_code LIKE ? OR node_type LIKE ? OR note LIKE ?"
-        params.extend([like] * 4)
+        where = ""
     if not keyword:
         total = int(conn.execute(f"SELECT COUNT(*) AS n FROM storage_nodes {where}", params).fetchone()["n"] or 0)
     else:
@@ -285,10 +286,12 @@ def _search_spaces(conn: sqlite3.Connection, keyword: str, limit: int, offset: i
         [*params, 1000 if keyword else limit + offset],
     ).fetchall()
     lowered = keyword.lower()
+    space_labels = load_dropdown_options().get("space_types")
     items: list[dict[str, Any]] = []
     for row in rows:
         path = path_cache.get(int(row["id"]), "")
-        haystack = " ".join(str(value or "") for value in (row["name"], row["location_code"], row["node_type"], row["note"], path)).lower()
+        label = space_type_label(row["space_type"], space_labels)
+        haystack = " ".join(str(value or "") for value in (row["name"], label, row["location_code"], row["note"], path)).lower()
         if lowered and lowered not in haystack:
             continue
         item = {
@@ -296,14 +299,14 @@ def _search_spaces(conn: sqlite3.Connection, keyword: str, limit: int, offset: i
             "id": row["id"],
             "code": row["location_code"] or row["id"],
             "name": row["name"],
-            "node_type": row["node_type"],
             "status": "",
             "display_title": row["name"],
-            "display_subtitle": "盒子" if row["node_type"] == "box" else "普通空间",
+            "display_subtitle": label,
             "display_location": path,
             "storage_location": path,
             "matched_fields": _matched_fields(keyword, {
                 "空间名称": row["name"],
+                "空间类型": label,
                 "位置码": row["location_code"],
                 "空间路径": path,
             }),
@@ -342,7 +345,7 @@ def _matched_fields(keyword: str, fields: dict[str, Any]) -> list[str]:
 
 
 def search(query: dict[str, list[str]]) -> dict[str, Any]:
-    item_type = _clean_type(_query_value(query, "type") or _query_value(query, "item_type"))
+    item_type = _clean_type(_query_value(query, "item_type"))
     keyword = _query_value(query, "keyword")
     available_only = _query_value(query, "available") in {"1", "true", "yes", "on"}
     page, page_size, offset = _pagination(query)

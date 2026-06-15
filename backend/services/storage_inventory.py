@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import sqlite3
 from typing import Any
@@ -51,11 +51,9 @@ def assign_grid_positions(items: list[dict[str, Any]], cols: int) -> int:
     return max_position
 
 
-def default_grid_for_node(node_type: str, rows: int | None, cols: int | None) -> tuple[int, int]:
+def default_grid_for_node(rows: int | None, cols: int | None) -> tuple[int, int]:
     if rows and cols:
         return int(rows), int(cols)
-    if node_type == "box":
-        return int(rows or 9), int(cols or 9)
     return int(rows or 1), int(cols or 1)
 
 
@@ -67,11 +65,6 @@ def clean_positive_int(value: Any, maximum: int = 50) -> int | None:
     if number <= 0:
         return None
     return min(number, maximum)
-
-
-def clean_node_dimension(node_type: str, field: str, value: Any) -> int | None:
-    maximum = 26 if node_type == "box" and field == "rows" else 50
-    return clean_positive_int(value, maximum)
 
 
 def coord_list(rows: int, cols: int) -> list[str]:
@@ -86,15 +79,13 @@ def coord_list(rows: int, cols: int) -> list[str]:
 def position_options_for_node(node: sqlite3.Row | dict[str, Any] | None) -> list[str]:
     if node is None:
         return []
-    rows, cols = default_grid_for_node(str(node["node_type"]), node["rows"], node["cols"])
-    if str(node["node_type"]) == "box":
-        return coord_list(rows, cols)
+    rows, cols = default_grid_for_node(node["rows"], node["cols"])
     if rows == 1 and cols == 1:
         return []
     return [grid_label(index, cols) for index in range(1, rows * cols + 1)]
 
 
-def sequential_box_positions(
+def sequential_frame_positions(
     conn: sqlite3.Connection,
     node_id: int | None,
     count: int,
@@ -218,8 +209,8 @@ def computed_storage_location(
     if not node_id:
         return "未归位" if occupies_storage(item.get("status")) else ""
     if path_cache is not None:
-        return storage_location_from_path(path_cache, int(node_id), str(item.get("position_in_box") or "").strip() or None)
-    return storage_location_text(conn, int(node_id), str(item.get("position_in_box") or "").strip() or None)
+        return storage_location_from_path(path_cache, int(node_id), str(item.get("grid_cell") or "").strip() or None)
+    return storage_location_text(conn, int(node_id), str(item.get("grid_cell") or "").strip() or None)
 
 
 def normalize_reagent_item(
@@ -359,7 +350,7 @@ def find_position_owner(
     reagent = conn.execute(
         f"""
         SELECT id, code, name FROM reagents
-        WHERE storage_node_id = ? AND position_in_box = ?
+        WHERE storage_node_id = ? AND grid_cell = ?
           AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
           AND NOT (? = 'reagent' AND id = ?)
         LIMIT 1
@@ -371,7 +362,7 @@ def find_position_owner(
     sample = conn.execute(
         f"""
         SELECT id, code, aliquot_no, name FROM clinical_samples
-        WHERE storage_node_id = ? AND position_in_box = ?
+        WHERE storage_node_id = ? AND grid_cell = ?
           AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
           AND NOT (? = 'sample' AND id = ?)
         LIMIT 1
@@ -388,7 +379,7 @@ def occupied_child_positions(conn: sqlite3.Connection, node_id: int) -> set[str]
     node = get_node(conn, node_id)
     if node is None:
         return set()
-    _, cols = default_grid_for_node(str(node["node_type"]), node["rows"], node["cols"])
+    _, cols = default_grid_for_node(node["rows"], node["cols"])
     children = [
         row_dict(row) or {}
         for row in conn.execute(
@@ -411,7 +402,7 @@ def find_child_position_owner(conn: sqlite3.Connection, node_id: int, position: 
     node = get_node(conn, node_id)
     if node is None:
         return None
-    _, cols = default_grid_for_node(str(node["node_type"]), node["rows"], node["cols"])
+    _, cols = default_grid_for_node(node["rows"], node["cols"])
     children = [
         row_dict(row) or {}
         for row in conn.execute(
@@ -451,7 +442,7 @@ def inventory_items_at_node(conn: sqlite3.Connection, node_id: int, direct_only:
     ]
     items = reagents + samples
     attach_aliquot_totals(conn, items)
-    items.sort(key=lambda item: (str(item.get("position_in_box") or ""), str(item.get("updated_at") or ""), str(item.get("code") or "")), reverse=True)
+    items.sort(key=lambda item: (str(item.get("grid_cell") or ""), str(item.get("updated_at") or ""), str(item.get("code") or "")), reverse=True)
     return items[:limit]
 
 
@@ -490,7 +481,7 @@ def unplaced_inventory_items(conn: sqlite3.Connection, limit: int = 500) -> list
 
 def occupied_positions(conn: sqlite3.Connection, node_id: int) -> dict[str, dict[str, Any]]:
     items = inventory_items_at_node(conn, node_id, direct_only=True)
-    return {str(item["position_in_box"]): item for item in items if item.get("position_in_box")}
+    return {str(item["grid_cell"]): item for item in items if item.get("grid_cell")}
 
 
 def inventory_item_by_id(conn: sqlite3.Connection, item_type: str, item_id: int) -> dict[str, Any] | None:
@@ -505,14 +496,12 @@ def inventory_item_by_id(conn: sqlite3.Connection, item_type: str, item_id: int)
     return items[0] if items else None
 
 
-def validate_storage_parent(conn: sqlite3.Connection, node_type: str, parent_id: int | None) -> None:
+def validate_storage_parent(conn: sqlite3.Connection, parent_id: int | None) -> None:
     if parent_id is None:
         return
     parent = get_node(conn, parent_id)
     if parent is None:
         raise ApiError(400, "父级空间不存在")
-    if parent["node_type"] == "box":
-        raise ApiError(400, "盒子已是末端空间，不能在盒子下继续新建空间")
 
 
 def assign_inventory_item_to_node(
@@ -528,7 +517,7 @@ def assign_inventory_item_to_node(
         conn.execute(
             f"""
             UPDATE {table}
-            SET storage_node_id = NULL, position_in_box = NULL,
+            SET storage_node_id = NULL, grid_cell = NULL,
                 updated_by = ?, updated_at = ?
             WHERE id = ?
             """,
@@ -537,7 +526,7 @@ def assign_inventory_item_to_node(
         return
     node = get_node(conn, node_id)
     if node is None:
-        raise ApiError(400, "空间类型不正确")
+        raise ApiError(400, "存放空间不存在")
     clean_position = (position or "").strip() or None
     allowed_positions = position_options_for_node(node)
     if clean_position and clean_position not in allowed_positions:
@@ -552,7 +541,7 @@ def assign_inventory_item_to_node(
     conn.execute(
         f"""
         UPDATE {table}
-        SET storage_node_id = ?, position_in_box = ?,
+        SET storage_node_id = ?, grid_cell = ?,
             updated_by = ?, updated_at = ?
         WHERE id = ?
         """,
@@ -601,7 +590,7 @@ def release_reagent_storage(conn: sqlite3.Connection, reagent_id: int, user_id: 
     if reagent is None:
         raise ApiError(404, "试剂不存在")
     from_node_id = reagent["storage_node_id"]
-    from_position = str(reagent["position_in_box"] or "").strip() or None
+    from_position = str(reagent["grid_cell"] or "").strip() or None
     from_location = storage_location_text(conn, int(from_node_id), from_position) if from_node_id else ""
     had_position = bool(from_node_id or from_position or from_location)
     if not had_position:
@@ -617,8 +606,8 @@ def release_reagent_storage(conn: sqlite3.Connection, reagent_id: int, user_id: 
         conn.execute(
             """
             INSERT INTO movements
-                (object_type, object_id, item_type, item_id, from_storage_node_id, from_position_in_box,
-                 to_storage_node_id, to_position_in_box, from_location_snapshot, to_location_snapshot,
+                (object_type, object_id, item_type, item_id, from_storage_node_id, from_grid_cell,
+                 to_storage_node_id, to_grid_cell, from_location_snapshot, to_location_snapshot,
                  moved_by, moved_at, reason, note)
             VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)
             """,

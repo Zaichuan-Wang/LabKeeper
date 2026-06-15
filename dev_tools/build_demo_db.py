@@ -145,46 +145,46 @@ def seed_users(conn: sqlite3.Connection, now: str) -> None:
 
 def seed_storage(conn: sqlite3.Connection, now: str) -> dict[int, tuple[int, int]]:
     storage_nodes = [
-        (1, None, "研究所", "space", "LAB", 2, 3, None, None, "Demo 根空间", 0),
-        (2, 1, "负80冰箱A", "space", "FZ-A", 3, 3, 1, 1, "抗体、细胞因子和常用标本", 10),
-        (3, 2, "A-第一层抽屉", "space", "FZ-A-D1", 2, 3, 1, 1, "高频使用盒", 10),
-        (4, 3, "抗体盒-001", "box", "AB-001", 9, 9, 1, 1, "流式抗体", 10),
-        (5, 3, "样本盒-001", "box", "SMP-001", 9, 9, 1, 2, "血清、血浆和灌洗液", 20),
-        (6, 3, "细胞因子盒-001", "box", "CYT-001", 9, 9, 1, 3, "重组因子和刺激物", 30),
-        (7, 2, "A-第二层抽屉", "space", "FZ-A-D2", 2, 3, 1, 2, "低频样本", 20),
-        (8, 7, "样本盒-002", "box", "SMP-002", 9, 9, 1, 1, "全血和细胞悬液", 10),
-        (9, 7, "组织盒-001", "box", "TIS-001", 9, 9, 1, 2, "组织和匀浆", 20),
-        (10, 1, "负80冰箱B", "space", "FZ-B", 3, 3, 1, 2, "备用与长期冻存", 20),
-        (11, 10, "B-第一层抽屉", "space", "FZ-B-D1", 2, 3, 1, 1, "备用样本盒", 10),
-        (12, 11, "备用样本盒-003", "box", "SMP-003", 9, 9, 1, 1, "项目备份样本", 10),
-        (13, 1, "4度冰箱", "space", "FRIDGE-4C", 2, 3, 2, 1, "短期试剂和缓冲液", 30),
-        (14, 13, "4度门架", "space", "4C-RACK", 2, 4, 1, 1, "常用缓冲液", 10),
-        (15, 14, "酶和缓冲液盒-001", "box", "ENZ-001", 5, 5, 1, 1, "酶、抑制剂、缓冲液", 10),
-        (16, 14, "短期试剂盒-001", "box", "TMP-001", 5, 5, 1, 2, "短效期试剂", 20),
-        (17, 1, "常温试剂柜", "space", "CAB-RT", 3, 4, 2, 2, "耗材和常温试剂盒", 40),
-        (18, 17, "柜1层", "space", "CAB-RT-S1", 2, 5, 1, 1, "耗材和试剂盒", 10),
-        (19, 18, "耗材格-001", "box", "CONS-001", 4, 6, 1, 1, "管、板、滤网", 10),
-        (20, 18, "ELISA试剂盒区", "box", "KIT-001", 4, 6, 1, 2, "ELISA 和分子试剂盒", 20),
-        (21, 1, "液氮罐", "space", "LN2", 2, 2, 2, 3, "细胞冻存", 50),
-        (22, 21, "细胞冻存架A", "box", "LN2-RACK-A", 10, 10, 1, 1, "冻存细胞", 10),
-        (23, 1, "待处理临时区", "space", "STAGING", 1, 4, 1, 3, "新到货和待归位", 60),
-        (24, 23, "临时周转盒", "box", "STG-001", 4, 6, 1, 1, "短期周转", 10),
-        (25, 11, "抗体盒-002", "box", "AB-002", 9, 9, 1, 2, "循环生成抗体", 20),
-        (26, 11, "细胞因子盒-002", "box", "CYT-002", 9, 9, 1, 3, "循环生成细胞因子", 30),
-        (27, 11, "试剂盒-002", "box", "KIT-002", 9, 9, 2, 1, "循环生成试剂盒", 40),
-        (28, 14, "缓冲液盒-002", "box", "BUF-002", 5, 8, 1, 3, "循环生成缓冲液和酶", 30),
-        (29, 14, "培养基盒-002", "box", "MED-002", 5, 8, 1, 4, "循环生成培养基和染料", 40),
-        (30, 18, "耗材格-002", "box", "CONS-002", 4, 8, 1, 3, "循环生成耗材", 30),
-        (31, 11, "样本盒-004", "box", "SMP-004", 9, 9, 2, 2, "循环生成标本", 50),
-        (32, 11, "样本盒-005", "box", "SMP-005", 9, 9, 2, 3, "循环生成标本", 60),
-        (33, 7, "样本盒-006", "box", "SMP-006", 9, 9, 1, 3, "循环生成标本", 30),
+        (1, None, "研究所", 5, "LAB", 2, 3, None, None, "Demo 根空间", 0),
+        (2, 1, "负80冰箱A", 2, "FZ-A", 3, 3, 1, 1, "抗体、细胞因子和常用标本", 10),
+        (3, 2, "A-第一层抽屉", 4, "FZ-A-D1", 2, 3, 1, 1, "高频使用格架", 10),
+        (4, 3, "抗体格架-001", 1, "AB-001", 9, 9, 1, 1, "流式抗体", 10),
+        (5, 3, "样本格架-001", 1, "SMP-001", 9, 9, 1, 2, "血清、血浆和灌洗液", 20),
+        (6, 3, "细胞因子格架-001", 1, "CYT-001", 9, 9, 1, 3, "重组因子和刺激物", 30),
+        (7, 2, "A-第二层抽屉", 4, "FZ-A-D2", 2, 3, 1, 2, "低频样本", 20),
+        (8, 7, "样本格架-002", 1, "SMP-002", 9, 9, 1, 1, "全血和细胞悬液", 10),
+        (9, 7, "组织格架-001", 1, "TIS-001", 9, 9, 1, 2, "组织和匀浆", 20),
+        (10, 1, "负80冰箱B", 2, "FZ-B", 3, 3, 1, 2, "备用与长期冻存", 20),
+        (11, 10, "B-第一层抽屉", 4, "FZ-B-D1", 2, 3, 1, 1, "备用样本格架", 10),
+        (12, 11, "备用样本格架-003", 1, "SMP-003", 9, 9, 1, 1, "项目备份样本", 10),
+        (13, 1, "4度冰箱", 2, "FRIDGE-4C", 2, 3, 2, 1, "短期试剂和缓冲液", 30),
+        (14, 13, "4度门架", 4, "4C-RACK", 2, 4, 1, 1, "常用缓冲液", 10),
+        (15, 14, "酶和缓冲液格架-001", 1, "ENZ-001", 5, 5, 1, 1, "酶、抑制剂、缓冲液", 10),
+        (16, 14, "短期试剂格架-001", 1, "TMP-001", 5, 5, 1, 2, "短效期试剂", 20),
+        (17, 1, "常温试剂柜", 4, "CAB-RT", 3, 4, 2, 2, "耗材和常温试剂", 40),
+        (18, 17, "柜1层", 4, "CAB-RT-S1", 2, 5, 1, 1, "耗材和试剂", 10),
+        (19, 18, "耗材格架-001", 1, "CONS-001", 4, 6, 1, 1, "管、板、滤网", 10),
+        (20, 18, "ELISA试剂区", 1, "KIT-001", 4, 6, 1, 2, "ELISA 和分子试剂", 20),
+        (21, 1, "液氮罐", 3, "LN2", 2, 2, 2, 3, "细胞冻存", 50),
+        (22, 21, "细胞冻存架A", 4, "LN2-RACK-A", 10, 10, 1, 1, "冻存细胞", 10),
+        (23, 1, "待处理临时区", 5, "STAGING", 1, 4, 1, 3, "新到货和待归位", 60),
+        (24, 23, "临时周转格架", 4, "STG-001", 4, 6, 1, 1, "短期周转", 10),
+        (25, 11, "抗体格架-002", 1, "AB-002", 9, 9, 1, 2, "循环生成抗体", 20),
+        (26, 11, "细胞因子格架-002", 1, "CYT-002", 9, 9, 1, 3, "循环生成细胞因子", 30),
+        (27, 11, "试剂格架-002", 1, "KIT-002", 9, 9, 2, 1, "循环生成试剂", 40),
+        (28, 14, "缓冲液格架-002", 1, "BUF-002", 5, 8, 1, 3, "循环生成缓冲液和酶", 30),
+        (29, 14, "培养基格架-002", 1, "MED-002", 5, 8, 1, 4, "循环生成培养基和染料", 40),
+        (30, 18, "耗材格架-002", 1, "CONS-002", 4, 8, 1, 3, "循环生成耗材", 30),
+        (31, 11, "样本格架-004", 1, "SMP-004", 9, 9, 2, 2, "循环生成标本", 50),
+        (32, 11, "样本格架-005", 1, "SMP-005", 9, 9, 2, 3, "循环生成标本", 60),
+        (33, 7, "样本格架-006", 1, "SMP-006", 9, 9, 1, 3, "循环生成标本", 30),
     ]
     conn.executemany(
         """
         INSERT INTO storage_nodes
-            (id, parent_id, name, node_type, location_code, rows, cols, grid_row, grid_col, note, sort_order,
+            (id, parent_id, name, node_type, space_type, location_code, rows, cols, grid_row, grid_col, note, sort_order,
              created_by, updated_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
+        VALUES (?, ?, ?, 'space', ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
         """,
         [(*node, now, now) for node in storage_nodes],
     )
@@ -223,7 +223,7 @@ def seed_reagents(conn: sqlite3.Connection, positions: PositionAllocator, now: s
                 """
                 INSERT INTO reagents
                     (id, code, source_code, aliquot_no, name, category, brand, catalog_no, amount, amount_unit, quantity,
-                     status, storage_node_id, position_in_box, entry_date, expiration_date, validation_status, note,
+                     status, storage_node_id, grid_cell, entry_date, expiration_date, validation_status, note,
                      created_by, updated_by, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
                 """,
@@ -263,7 +263,7 @@ def seed_reagents(conn: sqlite3.Connection, positions: PositionAllocator, now: s
     add("Anti-Ly6G 抗体", "抗体", "BioLegend", "127601", 100, "uL", 1, "可用", 4, "2026-04-18", "2027-04-18", "未验证", "粒细胞面板待验证")
     add("Anti-F4/80 抗体", "抗体", "BioLegend", "123107", 100, "uL", 1, "可用", 4, "2026-04-20", "2027-04-20", "通过", "巨噬细胞面板")
     add("Anti-CD19 抗体", "抗体", "BioLegend", "115507", 100, "uL", 1, "可用", 4, "2026-05-05", "2027-05-05", "通过", "B 细胞面板")
-    add("Anti-Foxp3 抗体", "抗体", "Invitrogen", "17-5773-82", 50, "uL", 1, "停用", 4, "2025-12-01", "2026-06-20", "待复核", "停用但实物仍在盒内")
+    add("Anti-Foxp3 抗体", "抗体", "Invitrogen", "17-5773-82", 50, "uL", 1, "停用", 4, "2025-12-01", "2026-06-20", "待复核", "停用但实物仍在格位")
     add("Rabbit IgG 同型对照", "抗体", "CST", "3900", 100, "uL", 1, "可用", 4, "2026-05-08", "2027-05-08", "通过", "阴性对照")
 
     add("Recombinant Mouse IL-4", "细胞因子", "PeproTech", "214-14", 10, "ug", 1, "可用", 6, "2026-05-15", "2027-05-15", "未验证", "Th2 诱导")
@@ -382,7 +382,7 @@ def seed_samples(conn: sqlite3.Connection, positions: PositionAllocator, now: st
                 """
                 INSERT INTO clinical_samples
                     (id, code, source_code, aliquot_no, name, category, amount, amount_unit, quantity, status,
-                     storage_node_id, position_in_box, entry_date, expiration_date, validation_status, note,
+                     storage_node_id, grid_cell, entry_date, expiration_date, validation_status, note,
                      created_by, updated_by, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, NULL, '', ?, 1, 1, ?, ?)
                 """,
@@ -558,7 +558,7 @@ def seed_arrivals(conn: sqlite3.Connection, order_ids: dict[str, int], reagent_i
             continue
         reagent_rows = conn.execute(
             """
-            SELECT id, storage_node_id, position_in_box
+            SELECT id, storage_node_id, grid_cell
             FROM reagents
             WHERE catalog_no = ?
             ORDER BY id
@@ -568,13 +568,13 @@ def seed_arrivals(conn: sqlite3.Connection, order_ids: dict[str, int], reagent_i
         ).fetchall()
         for item in reagent_rows:
             reagent_id = int(item["id"])
-            item = conn.execute("SELECT storage_node_id, position_in_box FROM reagents WHERE id = ?", (reagent_id,)).fetchone()
+            item = conn.execute("SELECT storage_node_id, grid_cell FROM reagents WHERE id = ?", (reagent_id,)).fetchone()
             node_id = item["storage_node_id"] if item else None
-            position = item["position_in_box"] if item else None
+            position = item["grid_cell"] if item else None
             conn.execute(
                 """
                 INSERT INTO arrivals
-                    (order_id, item_type, item_id, entry_date, received_by, storage_node_id, position_in_box,
+                    (order_id, item_type, item_id, entry_date, received_by, storage_node_id, grid_cell,
                      location_snapshot, expiration_date, note, created_at)
                 VALUES (?, 'reagent', ?, ?, 1, ?, ?, ?, ?, ?, ?)
                 """,
@@ -631,14 +631,14 @@ def seed_movements(
     def add_movement(item_type: str, item_id: int, moved_at: str, reason: str, note: str = "") -> None:
         nonlocal movement_id
         table = "clinical_samples" if item_type == "sample" else "reagents"
-        item = conn.execute(f"SELECT storage_node_id, position_in_box FROM {table} WHERE id = ?", (item_id,)).fetchone()
+        item = conn.execute(f"SELECT storage_node_id, grid_cell FROM {table} WHERE id = ?", (item_id,)).fetchone()
         if item is None or not item["storage_node_id"]:
             return
         conn.execute(
             """
             INSERT INTO movements
-                (id, object_type, object_id, item_type, item_id, from_storage_node_id, from_position_in_box,
-                 to_storage_node_id, to_position_in_box, from_location_snapshot, to_location_snapshot, moved_by, moved_at, reason, note)
+                (id, object_type, object_id, item_type, item_id, from_storage_node_id, from_grid_cell,
+                 to_storage_node_id, to_grid_cell, from_location_snapshot, to_location_snapshot, moved_by, moved_at, reason, note)
             VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, '未归位', ?, 1, ?, ?, ?)
             """,
             (
@@ -648,8 +648,8 @@ def seed_movements(
                 item_type,
                 item_id,
                 item["storage_node_id"],
-                item["position_in_box"],
-                storage_snapshot(conn, item["storage_node_id"], item["position_in_box"]),
+                item["grid_cell"],
+                storage_snapshot(conn, item["storage_node_id"], item["grid_cell"]),
                 moved_at,
                 reason,
                 note,
@@ -679,9 +679,9 @@ def seed_movements(
 
     # 额外保留几条高频操作记录，便于演示流转记录和详情页。
     extra_moves = [
-        ("reagent", reagent_ids["RG000004"], "2026-06-03 16:20:00", "整理抗体盒", "从盒内前排调整到当前孔位"),
+        ("reagent", reagent_ids["RG000004"], "2026-06-03 16:20:00", "整理抗体格架", "从前排格位调整到当前位置"),
         ("reagent", reagent_ids["RG000048"], "2026-06-13 09:30:00", "新到货待归位", "暂未分配位置，特殊关注中可见"),
-        ("sample", sample_ids["SP000040"], "2026-06-13 10:00:00", "新样本待归位", "暂存在待处理区外，未分配盒位"),
+        ("sample", sample_ids["SP000040"], "2026-06-13 10:00:00", "新样本待归位", "暂存在待处理区外，未分配格位"),
     ]
     for item_type, item_id, moved_at, reason, note in extra_moves:
         add_movement(item_type, item_id, moved_at, reason, note)

@@ -6,7 +6,6 @@ from services.storage_inventory import (
     grid_label,
     grid_position,
     clean_positive_int,
-    clean_node_dimension,
     occupies_storage,
     reagent_is_consumed,
 )
@@ -67,13 +66,10 @@ class TestAssignGridPositions:
 
 class TestDefaultGridForNode:
     def test_explicit(self):
-        assert default_grid_for_node("space", 3, 5) == (3, 5)
-
-    def test_box_default(self):
-        assert default_grid_for_node("box", None, None) == (9, 9)
+        assert default_grid_for_node(3, 5) == (3, 5)
 
     def test_space_default(self):
-        assert default_grid_for_node("space", None, None) == (1, 1)
+        assert default_grid_for_node(None, None) == (1, 1)
 
 
 class TestCoordList:
@@ -97,17 +93,6 @@ class TestCleanPositiveInt:
 
     def test_max(self):
         assert clean_positive_int(100, 50) == 50
-
-
-class TestCleanNodeDimension:
-    def test_box_rows_max(self):
-        assert clean_node_dimension("box", "rows", 30) == 26
-
-    def test_box_cols_max(self):
-        assert clean_node_dimension("box", "cols", 60) == 50
-
-    def test_space_max(self):
-        assert clean_node_dimension("space", "rows", 60) == 50
 
 
 class TestOccupiesStorage:
@@ -148,10 +133,10 @@ class TestNodePath:
         conn = patch_db
         _seed_user(conn)
         conn.execute(
-            "INSERT INTO storage_nodes (id, parent_id, name, node_type, created_by, updated_by, created_at, updated_at) VALUES (1, NULL, '根', 'space', 1, 1, '2025-01-01', '2025-01-01')"
+            "INSERT INTO storage_nodes (id, parent_id, name, created_by, updated_by, created_at, updated_at) VALUES (1, NULL, '根', 1, 1, '2025-01-01', '2025-01-01')"
         )
         conn.execute(
-            "INSERT INTO storage_nodes (id, parent_id, name, node_type, created_by, updated_by, created_at, updated_at) VALUES (2, 1, '冰箱A', 'space', 1, 1, '2025-01-01', '2025-01-01')"
+            "INSERT INTO storage_nodes (id, parent_id, name, created_by, updated_by, created_at, updated_at) VALUES (2, 1, '冰箱A', 1, 1, '2025-01-01', '2025-01-01')"
         )
         conn.commit()
         from services.storage_inventory import node_full_path
@@ -164,13 +149,13 @@ class TestDescendantNodeIds:
         conn = patch_db
         _seed_user(conn)
         conn.execute(
-            "INSERT INTO storage_nodes (id, parent_id, name, node_type, created_by, updated_by, created_at, updated_at) VALUES (1, NULL, '根', 'space', 1, 1, '2025-01-01', '2025-01-01')"
+            "INSERT INTO storage_nodes (id, parent_id, name, created_by, updated_by, created_at, updated_at) VALUES (1, NULL, '根', 1, 1, '2025-01-01', '2025-01-01')"
         )
         conn.execute(
-            "INSERT INTO storage_nodes (id, parent_id, name, node_type, created_by, updated_by, created_at, updated_at) VALUES (2, 1, '子', 'space', 1, 1, '2025-01-01', '2025-01-01')"
+            "INSERT INTO storage_nodes (id, parent_id, name, created_by, updated_by, created_at, updated_at) VALUES (2, 1, '子', 1, 1, '2025-01-01', '2025-01-01')"
         )
         conn.execute(
-            "INSERT INTO storage_nodes (id, parent_id, name, node_type, created_by, updated_by, created_at, updated_at) VALUES (3, 2, '孙', 'space', 1, 1, '2025-01-01', '2025-01-01')"
+            "INSERT INTO storage_nodes (id, parent_id, name, created_by, updated_by, created_at, updated_at) VALUES (3, 2, '孙', 1, 1, '2025-01-01', '2025-01-01')"
         )
         conn.commit()
         from services.storage_inventory import descendant_node_ids

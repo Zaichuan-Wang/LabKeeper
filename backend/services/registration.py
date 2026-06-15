@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
 import io
@@ -13,7 +13,7 @@ from core.constants import STATUS_AVAILABLE, STATUS_DISABLED, STATUS_ORDERED, VA
 from db.database import connect
 from services.storage_inventory import (
     assign_reagent_to_node,
-    sequential_box_positions,
+    sequential_frame_positions,
     storage_location_text,
 )
 
@@ -152,7 +152,7 @@ def create_arrival(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
     entry_date = str(data.get("entry_date") or date.today().isoformat())
     expiration_date = str(data.get("expiration_date", "")).strip() or None
     note = str(data.get("note", "")).strip()
-    position = str(data.get("position_in_box", "")).strip() or None
+    position = str(data.get("grid_cell", "")).strip() or None
     with connect() as conn:
         order = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
         if order is None:
@@ -164,7 +164,7 @@ def create_arrival(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
         arrival_count = clean_arrival_count(data.get("arrival_quantity"), order["quantity"])
         separate_items = bool(data.get("separate_items", True))
         row_count = arrival_count if separate_items else 1
-        positions = sequential_box_positions(conn, storage_node_id, row_count, position) if storage_node_id and row_count > 1 else [position if storage_node_id else None] * row_count
+        positions = sequential_frame_positions(conn, storage_node_id, row_count, position) if storage_node_id and row_count > 1 else [position if storage_node_id else None] * row_count
         reagent_ids: list[int] = []
         arrival_rows: list[dict[str, Any]] = []
         source_code = None
@@ -202,7 +202,7 @@ def create_arrival(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
             arrival = conn.execute(
                 """
                 INSERT INTO arrivals
-                    (order_id, item_type, item_id, entry_date, received_by, storage_node_id, position_in_box,
+                    (order_id, item_type, item_id, entry_date, received_by, storage_node_id, grid_cell,
                      location_snapshot, expiration_date, note, created_at)
                 VALUES (?, 'reagent', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,

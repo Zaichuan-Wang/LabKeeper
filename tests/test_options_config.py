@@ -15,6 +15,7 @@ def test_fixed_status_options_keep_required_values_before_custom_values():
     assert clean["reagent_statuses"] == ["已订购", "可用", "停用", "已耗尽", "Available"]
     assert clean["validation_statuses"] == ["未验证", "通过", "不通过", "待复核", "Pending"]
     assert clean["sample_statuses"] == ["可用", "停用", "已耗尽"]
+    assert clean["space_types"] == ["盒子", "冰箱", "液氮罐", "架子", "其他"]
 
 
 def test_save_dropdown_options_persists_required_and_custom_status_options(monkeypatch, tmp_path):
@@ -40,3 +41,36 @@ def test_save_dropdown_options_persists_required_and_custom_status_options(monke
 
     persisted = json.loads(options_path.read_text(encoding="utf-8-sig"))
     assert persisted["reagent_statuses"] == ["已订购", "可用", "停用", "已耗尽", "Available"]
+
+
+def test_space_type_options_are_limited_to_four_editable_slots_plus_other():
+    clean = options_config.normalize_dropdown_options({
+        "space_types": ["冷冻盒", "超低温冰箱", "液氮罐", "货架", "临时类型", "其他"],
+    })
+
+    assert clean["space_types"] == ["冷冻盒", "超低温冰箱", "液氮罐", "货架", "其他"]
+
+
+def test_empty_space_type_slots_are_preserved_and_hidden_from_labels():
+    clean = options_config.normalize_dropdown_options({
+        "space_types": ["冷冻盒", "", "液氮罐", "", "其他"],
+    })
+
+    assert clean["space_types"] == ["冷冻盒", "", "液氮罐", "", "其他"]
+    assert options_config.space_type_label(2, clean["space_types"]) == "类型 2"
+    assert options_config.space_type_label(5, clean["space_types"]) == "其他"
+
+
+def test_space_type_code_helper_accepts_only_slot_codes():
+    assert options_config.clean_space_type_code("1") == 1
+    assert options_config.clean_space_type_code("5") == 5
+    try:
+        options_config.clean_space_type_code("盒子")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("space type labels should not be accepted as stored values")
+
+
+def test_space_type_label_falls_back_to_other_for_unexpected_stored_value():
+    assert options_config.space_type_label("盒子") == "其他"

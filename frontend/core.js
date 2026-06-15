@@ -184,13 +184,14 @@ function inventoryObjectListPath(type, params) {
   const query = params instanceof URLSearchParams ? params.toString() : String(params || '');
   const itemType = inventoryObjectType(type);
   const search = new URLSearchParams(query);
-  search.set('type', itemType);
+  search.set('item_type', itemType);
   search.set('purpose', search.get('purpose') || 'global');
   return `/api/inventory/search?${search.toString()}`;
 }
 
 function inventoryObjectDetailPath(type, id) {
-  return `/api/inventory/items/${inventoryObjectType(type)}/${id}`;
+  const query = new URLSearchParams({ item_type: inventoryObjectType(type), id: String(id) });
+  return `/api/inventory/item?${query.toString()}`;
 }
 
 function inventoryObjectCode(item, fallbackType = 'reagent') {
@@ -234,7 +235,7 @@ function inventoryObjectAvailable(item, fallbackType = 'reagent') {
 
 async function searchInventoryObjects({ type = 'all', keyword = '', available = false, limit = 80, explicitId = null, params = {}, purpose = 'form' } = {}) {
   const itemType = inventorySearchType(type);
-  const query = new URLSearchParams({ type: itemType, limit: String(limit), purpose });
+  const query = new URLSearchParams({ item_type: itemType, limit: String(limit), purpose });
   if (keyword) query.set('keyword', keyword);
   if (available) query.set('available', '1');
   Object.entries(params || {}).forEach(([key, value]) => {
