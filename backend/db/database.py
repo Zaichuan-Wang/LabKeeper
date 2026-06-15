@@ -185,12 +185,20 @@ def _repair_known_inconsistencies(conn: sqlite3.Connection) -> None:
     _repair_storage_references(conn)
 
 
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    """检查表中的列是否存在"""
+    cols = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(col["name"] == column for col in cols)
+
+
 def _repair_storage_references(conn: sqlite3.Connection) -> None:
     for table in ("reagents", "clinical_samples", "arrivals"):
+        has_grid_cell = _column_exists(conn, table, "grid_cell")
+        set_clause = "storage_node_id = NULL, grid_cell = NULL" if has_grid_cell else "storage_node_id = NULL"
         cursor = conn.execute(
             f"""
             UPDATE {table}
-            SET storage_node_id = NULL, grid_cell = NULL
+            SET {set_clause}
             WHERE storage_node_id IS NOT NULL
               AND storage_node_id NOT IN (SELECT id FROM storage_nodes)
             """
