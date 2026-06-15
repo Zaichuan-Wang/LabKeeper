@@ -19,8 +19,8 @@ dev_tools/demo.sqlite3
 dev_tools/demo.sqlite3-*
 archive/
 
-data/pids/
-data/validation_images/
+data/*
+!data/.gitkeep
 
 .claude/
 .qwen/

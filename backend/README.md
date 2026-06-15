@@ -23,4 +23,4 @@ router 里。
 - 新增索引前，先确认有稳定页面或接口会长期使用它；不要因为某个字段存在就建索引。
 - 优先保留能服务常见路径的索引：位置、状态、更新时间、有效期、货号、分装来源、时间线。
 - 大量清理后，文件体积需要通过 `python backend/server.py --compact` 才会真正缩小。
-- `db/`、`data/`、`dev_tools/demo.sqlite3` 都是运行时或本机测试产物，不应写入源码仓库。
+- `db/`、`data/`、`dev_tools/demo.sqlite3` 都是运行时或本机测试产物，不应写入源码仓库；`data/.gitkeep` 只用于让 GitHub 部署时保留空目录。
