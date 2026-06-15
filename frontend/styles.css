@@ -315,6 +315,7 @@ label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; } strong 
   .shell.sidebar-collapsed .nav-item { display:block; min-height:0; padding:11px 13px; text-align:left; font-size:inherit; }
   .shell.sidebar-collapsed .nav-item::before { content:none; }
   .panel-grid, .panel-grid.split, .panel-grid.three, .login-card, .inventory-shell, .location-picker-grid { grid-template-columns:1fr; }
+  .location-dialog .location-picker-grid { grid-template-columns:1fr; }
   .metric-grid { grid-template-columns: repeat(2, 1fr); }
   .toolbar, .toolbar.wide, .toolbar.compact, .grid-form { grid-template-columns:1fr; }
   .workbench-tabs-panel, .inventory-tabs-panel { position:static; }
@@ -356,6 +357,7 @@ label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; } strong 
   .inventory-tree .tree-node { min-width:210px; padding-left:10px !important; }
   .location-tree, .location-canvas { max-height: 280px; }
   .location-tree { display:flex; gap:8px; max-height:none; overflow:auto; }
+  .location-tree .tree-group { flex:0 0 210px; }
   .location-tree .tree-node { flex:0 0 210px; padding-left:10px !important; }
   .storage-hero { grid-template-columns:1fr; }
   .storage-hero h3 { font-size:21px; }
