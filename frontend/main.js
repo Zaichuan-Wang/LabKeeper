@@ -1,4 +1,4 @@
-const ASSET_VERSION = '20260616-split-maintenance';
+const ASSET_VERSION = '20260616-inventory-available-filter';
 const APP_SCRIPTS = [
   'core.js',
   'ui-common.js',

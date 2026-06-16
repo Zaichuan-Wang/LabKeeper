@@ -39,19 +39,20 @@ from services.storage_inventory import (
 )
 
 
-def dashboard() -> dict[str, Any]:
+def dashboard(visible_types: set[str] | None = None) -> dict[str, Any]:
+    visible = {"reagent", "sample"} if visible_types is None else visible_types
     with connect() as conn:
-        total_reagents = conn.execute("SELECT COUNT(*) AS n FROM reagents").fetchone()["n"]
-        total_samples = conn.execute("SELECT COUNT(*) AS n FROM clinical_samples").fetchone()["n"]
+        total_reagents = conn.execute("SELECT COUNT(*) AS n FROM reagents").fetchone()["n"] if "reagent" in visible else 0
+        total_samples = conn.execute("SELECT COUNT(*) AS n FROM clinical_samples").fetchone()["n"] if "sample" in visible else 0
         total_inventory = total_reagents + total_samples
         unplaced_reagents = conn.execute(
             f"SELECT COUNT(*) AS n FROM reagents WHERE storage_node_id = ? AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}",
             (SYSTEM_UNPLACED_NODE_ID,),
-        ).fetchone()["n"]
+        ).fetchone()["n"] if "reagent" in visible else 0
         unplaced_samples = conn.execute(
             f"SELECT COUNT(*) AS n FROM clinical_samples WHERE storage_node_id = ? AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}",
             (SYSTEM_UNPLACED_NODE_ID,),
-        ).fetchone()["n"]
+        ).fetchone()["n"] if "sample" in visible else 0
         pending_orders = conn.execute(
             """
             SELECT COUNT(*) AS n
@@ -59,14 +60,14 @@ def dashboard() -> dict[str, Any]:
             WHERE status = ? AND storage_node_id = ?
             """,
             (STATUS_ORDERED, SYSTEM_NOT_ARRIVED_NODE_ID),
-        ).fetchone()["n"]
+        ).fetchone()["n"] if "reagent" in visible else 0
         todo_validations = conn.execute(
             f"""
             SELECT COUNT(*) AS n FROM reagents
             WHERE {reagent_validation_status_sql('reagents')} IN ('未验证', '待复核')
               AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
             """
-        ).fetchone()["n"]
+        ).fetchone()["n"] if "reagent" in visible else 0
         today = date.today().isoformat()
         until = (date.today() + timedelta(days=EXPIRATION_REMIND_DAYS)).isoformat()
         overdue_count = conn.execute(
@@ -77,7 +78,7 @@ def dashboard() -> dict[str, Any]:
               AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
             """,
             (today,),
-        ).fetchone()["n"]
+        ).fetchone()["n"] if "reagent" in visible else 0
         upcoming_count = conn.execute(
             f"""
             SELECT COUNT(*) AS n FROM reagents
@@ -86,7 +87,7 @@ def dashboard() -> dict[str, Any]:
               AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
             """,
             (today, until),
-        ).fetchone()["n"]
+        ).fetchone()["n"] if "reagent" in visible else 0
         storage_stats = conn.execute(
             """
             SELECT
@@ -99,17 +100,13 @@ def dashboard() -> dict[str, Any]:
         ).fetchone()
         category_rows = conn.execute(
             "SELECT COALESCE(category, '未分类') AS category, COUNT(*) AS n FROM reagents GROUP BY category ORDER BY n DESC LIMIT 8"
-        ).fetchall()
-        status_rows = conn.execute(
-            """
-            SELECT '试剂：' || COALESCE(status, '未知') AS status, COUNT(*) AS n
-            FROM reagents GROUP BY status
-            UNION ALL
-            SELECT '标本：' || COALESCE(status, '未知') AS status, COUNT(*) AS n
-            FROM clinical_samples GROUP BY status
-            ORDER BY n DESC
-            """
-        ).fetchall()
+        ).fetchall() if "reagent" in visible else []
+        status_queries = []
+        if "reagent" in visible:
+            status_queries.append("SELECT '试剂：' || COALESCE(status, '未知') AS status, COUNT(*) AS n FROM reagents GROUP BY status")
+        if "sample" in visible:
+            status_queries.append("SELECT '标本：' || COALESCE(status, '未知') AS status, COUNT(*) AS n FROM clinical_samples GROUP BY status")
+        status_rows = conn.execute(" UNION ALL ".join(status_queries) + " ORDER BY n DESC").fetchall() if status_queries else []
     return {
         "metrics": {
             "total_reagents": total_reagents,

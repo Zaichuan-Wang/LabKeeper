@@ -18,19 +18,26 @@ from models.request_models import (
     ValidationUpdateRequest,
 )
 from routers.common import json_response, query_params
-from core.security import require_user
+from core.security import require_inventory_view, require_permission, require_user, visible_inventory_types
 
 router = APIRouter(prefix="/api")
 
 
 @router.get("/dashboard")
-def dashboard(_: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
-    return reagents.dashboard()
+def dashboard(user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
+    return reagents.dashboard(visible_inventory_types(user))
 
 
 @router.get("/orders")
-def list_orders(request: Request, _: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
-    return registration.list_orders(query_params(request))
+def list_orders(request: Request, user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
+    require_inventory_view(user, "reagent")
+    query = query_params(request)
+    purpose = query.get("purpose", ["history"])[0]
+    if purpose == "form":
+        query["status"] = ["未到货"]
+    else:
+        require_permission(user, "inventory.search")
+    return registration.list_orders(query)
 
 
 @router.post("/orders")
@@ -39,7 +46,9 @@ def create_order(data: OrderCreateRequest, user: dict[str, Any] = Depends(requir
 
 
 @router.get("/expiration")
-def expiration(request: Request, _: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
+def expiration(request: Request, user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
+    if "reagent" not in visible_inventory_types(user):
+        return {"overdue": [], "upcoming": [], "pending_orders": [], "unvalidated_antibodies": [], "remind_days": 0}
     return reagents.expiration(query_params(request))
 
 
@@ -67,7 +76,9 @@ def create_arrival(data: ArrivalCreateRequest, user: dict[str, Any] = Depends(re
 
 
 @router.get("/validations")
-def list_validations(_: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
+def list_validations(user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
+    require_permission(user, "inventory.search")
+    require_inventory_view(user, "reagent")
     return registration.list_validations()
 
 

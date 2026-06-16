@@ -211,7 +211,7 @@ def seed_users(conn: sqlite3.Connection, now: str) -> None:
                 "demo_user",
                 "测试用户",
                 hash_password("demo123"),
-                '{"inventory.manage":true,"location.manage":false,"inventory.search":true}',
+                '{"inventory.manage":true,"location.manage":false,"inventory.search":true,"inventory.view_reagents":true,"inventory.view_samples":true}',
                 1,
                 now,
                 now,
@@ -221,7 +221,7 @@ def seed_users(conn: sqlite3.Connection, now: str) -> None:
                 "purchase",
                 "采购助理",
                 hash_password("demo123"),
-                '{"inventory.manage":false,"location.manage":false,"inventory.search":true}',
+                '{"inventory.manage":false,"location.manage":false,"inventory.search":true,"inventory.view_reagents":true,"inventory.view_samples":false}',
                 1,
                 now,
                 now,
@@ -231,7 +231,7 @@ def seed_users(conn: sqlite3.Connection, now: str) -> None:
                 "viewer",
                 "只读观察员",
                 hash_password("demo123"),
-                '{"inventory.manage":false,"location.manage":false,"inventory.search":true}',
+                '{"inventory.manage":false,"location.manage":false,"inventory.search":true,"inventory.view_reagents":true,"inventory.view_samples":true}',
                 1,
                 now,
                 now,
@@ -498,9 +498,9 @@ def seed_samples(conn: sqlite3.Connection, positions: PositionAllocator, now: st
                 """
                 INSERT INTO clinical_samples
                     (id, code, source_code, aliquot_no, name, category, amount, amount_unit, quantity, status,
-                     storage_node_id, grid_cell, entry_date, expiration_date, validation_status, note,
+                     storage_node_id, grid_cell, entry_date, note,
                      created_by, updated_by, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, NULL, '', ?, 1, 1, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 1, 1, ?, ?)
                 """,
                 (
                     sample_id,

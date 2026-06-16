@@ -11,7 +11,7 @@ from services import reagents
 from core.common import ApiError, clean_optional_positive_int
 from models.request_models import AliquotCreateRequest, InventoryItemCreateRequest, InventoryItemUpdateRequest
 from routers.common import json_response, query_params
-from core.security import require_permission, require_user
+from core.security import require_inventory_view, require_permission, require_user, visible_inventory_types
 
 router = APIRouter(prefix="/api")
 
@@ -33,11 +33,13 @@ def inventory_search_route(request: Request, user: dict[str, Any] = Depends(requ
         require_permission(user, "inventory.search")
     elif purpose == "movement":
         require_permission(user, "location.manage")
-    elif purpose in {"aliquot", "checkout"}:
+    elif purpose == "aliquot":
+        require_permission(user, "inventory.manage")
+    elif purpose == "checkout":
         pass
     else:
         raise ApiError(400, "库存搜索用途不正确")
-    return inventory.search(query)
+    return inventory.search(query, visible_inventory_types(user))
 
 
 @router.get("/inventory/catalog-conflicts")
@@ -58,6 +60,7 @@ def create_inventory_item(data: InventoryItemCreateRequest, user: dict[str, Any]
 def inventory_item_detail(request: Request, user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
     require_permission(user, "inventory.search")
     item_type, item_id = inventory_item_query(request)
+    require_inventory_view(user, inventory.clean_item_type(item_type))
     return inventory.item_detail(item_type, item_id)
 
 
@@ -65,6 +68,7 @@ def inventory_item_detail(request: Request, user: dict[str, Any] = Depends(requi
 def inventory_item_timeline(request: Request, user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
     require_permission(user, "inventory.search")
     item_type, item_id = inventory_item_query(request)
+    require_inventory_view(user, inventory.clean_item_type(item_type))
     return inventory.timeline(item_type, item_id)
 
 
@@ -72,12 +76,15 @@ def inventory_item_timeline(request: Request, user: dict[str, Any] = Depends(req
 def update_inventory_item(request: Request, data: InventoryItemUpdateRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
     require_permission(user, "inventory.manage")
     item_type, item_id = inventory_item_query(request)
+    require_inventory_view(user, inventory.clean_item_type(item_type))
     return json_response(inventory.update_item(item_type, item_id, data.payload(patch=True), user))
 
 
 @router.post("/aliquots")
 def create_aliquots(data: AliquotCreateRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
     payload = data.payload()
+    require_permission(user, "inventory.manage")
+    require_inventory_view(user, data.item_type)
     if data.item_type == "sample":
         return json_response(clinical_samples.create_aliquots(payload, user), 201)
     return json_response(reagents.create_reagent_aliquots(payload, user), 201)

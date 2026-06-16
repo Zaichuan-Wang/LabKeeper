@@ -106,6 +106,7 @@ def _ensure_indexes(conn: sqlite3.Connection) -> None:
     _drop_removed_business_tables(conn)
     _drop_obsolete_indexes(conn)
     _drop_removed_reagent_columns(conn)
+    _drop_removed_sample_columns(conn)
     for sql in LIGHTWEIGHT_INDEX_SQL:
         conn.execute(sql)
 
@@ -127,6 +128,16 @@ def _drop_removed_reagent_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE reagents DROP COLUMN validation_status")
     except sqlite3.OperationalError:
         logger.warning("当前 SQLite 不支持删除旧列 reagents.validation_status，代码将忽略该闲置列。")
+
+
+def _drop_removed_sample_columns(conn: sqlite3.Connection) -> None:
+    for column in ("expiration_date", "validation_status"):
+        if not _column_exists(conn, "clinical_samples", column):
+            continue
+        try:
+            conn.execute(f"ALTER TABLE clinical_samples DROP COLUMN {column}")
+        except sqlite3.OperationalError:
+            logger.warning("当前 SQLite 不支持删除旧列 clinical_samples.%s，代码将忽略该闲置列。", column)
 
 
 def compact_database() -> dict[str, int]:

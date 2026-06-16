@@ -30,7 +30,7 @@ async function loadReagentCache() {
 
 
 async function loadOrdersCache() {
-  const data = await api('/api/orders');
+  const data = await api('/api/orders?purpose=form');
   state.orders = data.items;
   const pending = state.orders.filter(o => Number(o.arrival_count || 0) === 0 && o.status !== STATUS_DISABLED);
   fillSelectObjects(document.querySelector('#arrivalForm select[name="order_id"]'), pending, { placeholder: '请选择未到货订单', label: o => `${o.id} | ${o.name} | ${o.category || '其他'} | 数量 ${o.quantity || 1}` });
@@ -129,8 +129,8 @@ function renderRepeatOrderSummary() {
   if (!summaryBox) return;
   const item = selectedRepeatOrderItem();
   summaryBox.innerHTML = item
-    ? `<b>${esc(item.name || item.code || '试剂')}</b><span>${esc(item.category || '其他')} · ${esc(item.brand || '无品牌')} · ${esc(item.catalog_no || '无货号')} · ${amountText(item)}</span>`
-    : '<span>选择已有试剂后，可带入名称、类型、品牌、货号和规格。</span>';
+    ? `<b>${esc(item.name || item.code || '试剂')}</b><span>${esc(item.category || '其他')} · ${esc(item.brand || '无品牌')} · ${esc(item.catalog_no || '无货号')} · ${amountText(item)} · 价格 ${orderPriceText(repeatOrderPrice(item))}</span>`
+    : '<span>选择已有试剂后，可带入名称、类型、品牌、货号、规格和价格。</span>';
 }
 
 async function loadRepeatOrderCandidates() {
@@ -324,7 +324,7 @@ async function renderReagentDetail(data, timeline = null) {
   target.innerHTML = `
     ${actions}
     <h4>${esc(item.code || item.id)} · ${esc(item.name)}</h4>
-    <div class="detail-grid"><span>来源：${esc(item.source_code || item.code || '-')}</span><span>货号：${esc(item.catalog_no || '-')}</span>${aliquotText ? `<span>管号：${esc(aliquotText)}</span>` : ''}<span>规格：${amountText(item)}</span><span>价格：${esc(orderPriceText(item.price))}</span><span>类型：${esc(item.category)}</span><span>状态：${esc(item.status)}</span><span>验证：${esc(item.validation_status)}</span><span>位置：${esc(locationText(item.storage_location))}</span></div>
+    <div class="detail-grid"><span>来源：${esc(item.source_code || item.code || '-')}</span><span>货号：${esc(item.catalog_no || '-')}</span>${aliquotText ? `<span>管号：${esc(aliquotText)}</span>` : ''}<span>规格：${amountText(item)}</span><span>价格：${esc(orderPriceText(item.price))}</span><span>类型：${esc(item.category)}</span><span>状态：${esc(item.status)}</span><span>验证：${esc(item.validation_status)}</span><span>位置：${esc(locationText(item.storage_location))}</span><span>备注：${esc(item.note || '-')}</span></div>
     <div class="detail-timeline-stack">
       ${detailTimelineModule('时间线', timeline?.items || [], { open: true, actions: timelineEventActions })}
       ${detailTimelineModule('历史订购', orderEvents, { open: false })}
@@ -348,8 +348,13 @@ async function loadSamples() {
 function syncAliquotFields() {
   const form = $('aliquotForm');
   if (!form) return 'sample';
-  const type = inventoryObjectType(form.elements.item_type.value || 'sample');
+  if (state.aliquotItemType && optionExists(form.elements.item_type, state.aliquotItemType)) {
+    form.elements.item_type.value = state.aliquotItemType;
+  }
+  syncInventoryTypeSelect(form.elements.item_type);
+  const type = firstVisibleInventoryType(form.elements.item_type.value || 'sample');
   form.elements.item_type.value = type;
+  state.aliquotItemType = type;
   document.querySelectorAll('[data-aliquot-reagent-field]').forEach(el => el.classList.toggle('hidden', type !== 'reagent'));
   const search = $('aliquotSourceSearch');
   if (search) search.placeholder = type === 'sample'
@@ -390,15 +395,24 @@ function renderAliquotSourceSummary() {
   `;
 }
 
-async function loadAliquotCandidates() {
+async function loadAliquotCandidates({ explicitId = null } = {}) {
   const type = syncAliquotFields();
+  if (!canViewInventoryType(type)) {
+    state.aliquotCandidates = [];
+    fillSelectObjects(document.querySelector('#aliquotForm select[name="source_item_id"]'), [], { placeholder: '当前账号没有可查看的来源库存' });
+    renderAliquotSourceSummary();
+    return { items: [], count: 0 };
+  }
   const keyword = $('aliquotSourceSearch')?.value.trim() || '';
-  const data = await searchInventoryObjects({ type, keyword, available: true, limit: 80, purpose: 'aliquot' });
+  const data = await searchInventoryObjects({ type, keyword, available: true, explicitId, limit: 80, purpose: 'aliquot' });
   state.aliquotCandidates = data.items;
   fillSelectObjects(document.querySelector('#aliquotForm select[name="source_item_id"]'), state.aliquotCandidates, {
     placeholder: type === 'sample' ? '请选择已有标本' : '请选择试剂',
     label: item => inventoryObjectSelectLabel(item, type),
   });
+  if (explicitId && optionExists(document.querySelector('#aliquotForm select[name="source_item_id"]'), explicitId)) {
+    document.querySelector('#aliquotForm select[name="source_item_id"]').value = explicitId;
+  }
   renderAliquotSourceSummary();
   fillPositionSelect(document.querySelector('#aliquotForm select[name="grid_cell"]'), document.querySelector('#aliquotForm select[name="storage_node_id"]').value);
   await loadLocationPicker('aliquot');
@@ -428,12 +442,15 @@ function renderSampleDetail(data) {
   const specText = amountText(item);
   const sourceText = item.code || '-';
   const tubeText = sampleTubeText(item) || '-';
-  const actionButtons = inventoryActionButtons(item, 'sample', { detail: false });
+  const aliquotAction = canManageInventory() && canViewSamples() && inventoryObjectAvailable(item, 'sample')
+    ? actionButton('分装', 'sample-row-aliquot', item.id)
+    : '';
+  const actionButtons = [inventoryActionButtons(item, 'sample', { detail: false }), aliquotAction].filter(Boolean).join(' ');
   const actions = actionButtons ? `<div class="detail-actions">${actionButtons}</div>` : '';
   detail.innerHTML = `
     ${actions}
     <h4>${esc(sourceText)} · ${esc(item.name)}</h4>
-    <div class="detail-grid"><span>系统编号：${esc(sourceText)}</span><span>样本号：${esc(item.name || '-')}</span><span>样本类型：${esc(item.category || '-')}</span><span>管号：${esc(tubeText)}</span><span>状态：${esc(item.status)}</span><span>规格：${specText}</span><span>入库日期：${esc(item.entry_date)}</span><span>位置：${esc(locationText(item.storage_location))}</span></div>
+    <div class="detail-grid"><span>系统编号：${esc(sourceText)}</span><span>样本号：${esc(item.name || '-')}</span><span>样本类型：${esc(item.category || '-')}</span><span>管号：${esc(tubeText)}</span><span>状态：${esc(item.status)}</span><span>规格：${specText}</span><span>入库日期：${esc(item.entry_date)}</span><span>位置：${esc(locationText(item.storage_location))}</span><span>备注：${esc(item.note || '-')}</span></div>
   `;
 }
 
@@ -460,7 +477,6 @@ async function loadRegistrationTab(tab = state.registrationTab) {
     }
   }
   if (tab === 'samples') await loadSamples();
-  if (tab === 'aliquots') await loadAliquotCandidates();
 }
 
 async function loadHistory() {
@@ -632,5 +648,6 @@ async function submitAliquot(e) {
   form.elements.note.value = '';
   renderAliquotSourceSummary();
   toast(result.count > 1 ? `已新增 ${result.count} 支分装` : '分装已新增');
-  await loadRegistrationTab('aliquots');
+  await loadInventoryTab('aliquots');
+  if (state.view === 'inventory') await loadInventory();
 }

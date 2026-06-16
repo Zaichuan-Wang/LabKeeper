@@ -1,18 +1,27 @@
 function setManualMode(mode = 'reagent') {
-  const cleanMode = mode === 'sample' ? 'sample' : 'reagent';
+  const requestedMode = mode === 'sample' ? 'sample' : 'reagent';
+  const cleanMode = firstVisibleInventoryType(requestedMode);
   state.manualMode = cleanMode;
   document.querySelectorAll('[data-manual-mode]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.manualMode === cleanMode);
-    btn.setAttribute('aria-selected', btn.dataset.manualMode === cleanMode ? 'true' : 'false');
+    const allowed = canViewInventoryType(btn.dataset.manualMode);
+    btn.classList.toggle('hidden', !allowed);
+    btn.disabled = !allowed;
+    btn.classList.toggle('active', allowed && btn.dataset.manualMode === cleanMode);
+    btn.setAttribute('aria-selected', allowed && btn.dataset.manualMode === cleanMode ? 'true' : 'false');
   });
   document.querySelectorAll('[data-manual-panel]').forEach(panel => {
-    const active = panel.dataset.manualPanel === cleanMode;
+    const allowed = canViewInventoryType(panel.dataset.manualPanel);
+    const active = allowed && panel.dataset.manualPanel === cleanMode;
     panel.classList.toggle('active-manual-pane', active);
     panel.classList.toggle('hidden', !active);
   });
 }
 
 async function openReagentEditor(id) {
+  if (!canViewReagents()) {
+    toast('当前账号没有查看试剂权限');
+    return;
+  }
   activateView('inventory');
   setInventoryTab('manual', false);
   setManualMode('reagent');
@@ -21,6 +30,10 @@ async function openReagentEditor(id) {
 }
 
 async function openSampleEditor(id) {
+  if (!canViewSamples()) {
+    toast('当前账号没有查看临床标本权限');
+    return;
+  }
   activateView('inventory');
   setInventoryTab('manual', false);
   setManualMode('sample');
@@ -42,7 +55,7 @@ function inventoryObjectSelectPlaceholder(type, action) {
 }
 
 async function fetchSelectableInventoryObjects(type, { keyword = '', explicitId = null } = {}) {
-  const itemType = inventoryObjectType(type);
+  const itemType = firstVisibleInventoryType(type);
   const purpose = state.inventoryTab === 'move' ? 'movement' : (state.inventoryTab === 'checkout' ? 'checkout' : 'form');
   const data = await searchInventoryObjects({ type: itemType, keyword, available: true, explicitId, limit: 120, purpose });
   return data.items || [];
@@ -66,10 +79,13 @@ async function syncSelectableInventoryPicker({
   action,
 }) {
   if (!form) return;
+  syncInventoryTypeSelect(form.elements.item_type);
   if (state[typeStateKey] && optionExists(form.elements.item_type, state[typeStateKey])) {
     form.elements.item_type.value = state[typeStateKey];
   }
-  const type = inventoryObjectType(form.elements.item_type.value || state[typeStateKey]);
+  syncInventoryTypeSelect(form.elements.item_type);
+  const type = firstVisibleInventoryType(form.elements.item_type.value || state[typeStateKey]);
+  if (form.elements.item_type.value !== type && optionExists(form.elements.item_type, type)) form.elements.item_type.value = type;
   const keyword = form.elements.keyword?.value.trim() || '';
   state[typeStateKey] = type;
   state[itemsStateKey] = await fetchSelectableInventoryObjects(type, { keyword, explicitId: state[idStateKey] });
@@ -96,6 +112,10 @@ async function loadMoveItems() {
 
 async function openInventoryMover(itemType, id) {
   if (!canManageLocation()) return;
+  if (!canViewInventoryType(itemType)) {
+    toast(itemType === 'sample' ? '当前账号没有查看临床标本权限' : '当前账号没有查看试剂权限');
+    return;
+  }
   state.moveItemType = itemType === 'sample' ? 'sample' : 'reagent';
   state.moveItemId = id;
   activateView('inventory');
@@ -141,14 +161,21 @@ function optionExists(select, value) {
 
 function syncInventoryFilterVisibility() {
   const selector = $('inventoryItemType');
+  syncInventoryTypeSelect(selector, { includeAll: true, includeSpace: true });
   if (selector && state.inventoryItemTypeFilter && selector.value !== state.inventoryItemTypeFilter) {
     selector.value = state.inventoryItemTypeFilter;
   }
+  syncInventoryTypeSelect(selector, { includeAll: true, includeSpace: true });
   const type = inventorySearchType(selector?.value || state.inventoryItemTypeFilter || 'all');
   state.inventoryItemTypeFilter = type;
   document.querySelectorAll('[data-filter-kind]').forEach(el => {
     el.classList.toggle('hidden', el.dataset.filterKind !== type);
   });
+  const availableOnly = $('inventoryAvailableOnly');
+  const availableOnlyLabel = $('inventoryAvailableOnlyLabel');
+  const isSpaceSearch = type === 'space';
+  if (availableOnly && isSpaceSearch) availableOnly.checked = false;
+  availableOnlyLabel?.classList.toggle('hidden', isSpaceSearch);
   const keyword = $('inventoryKeyword');
   if (keyword) {
     keyword.placeholder = type === 'all'
@@ -240,12 +267,7 @@ function syncBulkFields() {
   if (operationSelect.selectedOptions[0]?.disabled) {
     operationSelect.value = [...operationSelect.options].find(option => !option.disabled)?.value || 'checkout';
   }
-  [...itemTypeSelect.options].forEach(option => {
-    option.disabled = !['reagent', 'sample'].includes(option.value);
-  });
-  if (itemTypeSelect.selectedOptions[0]?.disabled) {
-    itemTypeSelect.value = [...itemTypeSelect.options].find(option => !option.disabled)?.value || 'reagent';
-  }
+  syncInventoryTypeSelect(itemTypeSelect);
   $('bulkItemTypeLabel')?.classList.toggle('hidden', operationSelect.value === 'validation');
   $('bulkCommitBtn').disabled = !(state.bulkPreview || []).some(row => row.status === 'ok');
 }
@@ -375,6 +397,10 @@ async function downloadStorageMap() {
 }
 
 async function openCheckout(itemType, id) {
+  if (!canViewInventoryType(itemType)) {
+    toast(itemType === 'sample' ? '当前账号没有查看临床标本权限' : '当前账号没有查看试剂权限');
+    return;
+  }
   state.checkoutItemType = itemType === 'sample' ? 'sample' : 'reagent';
   state.checkoutItemId = id;
   activateView('inventory');
@@ -402,6 +428,7 @@ async function loadInventoryTab(tab = state.inventoryTab) {
   setLoggedIn(Boolean(state.token && state.user));
   if (tab === 'details') await searchInventory();
   if (tab === 'manual') await loadManualEditor();
+  if (tab === 'aliquots') await loadAliquotCandidates();
   if (tab === 'bulk') await loadBulk();
   if (tab === 'checkout') await loadCheckouts();
   if (tab === 'move' && canManageLocation()) await loadMovements();
@@ -671,8 +698,8 @@ function positionActionButtons({ nodeId, well = '', row = '', col = '', node }) 
     ? `<button class="ghost mini-btn" type="button" data-action="new-child-space" data-id="${nodeId}" data-row="${esc(row)}" data-col="${esc(col)}">新建下级空间</button>`
     : '';
   const createButtons = [
-    `<button class="primary mini-btn" type="button" data-action="new-sample-at" data-node-id="${nodeId}" data-well="${esc(well)}">新建标本</button>`,
-    `<button class="ghost mini-btn" type="button" data-action="new-reagent-at" data-node-id="${nodeId}" data-well="${esc(well)}">新建试剂</button>`,
+    canViewSamples() ? `<button class="primary mini-btn" type="button" data-action="new-sample-at" data-node-id="${nodeId}" data-well="${esc(well)}">新建标本</button>` : '',
+    canViewReagents() ? `<button class="ghost mini-btn" type="button" data-action="new-reagent-at" data-node-id="${nodeId}" data-well="${esc(well)}">新建试剂</button>` : '',
   ].filter(Boolean).join('');
   const moveButton = canManageLocation()
     ? `<button class="ghost mini-btn" type="button" data-action="move-into-space" data-node-id="${nodeId}" data-well="${esc(well)}">移入库存</button>`
@@ -722,11 +749,37 @@ function showPositionActions({ nodeId = state.selectedNodeId, well = '', row = '
 
 function inventoryDetailActions(item) {
   const type = inventoryObjectType(item, 'reagent');
-  let actions = inventoryActionButtons(item, type, { detail: false });
+  const aliquotAction = canManageInventory() && canViewInventoryType(type) && inventoryObjectAvailable(item, type)
+    ? actionButton('分装', type === 'sample' ? 'sample-row-aliquot' : 'inventory-row-aliquot', item.id)
+    : '';
+  let actions = [inventoryActionButtons(item, type, { detail: false }), aliquotAction].filter(Boolean).join(' ');
   if (type === 'reagent') {
     actions = [actions, actionButton('再次订购', 'detail-repeat-order', item.id)].filter(Boolean).join(' ');
   }
   return actions ? `<div class="detail-actions">${actions}</div>` : '';
+}
+
+async function openAliquotFromItem(itemType, id) {
+  const type = inventoryObjectType(itemType);
+  if (!canManageInventory()) {
+    toast('当前账号没有库存维护权限');
+    return;
+  }
+  if (!canViewInventoryType(type)) {
+    toast(type === 'sample' ? '当前账号没有查看临床标本权限' : '当前账号没有查看试剂权限');
+    return;
+  }
+  state.aliquotItemType = type;
+  activateView('inventory');
+  const form = $('aliquotForm');
+  if (form) form.elements.source_item_id.value = id;
+  setInventoryTab('aliquots', false);
+  await loadAliquotCandidates({ explicitId: id });
+  const aliquotForm = $('aliquotForm');
+  if (aliquotForm && optionExists(aliquotForm.elements.source_item_id, id)) {
+    aliquotForm.elements.source_item_id.value = id;
+    renderAliquotSourceSummary();
+  }
 }
 
 async function loadInventoryTimeline(itemType, id) {
@@ -831,7 +884,7 @@ function inventoryDetailBody(data, itemType, timeline = null) {
     return `
       ${inventoryDetailActions(item)}
       <h4>${esc(sourceText)} · ${esc(item.name)}</h4>
-      <div class="detail-grid"><span>系统编号：${esc(sourceText)}</span><span>样本号：${esc(item.name || '-')}</span><span>样本类型：${esc(item.category || '-')}</span><span>管号：${esc(tubeText)}</span><span>状态：${esc(item.status)}</span><span>规格：${specText}</span><span>入库日期：${esc(item.entry_date)}</span><span>位置：${esc(locationText(item.storage_location))}</span></div>
+      <div class="detail-grid"><span>系统编号：${esc(sourceText)}</span><span>样本号：${esc(item.name || '-')}</span><span>样本类型：${esc(item.category || '-')}</span><span>管号：${esc(tubeText)}</span><span>状态：${esc(item.status)}</span><span>规格：${specText}</span><span>入库日期：${esc(item.entry_date)}</span><span>位置：${esc(locationText(item.storage_location))}</span><span>备注：${esc(item.note || '-')}</span></div>
       ${detailTimelineModule('时间线', timeline?.items || [], { open: true, actions: timelineEventActions })}
     `;
   }
@@ -839,7 +892,7 @@ function inventoryDetailBody(data, itemType, timeline = null) {
   return `
     ${inventoryDetailActions(item)}
     <h4>${esc(item.name)}</h4>
-    <div class="detail-grid"><span>编号：${esc(item.code || item.id)}</span><span>来源：${esc(item.source_code || item.code || '-')}</span><span>货号：${esc(item.catalog_no || '-')}</span>${aliquotText ? `<span>管号：${esc(aliquotText)}</span>` : ''}<span>规格：${amountText(item)}</span><span>价格：${esc(orderPriceText(item.price))}</span><span>类型：${esc(item.category)}</span><span>状态：${esc(item.status)}</span><span>验证：${esc(item.validation_status)}</span><span>数量：${esc(item.quantity)}</span><span>位置：${esc(locationText(item.storage_location))}</span></div>
+    <div class="detail-grid"><span>编号：${esc(item.code || item.id)}</span><span>来源：${esc(item.source_code || item.code || '-')}</span><span>货号：${esc(item.catalog_no || '-')}</span>${aliquotText ? `<span>管号：${esc(aliquotText)}</span>` : ''}<span>规格：${amountText(item)}</span><span>价格：${esc(orderPriceText(item.price))}</span><span>类型：${esc(item.category)}</span><span>状态：${esc(item.status)}</span><span>验证：${esc(item.validation_status)}</span><span>数量：${esc(item.quantity)}</span><span>位置：${esc(locationText(item.storage_location))}</span><span>备注：${esc(item.note || '-')}</span></div>
     <div class="detail-timeline-stack">
       ${detailTimelineModule('时间线', timeline?.items || [], { open: true, actions: timelineEventActions })}
       <div id="detailOrderHistory" class="detail-timeline-placeholder">${detailTimelineModule('历史订购', [], { open: false })}</div>
@@ -971,6 +1024,7 @@ async function searchInventory() {
     page: String(page),
     page_size: String(pageSize),
   });
+  if ($('inventoryAvailableOnly')?.checked) params.set('available', '1');
   if (type === 'sample') {
     params.set('category', $('inventorySampleType').value);
     params.set('status', $('inventorySampleStatus').value);

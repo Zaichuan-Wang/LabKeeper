@@ -227,10 +227,11 @@ def _current_inventory_row(item: dict[str, Any], item_type: str) -> list[Any]:
     ]
 
 
-def current_inventory(query: dict[str, list[str]]) -> tuple[bytes, str, str]:
+def current_inventory(query: dict[str, list[str]], visible_types: set[str] | None = None) -> tuple[bytes, str, str]:
     item_type = str(query.get("item_type", ["all"])[0] or "all").strip()
     if item_type not in {"all", "reagent", "sample"}:
         item_type = "all"
+    visible = {"reagent", "sample"} if visible_types is None else visible_types
     columns = [
         "对象类型", "编号", "名称", "类别", "品牌", "货号", "规格量", "规格单位",
         "数量", "价格", "状态", "验证状态", "入库日期", "有效期", "存放空间ID", "孔位", "备注",
@@ -240,7 +241,7 @@ def current_inventory(query: dict[str, list[str]]) -> tuple[bytes, str, str]:
     ws.title = "现有库存"
     ws.append(columns)
     with connect() as conn:
-        if item_type in {"all", "reagent"}:
+        if item_type in {"all", "reagent"} and "reagent" in visible:
             rows = conn.execute(
                 f"""
                 SELECT * FROM reagents
@@ -254,7 +255,7 @@ def current_inventory(query: dict[str, list[str]]) -> tuple[bytes, str, str]:
             attach_reagent_validation_statuses(conn, reagent_items)
             for item in reagent_items:
                 ws.append(_current_inventory_row(item, "reagent"))
-        if item_type in {"all", "sample"}:
+        if item_type in {"all", "sample"} and "sample" in visible:
             rows = conn.execute(
                 f"""
                 SELECT * FROM clinical_samples

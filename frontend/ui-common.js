@@ -12,6 +12,7 @@ function actionButton(label, action, id, cls = 'ghost') {
 
 function inventoryActionButtons(item, type, options = {}) {
   const itemType = inventoryObjectType(type);
+  if (!canViewInventoryType(itemType)) return '';
   const detailAction = options.detailAction ?? (itemType === 'sample' ? 'inventory-sample-detail' : 'inventory-row-detail');
   const editAction = options.editAction ?? (itemType === 'sample' ? 'sample-row-edit' : 'inventory-row-edit');
   const moveAction = options.moveAction ?? (itemType === 'sample' ? 'sample-row-move' : 'inventory-row-move');

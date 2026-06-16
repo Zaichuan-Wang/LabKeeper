@@ -100,6 +100,12 @@ def occupies_storage(status: str | None) -> bool:
     return str(status or "").strip() in PHYSICAL_INVENTORY_STATUSES
 
 
+def _visible_inventory_types(visible_types: set[str] | None = None) -> set[str]:
+    if visible_types is None:
+        return set(INVENTORY_TABLES)
+    return {item_type for item_type in visible_types if item_type in INVENTORY_TABLES}
+
+
 def is_system_storage_node_id(node_id: Any) -> bool:
     try:
         return int(node_id) in SYSTEM_STORAGE_NODE_IDS
@@ -382,8 +388,6 @@ def normalize_sample_item(
             "display_name": name,
             "category": item.get("category") or "临床标本",
             "display_type": item.get("category") or "临床标本",
-            "validation_status": item.get("validation_status") or "",
-            "expiration_date": item.get("expiration_date") or "",
         }
     )
     return item
@@ -430,16 +434,26 @@ def attach_aliquot_totals(conn: sqlite3.Connection, items: list[dict[str, Any]])
     return items
 
 
-def storage_item_counts(conn: sqlite3.Connection) -> dict[int, int]:
+def storage_item_counts(conn: sqlite3.Connection, visible_types: set[str] | None = None) -> dict[int, int]:
+    visible = _visible_inventory_types(visible_types)
+    subqueries = []
+    if "reagent" in visible:
+        subqueries.append(f"""
+            SELECT storage_node_id FROM reagents
+            WHERE storage_node_id > 0 AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
+        """)
+    if "sample" in visible:
+        subqueries.append(f"""
+            SELECT storage_node_id FROM clinical_samples
+            WHERE storage_node_id > 0 AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
+        """)
+    if not subqueries:
+        return {}
     rows = conn.execute(
         f"""
         SELECT storage_node_id, COUNT(*) AS n
         FROM (
-            SELECT storage_node_id FROM reagents
-            WHERE storage_node_id > 0 AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
-            UNION ALL
-            SELECT storage_node_id FROM clinical_samples
-            WHERE storage_node_id > 0 AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
+            {" UNION ALL ".join(subqueries)}
         )
         GROUP BY storage_node_id
         """
@@ -447,24 +461,30 @@ def storage_item_counts(conn: sqlite3.Connection) -> dict[int, int]:
     return {int(row["storage_node_id"]): int(row["n"]) for row in rows}
 
 
-def unplaced_item_count(conn: sqlite3.Connection) -> int:
-    row = conn.execute(
-        f"""
-        SELECT SUM(n) AS n
-        FROM (
+def unplaced_item_count(conn: sqlite3.Connection, visible_types: set[str] | None = None) -> int:
+    visible = _visible_inventory_types(visible_types)
+    count = 0
+    if "reagent" in visible:
+        row = conn.execute(
+            f"""
             SELECT COUNT(*) AS n
             FROM reagents
             WHERE storage_node_id = {SYSTEM_UNPLACED_NODE_ID}
               AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
-            UNION ALL
+            """
+        ).fetchone()
+        count += int(row["n"] or 0)
+    if "sample" in visible:
+        row = conn.execute(
+            f"""
             SELECT COUNT(*) AS n
             FROM clinical_samples
             WHERE storage_node_id = {SYSTEM_UNPLACED_NODE_ID}
               AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
-        )
-        """
-    ).fetchone()
-    return int(row["n"] or 0)
+            """
+        ).fetchone()
+        count += int(row["n"] or 0)
+    return count
 
 
 def find_position_owner(
@@ -551,25 +571,36 @@ def find_child_position_owner(conn: sqlite3.Connection, node_id: int, position: 
     return None
 
 
-def inventory_items_at_node(conn: sqlite3.Connection, node_id: int, direct_only: bool = False, limit: int = 500) -> list[dict[str, Any]]:
+def inventory_items_at_node(
+    conn: sqlite3.Connection,
+    node_id: int,
+    direct_only: bool = False,
+    limit: int = 500,
+    visible_types: set[str] | None = None,
+) -> list[dict[str, Any]]:
     node_ids = [node_id] if direct_only else descendant_node_ids(conn, node_id, True)
     if not node_ids:
         return []
     placeholders = ",".join("?" for _ in node_ids)
-    reagents = [
-        normalize_reagent_item(row, conn)
-        for row in conn.execute(
-            f"SELECT * FROM reagents WHERE storage_node_id IN ({placeholders}) AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}",
-            node_ids,
-        ).fetchall()
-    ]
-    samples = [
-        normalize_sample_item(row, conn)
-        for row in conn.execute(
-            f"SELECT * FROM clinical_samples WHERE storage_node_id IN ({placeholders}) AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}",
-            node_ids,
-        ).fetchall()
-    ]
+    visible = _visible_inventory_types(visible_types)
+    reagents = []
+    samples = []
+    if "reagent" in visible:
+        reagents = [
+            normalize_reagent_item(row, conn)
+            for row in conn.execute(
+                f"SELECT * FROM reagents WHERE storage_node_id IN ({placeholders}) AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}",
+                node_ids,
+            ).fetchall()
+        ]
+    if "sample" in visible:
+        samples = [
+            normalize_sample_item(row, conn)
+            for row in conn.execute(
+                f"SELECT * FROM clinical_samples WHERE storage_node_id IN ({placeholders}) AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}",
+                node_ids,
+            ).fetchall()
+        ]
     items = reagents + samples
     attach_reagent_validation_statuses(conn, reagents)
     attach_aliquot_totals(conn, items)
@@ -577,33 +608,38 @@ def inventory_items_at_node(conn: sqlite3.Connection, node_id: int, direct_only:
     return items[:limit]
 
 
-def unplaced_inventory_items(conn: sqlite3.Connection, limit: int = 500) -> list[dict[str, Any]]:
-    reagents = [
-        normalize_reagent_item(row, conn)
-        for row in conn.execute(
-            f"""
-            SELECT * FROM reagents
-            WHERE storage_node_id = {SYSTEM_UNPLACED_NODE_ID}
-              AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
-            ORDER BY updated_at DESC, id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-    ]
-    samples = [
-        normalize_sample_item(row, conn)
-        for row in conn.execute(
-            f"""
-            SELECT * FROM clinical_samples
-            WHERE storage_node_id = {SYSTEM_UNPLACED_NODE_ID}
-              AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
-            ORDER BY updated_at DESC, id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-    ]
+def unplaced_inventory_items(conn: sqlite3.Connection, limit: int = 500, visible_types: set[str] | None = None) -> list[dict[str, Any]]:
+    visible = _visible_inventory_types(visible_types)
+    reagents = []
+    samples = []
+    if "reagent" in visible:
+        reagents = [
+            normalize_reagent_item(row, conn)
+            for row in conn.execute(
+                f"""
+                SELECT * FROM reagents
+                WHERE storage_node_id = {SYSTEM_UNPLACED_NODE_ID}
+                  AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
+                ORDER BY updated_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        ]
+    if "sample" in visible:
+        samples = [
+            normalize_sample_item(row, conn)
+            for row in conn.execute(
+                f"""
+                SELECT * FROM clinical_samples
+                WHERE storage_node_id = {SYSTEM_UNPLACED_NODE_ID}
+                  AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
+                ORDER BY updated_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        ]
     items = reagents + samples
     attach_reagent_validation_statuses(conn, reagents)
     attach_aliquot_totals(conn, items)
@@ -670,10 +706,10 @@ def assign_inventory_item_to_node(
     if clean_position:
         child = find_child_position_owner(conn, node_id, clean_position)
         if child:
-            raise ApiError(409, f"格位 {clean_position} 已被 {child['name']} 占用")
+            raise ApiError(409, "已占用")
         existing = find_position_owner(conn, node_id, clean_position, item_type, item_id)
         if existing:
-            raise ApiError(409, f"格位 {clean_position} 已被 {existing['code']} · {existing['name']} 占用")
+            raise ApiError(409, "已占用")
     conn.execute(
         f"""
         UPDATE {table}

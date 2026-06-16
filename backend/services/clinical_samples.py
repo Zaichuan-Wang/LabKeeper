@@ -269,8 +269,6 @@ def base_sample_values(data: dict[str, Any], user: dict[str, Any], source: str |
         "storage_node_id": SYSTEM_UNPLACED_NODE_ID,
         "grid_cell": None,
         "entry_date": str(data.get("entry_date") or date.today().isoformat()),
-        "expiration_date": str(data.get("expiration_date") or "").strip(),
-        "validation_status": str(data.get("validation_status") or "").strip(),
         "note": str(data.get("note", "")).strip(),
         "created_by": user["id"],
         "updated_by": user["id"],
@@ -301,7 +299,7 @@ def create_sample(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
 def update_sample(sample_id: int, data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     allowed = [
         "code", "source_code", "name", "category", "amount", "amount_unit", "quantity", "status",
-        "storage_node_id", "grid_cell", "entry_date", "expiration_date", "validation_status", "note",
+        "storage_node_id", "grid_cell", "entry_date", "note",
     ]
     move_node_requested = "storage_node_id" in data
     move_node_id = data.get("storage_node_id") if move_node_requested else None

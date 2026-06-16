@@ -1,9 +1,15 @@
 """FastAPI 集成流程测试，使用临时 SQLite 数据库。"""
 
+from datetime import datetime, timedelta
+
 
 def api_ok(response, status_code=200):
     assert response.status_code == status_code, response.text
     return response.json()
+
+
+def _time_text(days_ago=0):
+    return (datetime.now() - timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
@@ -109,6 +115,90 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
     occupied = {item["grid_cell"]: item["code"] for item in frame_visual["frame_items"]}
     assert sample_items[0]["code"] in occupied["A1"]
     assert reagent["code"] in occupied["B1"]
+
+    reagent_only_user = api_ok(
+        app_client.post(
+            "/api/users",
+            headers=auth_headers,
+            json={
+                "username": "reagent-only",
+                "password": "secret123",
+                "display_name": "Reagent Only",
+                "role": "user",
+                "permissions": {
+                    "inventory.search": True,
+                    "inventory.view_reagents": True,
+                    "inventory.view_samples": False,
+                },
+            },
+        ),
+        201,
+    )["item"]
+    assert reagent_only_user["permissions"]["inventory.view_reagents"] is True
+    assert reagent_only_user["permissions"]["inventory.view_samples"] is False
+    reagent_only_login = api_ok(app_client.post("/api/login", json={"username": "reagent-only", "password": "secret123"}))
+    reagent_only_headers = {"Authorization": f"Bearer {reagent_only_login['token']}"}
+
+    reagent_only_visual = api_ok(app_client.get(f"/api/storage/visual?node_id={frame_space['id']}", headers=reagent_only_headers))
+    assert all(item["item_type"] == "reagent" for item in reagent_only_visual["frame_items"])
+    assert reagent["id"] in {item["id"] for item in reagent_only_visual["frame_items"]}
+    assert not any(item["item_type"] == "sample" and item["id"] == sample_items[0]["id"] for item in reagent_only_visual["direct_items"])
+    assert reagent_only_visual["stats"]["direct"] == 1
+
+    reagent_only_search = api_ok(
+        app_client.get("/api/inventory/search?item_type=all&keyword=P-SMOKE-001&purpose=global", headers=reagent_only_headers)
+    )
+    assert all(item["item_type"] != "sample" for item in reagent_only_search["items"])
+    denied_sample_search = api_ok(
+        app_client.get("/api/inventory/search?item_type=sample&keyword=P-SMOKE-001&purpose=global", headers=reagent_only_headers)
+    )
+    assert denied_sample_search["total"] == 0
+    assert denied_sample_search["items"] == []
+    assert app_client.get(f"/api/inventory/item?item_type=sample&id={sample_items[0]['id']}", headers=reagent_only_headers).status_code == 403
+    assert app_client.post(
+        "/api/checkouts",
+        headers=reagent_only_headers,
+        json={"item_type": "sample", "item_id": sample_items[0]["id"], "reason": "no sample permission"},
+    ).status_code == 403
+    assert app_client.post(
+        "/api/aliquots",
+        headers=reagent_only_headers,
+        json={"item_type": "sample", "source_item_id": sample_items[0]["id"], "tube_count": 1},
+    ).status_code == 403
+
+    maintainer = api_ok(
+        app_client.post(
+            "/api/users",
+            headers=auth_headers,
+            json={
+                "username": "maintainer",
+                "password": "secret123",
+                "display_name": "Maintainer",
+                "role": "user",
+                "permissions": {"inventory.manage": True, "inventory.view_reagents": True, "inventory.view_samples": True},
+            },
+        ),
+        201,
+    )["item"]
+    assert maintainer["permissions"]["inventory.manage"] is True
+    maintainer_login = api_ok(app_client.post("/api/login", json={"username": "maintainer", "password": "secret123"}))
+    maintainer_headers = {"Authorization": f"Bearer {maintainer_login['token']}"}
+    maintainer_aliquot_search = api_ok(
+        app_client.get(
+            "/api/inventory/search?item_type=sample&keyword=P-SMOKE-001&available=1&purpose=aliquot",
+            headers=maintainer_headers,
+        )
+    )
+    assert any(item["id"] == sample_items[0]["id"] for item in maintainer_aliquot_search["items"])
+    maintainer_aliquot = api_ok(
+        app_client.post(
+            "/api/aliquots",
+            headers=maintainer_headers,
+            json={"item_type": "sample", "source_item_id": sample_items[0]["id"], "tube_count": 1},
+        ),
+        201,
+    )
+    assert maintainer_aliquot["count"] == 1
 
     shrink_sample = api_ok(
         app_client.post(
@@ -333,6 +423,14 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
 
     denied_search = app_client.get("/api/inventory/search?item_type=all&keyword=Ab-test&purpose=global", headers=limited_headers)
     assert denied_search.status_code == 403
+    for path in (
+        "/api/orders",
+        "/api/validations",
+        "/api/checkouts",
+        "/api/movements",
+    ):
+        denied_history = app_client.get(path, headers=limited_headers)
+        assert denied_history.status_code == 403
     denied_move = app_client.post(
         "/api/movements",
         headers=limited_headers,
@@ -361,19 +459,17 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
         ),
         201,
     )["item"]
-    limited_aliquot_search = api_ok(
-        app_client.get("/api/inventory/search?item_type=sample&keyword=LIMIT-SAMPLE-001&available=1&purpose=aliquot", headers=limited_headers)
+    denied_limited_aliquot_search = app_client.get(
+        "/api/inventory/search?item_type=sample&keyword=LIMIT-SAMPLE-001&available=1&purpose=aliquot",
+        headers=limited_headers,
     )
-    assert any(item["id"] == limited_sample["id"] for item in limited_aliquot_search["items"])
-    limited_aliquot = api_ok(
-        app_client.post(
-            "/api/aliquots",
-            headers=limited_headers,
-            json={"item_type": "sample", "source_item_id": limited_sample["id"], "tube_count": 1},
-        ),
-        201,
+    assert denied_limited_aliquot_search.status_code == 403
+    denied_limited_aliquot = app_client.post(
+        "/api/aliquots",
+        headers=limited_headers,
+        json={"item_type": "sample", "source_item_id": limited_sample["id"], "tube_count": 1},
     )
-    assert limited_aliquot["count"] == 1
+    assert denied_limited_aliquot.status_code == 403
 
     occupied_delete = app_client.delete(f"/api/storage/nodes/{frame_space['id']}", headers=auth_headers)
     assert occupied_delete.status_code == 400
@@ -387,6 +483,8 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
         201,
     )["item"]
     assert limited_order["name"] == "Limited-order"
+    limited_order_candidates = api_ok(app_client.get("/api/orders?purpose=form", headers=limited_headers))["items"]
+    assert any(item["id"] == limited_order["id"] for item in limited_order_candidates)
 
     arrival = api_ok(
         app_client.post(
@@ -817,6 +915,117 @@ def test_validation_edit_permissions_owner_and_admin(app_client, auth_headers):
     assert admin_update["method"] == "IHC"
     assert admin_update["description"] == "管理员修订"
     assert admin_update["validator_id"] == owner["id"]
+
+
+def test_history_lists_show_latest_100_without_date_filter(app_client, auth_headers):
+    import db.database as database
+
+    recent_time = _time_text(1)
+    old_time = _time_text(8)
+    with database.connect() as conn:
+        user_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+        old_order_id = conn.execute(
+            """
+            INSERT INTO reagents
+                (code, name, category, catalog_no, quantity, status, storage_node_id, created_by, updated_by, created_at, updated_at)
+            VALUES ('OLD-ORDER', '旧订购', '抗体', 'OLD-ORDER-CAT', 1, '已订购', -2, ?, ?, ?, ?)
+            """,
+            (user_id, user_id, old_time, old_time),
+        ).lastrowid
+        recent_order_id = conn.execute(
+            """
+            INSERT INTO reagents
+                (code, name, category, catalog_no, quantity, status, storage_node_id, created_by, updated_by, created_at, updated_at)
+            VALUES ('RECENT-ORDER', '新订购', '抗体', 'RECENT-ORDER-CAT', 1, '已订购', -2, ?, ?, ?, ?)
+            """,
+            (user_id, user_id, recent_time, recent_time),
+        ).lastrowid
+        old_sample_id = conn.execute(
+            """
+            INSERT INTO clinical_samples
+                (code, name, category, quantity, status, storage_node_id, created_by, updated_by, created_at, updated_at)
+            VALUES ('OLD-SAMPLE', '旧标本', '血清', 1, '已耗尽', -4, ?, ?, ?, ?)
+            """,
+            (user_id, user_id, old_time, old_time),
+        ).lastrowid
+        recent_sample_id = conn.execute(
+            """
+            INSERT INTO clinical_samples
+                (code, name, category, quantity, status, storage_node_id, created_by, updated_by, created_at, updated_at)
+            VALUES ('RECENT-SAMPLE', '新标本', '血清', 1, '已耗尽', -4, ?, ?, ?, ?)
+            """,
+            (user_id, user_id, recent_time, recent_time),
+        ).lastrowid
+        conn.executemany(
+            """
+            INSERT INTO movements
+                (object_type, object_id, item_type, item_id, from_storage_node_id, to_storage_node_id,
+                 from_location_snapshot, to_location_snapshot, moved_by, moved_at, reason, note)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("试剂", "OLD-ORDER", "reagent", old_order_id, -1, -2, "未订购", "未到货", user_id, old_time, "订购", "old order"),
+                ("试剂", "RECENT-ORDER", "reagent", recent_order_id, -1, -2, "未订购", "未到货", user_id, recent_time, "订购", "recent order"),
+                ("临床标本", "OLD-SAMPLE", "sample", old_sample_id, -3, -4, "未归位", "已出库", user_id, old_time, "出库", "old checkout"),
+                ("临床标本", "RECENT-SAMPLE", "sample", recent_sample_id, -3, -4, "未归位", "已出库", user_id, recent_time, "出库", "recent checkout"),
+            ],
+        )
+        conn.executemany(
+            """
+            INSERT INTO validations (catalog_no, validator_id, validation_date, method, result, description, created_at)
+            VALUES (?, ?, ?, 'WB', '通过', ?, ?)
+            """,
+            [
+                ("OLD-VAL-CAT", user_id, "2026-06-01", "old validation", old_time),
+                ("RECENT-VAL-CAT", user_id, "2026-06-02", "recent validation", recent_time),
+            ],
+        )
+        for idx in range(99):
+            stamp = _time_text(idx + 10)
+            reagent_id = conn.execute(
+                """
+                INSERT INTO reagents
+                    (code, name, category, catalog_no, quantity, status, storage_node_id, created_by, updated_by, created_at, updated_at)
+                VALUES (?, ?, '抗体', ?, 1, '已订购', -2, ?, ?, ?, ?)
+                """,
+                (f"BULK-ORDER-{idx:03d}", f"批量订购{idx}", f"BULK-ORDER-CAT-{idx:03d}", user_id, user_id, stamp, stamp),
+            ).lastrowid
+            conn.execute(
+                """
+                INSERT INTO movements
+                    (object_type, object_id, item_type, item_id, from_storage_node_id, to_storage_node_id,
+                     from_location_snapshot, to_location_snapshot, moved_by, moved_at, reason, note)
+                VALUES (?, ?, 'reagent', ?, -1, -2, '未订购', '未到货', ?, ?, '订购', ?)
+                """,
+                ("试剂", f"BULK-ORDER-{idx:03d}", reagent_id, user_id, stamp, "bulk order"),
+            )
+            conn.execute(
+                """
+                INSERT INTO validations (catalog_no, validator_id, validation_date, method, result, description, created_at)
+                VALUES (?, ?, '2026-06-03', 'WB', '通过', 'bulk validation', ?)
+                """,
+                (f"BULK-VAL-CAT-{idx:03d}", user_id, stamp),
+            )
+        conn.commit()
+
+    orders = api_ok(app_client.get("/api/orders", headers=auth_headers))["items"]
+    validations = api_ok(app_client.get("/api/validations", headers=auth_headers))["items"]
+    checkouts = api_ok(app_client.get("/api/checkouts", headers=auth_headers))["items"]
+    movements = api_ok(app_client.get("/api/movements", headers=auth_headers))["items"]
+    old_timeline = api_ok(app_client.get(f"/api/inventory/timeline?item_type=reagent&id={old_order_id}", headers=auth_headers))
+
+    assert len(orders) == 100
+    assert len(validations) == 100
+    assert len(movements) == 100
+    assert "RECENT-ORDER-CAT" in {item["catalog_no"] for item in orders}
+    assert "OLD-ORDER-CAT" in {item["catalog_no"] for item in orders}
+    assert "RECENT-VAL-CAT" in {item["catalog_no"] for item in validations}
+    assert "OLD-VAL-CAT" in {item["catalog_no"] for item in validations}
+    assert "RECENT-SAMPLE" in {item["object_id"] for item in checkouts}
+    assert "OLD-SAMPLE" in {item["object_id"] for item in checkouts}
+    assert "RECENT-SAMPLE" in {item["object_id"] for item in movements}
+    assert "OLD-SAMPLE" in {item["object_id"] for item in movements}
+    assert any(item["related_table"] == "movements" and item["related_id"] for item in old_timeline["items"])
 
 
 def test_bulk_import_only_inserts_and_auto_generates_codes(app_client, auth_headers):

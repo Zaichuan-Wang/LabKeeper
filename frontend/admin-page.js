@@ -144,6 +144,8 @@ function setUserPermissionValues(permissions = {}) {
   form.elements.perm_inventory_manage.checked = Boolean(permissions['inventory.manage']);
   form.elements.perm_location_manage.checked = Boolean(permissions['location.manage']);
   form.elements.perm_inventory_search.checked = Boolean(permissions['inventory.search']);
+  form.elements.perm_inventory_view_reagents.checked = permissions['inventory.view_reagents'] !== false;
+  form.elements.perm_inventory_view_samples.checked = permissions['inventory.view_samples'] !== false;
 }
 
 function userPermissionPayload(form) {
@@ -151,6 +153,8 @@ function userPermissionPayload(form) {
     'inventory.manage': Boolean(form.elements.perm_inventory_manage.checked),
     'location.manage': Boolean(form.elements.perm_location_manage.checked),
     'inventory.search': Boolean(form.elements.perm_inventory_search.checked),
+    'inventory.view_reagents': Boolean(form.elements.perm_inventory_view_reagents.checked),
+    'inventory.view_samples': Boolean(form.elements.perm_inventory_view_samples.checked),
   };
 }
 
@@ -451,9 +455,9 @@ async function submitUser(e) {
   data.permissions = userPermissionPayload(form);
   const id = data.id;
   delete data.id;
-  delete data.perm_inventory_manage;
-  delete data.perm_location_manage;
-  delete data.perm_inventory_search;
+  Object.keys(data)
+    .filter(key => key.startsWith('perm_'))
+    .forEach(key => { delete data[key]; });
   if (id) {
     delete data.username;
     await api(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) });

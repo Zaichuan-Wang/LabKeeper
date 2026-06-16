@@ -54,10 +54,14 @@ PERMISSIONS = {
     "inventory.manage": "库存维护",
     "location.manage": "位置维护",
     "inventory.search": "明细搜索",
+    "inventory.view_reagents": "查看试剂",
+    "inventory.view_samples": "查看临床标本",
 }
 
 DEFAULT_USER_PERMISSIONS = {
     "inventory.manage": False,
     "location.manage": False,
     "inventory.search": True,
+    "inventory.view_reagents": True,
+    "inventory.view_samples": True,
 }

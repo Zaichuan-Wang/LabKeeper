@@ -38,7 +38,6 @@ MAX_VALIDATION_IMAGE_UPLOAD_BYTES = 12 * 1024 * 1024
 TARGET_VALIDATION_IMAGE_BYTES = 1 * 1024 * 1024
 MAX_VALIDATION_IMAGE_SIDE = 1800
 
-
 def list_orders(query: dict[str, list[str]]) -> dict[str, Any]:
     status = query.get("status", [""])[0].strip()
     catalog_no = query.get("catalog_no", [""])[0].strip()
@@ -61,7 +60,7 @@ def list_orders(query: dict[str, list[str]]) -> dict[str, Any]:
         LEFT JOIN users u ON u.id = m.moved_by
         WHERE {" AND ".join(clauses)}
         ORDER BY m.moved_at DESC, m.id DESC
-        LIMIT 200
+        LIMIT 100
     """
     with connect() as conn:
         rows = conn.execute(sql, params).fetchall()
@@ -364,7 +363,7 @@ VALIDATION_SELECT_SQL = """
 
 def list_validations() -> dict[str, Any]:
     with connect() as conn:
-        rows = conn.execute(f"{VALIDATION_SELECT_SQL} ORDER BY v.created_at DESC LIMIT 200").fetchall()
+        rows = conn.execute(f"{VALIDATION_SELECT_SQL} ORDER BY v.created_at DESC LIMIT 100").fetchall()
     return {"items": rows_list(rows), "count": len(rows)}
 
 

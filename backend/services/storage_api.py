@@ -77,13 +77,13 @@ def validate_storage_grid_target(conn: Any, node_id: int, parent_id: int | None,
         (parent_id, grid_row, grid_col, node_id),
     ).fetchone()
     if sibling:
-        raise ApiError(409, f"格位 {label} 已被 {sibling['name']} 占用")
+        raise ApiError(409, "已占用")
     existing = find_position_owner(conn, parent_id, label)
     if existing:
-        raise ApiError(409, f"格位 {label} 已被 {existing['code']} · {existing['name']} 占用")
+        raise ApiError(409, "已占用")
 
 
-def storage_tree() -> dict[str, Any]:
+def storage_tree(visible_types: set[str] | None = None) -> dict[str, Any]:
     with connect() as conn:
         rows = conn.execute(
             """
@@ -93,7 +93,7 @@ def storage_tree() -> dict[str, Any]:
             ORDER BY COALESCE(n.parent_id, 0), n.sort_order, n.name
             """
         ).fetchall()
-        counts = storage_item_counts(conn)
+        counts = storage_item_counts(conn, visible_types)
         path_cache, desc_cache = batch_node_paths_and_descendants(conn)
         items = []
         for row in rows:
@@ -134,7 +134,9 @@ def storage_visual(
     selected_well: str = "",
     selected_item_type: str = "",
     selected_item_id: int | None = None,
+    visible_types: set[str] | None = None,
 ) -> dict[str, Any]:
+    visible = {"reagent", "sample"} if visible_types is None else visible_types
     with connect() as conn:
         rows = conn.execute(
             """
@@ -143,7 +145,7 @@ def storage_visual(
             ORDER BY COALESCE(parent_id, 0), sort_order, name
             """
         ).fetchall()
-        direct_counts = storage_item_counts(conn)
+        direct_counts = storage_item_counts(conn, visible_types)
         path_cache, desc_cache = batch_node_paths_and_descendants(conn)
         parent_by_id = {int(row["id"]): row["parent_id"] for row in rows}
 
@@ -158,7 +160,7 @@ def storage_visual(
             return depth
 
         selected_virtual = is_virtual_unplaced_id(node_id)
-        virtual_count = unplaced_item_count(conn)
+        virtual_count = unplaced_item_count(conn, visible_types)
         tree = [{
             "id": VIRTUAL_UNPLACED_NODE_ID,
             "parent_id": None,
@@ -181,7 +183,7 @@ def storage_visual(
             tree.append(item)
 
         selected_item_data = None
-        if selected_item_type and selected_item_id:
+        if selected_item_type and selected_item_id and selected_item_type in visible:
             selected_item_data = inventory_item_by_id(conn, selected_item_type, selected_item_id)
 
         selected_validations = []
@@ -202,7 +204,7 @@ def storage_visual(
             ).fetchall()
 
         if selected_virtual:
-            direct_items = unplaced_inventory_items(conn)
+            direct_items = unplaced_inventory_items(conn, visible_types=visible_types)
             unplaced_spaces = storage_child_items(conn, rows, direct_counts, 0, path_cache, desc_cache)
             unplaced_spaces = [item for item in unplaced_spaces if int(item["id"]) != DEFAULT_ROOT_STORAGE_NODE_ID]
             current_item = {
@@ -244,11 +246,11 @@ def storage_visual(
             """,
             (node_id,),
         ).fetchall()
-        direct_items = inventory_items_at_node(conn, node_id, direct_only=True)
+        direct_items = inventory_items_at_node(conn, node_id, direct_only=True, visible_types=visible_types)
         current_descendant_ids = desc_cache.get(node_id, [node_id])
         direct_item_count = direct_counts.get(node_id, 0)
         total_item_count = sum(direct_counts.get(i, 0) for i in current_descendant_ids)
-        all_items = inventory_items_at_node(conn, node_id, limit=80)
+        all_items = inventory_items_at_node(conn, node_id, limit=80, visible_types=visible_types)
         for item in tree:
             item["selected"] = int(item["id"]) == int(node_id or 0)
 

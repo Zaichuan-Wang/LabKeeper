@@ -7,15 +7,18 @@ function setLoggedIn(isLoggedIn) {
   document.querySelectorAll('.inventory-manage-only').forEach(el => el.classList.toggle('hidden', !isLoggedIn || !canManageInventory()));
   document.querySelectorAll('.location-manage-only').forEach(el => el.classList.toggle('hidden', !isLoggedIn || !canManageLocation()));
   document.querySelectorAll('.inventory-search-only').forEach(el => el.classList.toggle('hidden', !isLoggedIn || !canSearchInventory()));
+  document.querySelectorAll('.reagent-view-only').forEach(el => el.classList.toggle('hidden', !isLoggedIn || !canViewReagents()));
+  document.querySelectorAll('.sample-view-only').forEach(el => el.classList.toggle('hidden', !isLoggedIn || !canViewSamples()));
   const formAllowed = form => {
     if (!isLoggedIn) return false;
     if (form.id === 'loginForm') return true;
     if (form.closest('#admin')) return isAdmin();
     if (form.id === 'reagentForm') return true;
-    if (form.id === 'reagentEditForm') return canManageInventory();
-    if (form.id === 'sampleEditForm') return canManageInventory();
+    if (form.id === 'reagentEditForm') return canManageInventory() && canViewReagents();
+    if (form.id === 'sampleEditForm') return canManageInventory() && canViewSamples();
     if (form.id === 'bulkForm') return canManageInventory();
-    if (['sampleForm', 'aliquotForm'].includes(form.id)) return true;
+    if (form.id === 'aliquotForm') return canManageInventory();
+    if (form.id === 'sampleForm') return true;
     if (['nodeForm', 'movementForm'].includes(form.id)) return canManageLocation();
     return true;
   };
@@ -98,14 +101,13 @@ async function loadDemoDatabase() {
 
 function canUseInventoryTab(tab) {
   if (tab === 'details') return canSearchInventory();
-  if (tab === 'manual' || tab === 'bulk') return canManageInventory();
+  if (tab === 'manual' || tab === 'bulk' || tab === 'aliquots') return canManageInventory() && visibleInventoryTypes().length > 0;
   if (tab === 'move' || tab === 'spaces') return canManageLocation();
   return true;
 }
 
 function canUseRegistrationTab(tab) {
-  if (tab === 'reagents') return true;
-  if (tab === 'samples' || tab === 'aliquots') return true;
+  if (tab === 'validations') return canViewReagents();
   return true;
 }
 
@@ -505,7 +507,14 @@ function wireEvents() {
     syncInventoryFilterVisibility();
     void searchInventory();
   });
-  $('inventorySearchBtn').addEventListener('click', searchInventory);
+  $('inventoryAvailableOnly')?.addEventListener('change', () => {
+    state.tablePages.inventoryTable = 1;
+    void searchInventory();
+  });
+  $('inventorySearchBtn').addEventListener('click', () => {
+    state.tablePages.inventoryTable = 1;
+    void searchInventory();
+  });
   setupInventoryDragMove();
 }
 
@@ -655,18 +664,22 @@ async function handleActions(e) {
 
 async function handleDetailActions(action, id, btn) {
   if (action === 'edit-reagent') {
+    if (!canViewReagents()) { toast('当前账号没有查看试剂权限'); return true; }
     await openReagentEditor(id);
     return true;
   }
   if (action === 'detail-reagent') {
+    if (!canViewReagents()) { toast('当前账号没有查看试剂权限'); return true; }
     await showInventoryItemDetailDialog('reagent', id);
     return true;
   }
   if (action === 'detail-sample') {
+    if (!canViewSamples()) { toast('当前账号没有查看临床标本权限'); return true; }
     renderSampleDetail(await api(inventoryObjectDetailPath('sample', id)));
     return true;
   }
   if (action === 'detail-repeat-order') {
+    if (!canViewReagents()) { toast('当前账号没有查看试剂权限'); return true; }
     const data = await api(inventoryObjectDetailPath('reagent', id));
     await startRepeatOrderFromItem(data.item);
     return true;
@@ -676,6 +689,7 @@ async function handleDetailActions(action, id, btn) {
 
 async function handleInventoryActions(action, id, btn) {
   if (action === 'inventory-row-detail') {
+    if (!canViewReagents()) { toast('当前账号没有查看试剂权限'); return true; }
     state.selectedItemType = 'reagent';
     state.selectedItemId = id;
     state.selectedWell = '';
@@ -683,6 +697,7 @@ async function handleInventoryActions(action, id, btn) {
     return true;
   }
   if (action === 'inventory-sample-detail') {
+    if (!canViewSamples()) { toast('当前账号没有查看临床标本权限'); return true; }
     state.selectedItemType = 'sample';
     state.selectedItemId = id;
     state.selectedWell = '';
@@ -695,6 +710,8 @@ async function handleInventoryActions(action, id, btn) {
   if (action === 'sample-row-move') { await openInventoryMover('sample', id); return true; }
   if (action === 'inventory-row-checkout') { await openCheckout('reagent', id); return true; }
   if (action === 'sample-row-checkout') { await openCheckout('sample', id); return true; }
+  if (action === 'inventory-row-aliquot') { await openAliquotFromItem('reagent', id); return true; }
+  if (action === 'sample-row-aliquot') { await openAliquotFromItem('sample', id); return true; }
   if (action === 'bulk-download-template') { await downloadBulkTemplate(); return true; }
   if (action === 'bulk-download-current') { await downloadBulkCurrentInventory(); return true; }
   if (action === 'bulk-download-storage-map') { await downloadStorageMap(); return true; }

@@ -90,6 +90,32 @@ function can(permissionKey) {
 const canManageInventory = () => can('inventory.manage');
 const canManageLocation = () => can('location.manage');
 const canSearchInventory = () => can('inventory.search');
+const canViewReagents = () => can('inventory.view_reagents');
+const canViewSamples = () => can('inventory.view_samples');
+function canViewInventoryType(type) {
+  return inventoryObjectType(type) === 'sample' ? canViewSamples() : canViewReagents();
+}
+function visibleInventoryTypes() {
+  return ['reagent', 'sample'].filter(canViewInventoryType);
+}
+function firstVisibleInventoryType(fallback = 'reagent') {
+  return canViewInventoryType(fallback) ? inventoryObjectType(fallback) : (visibleInventoryTypes()[0] || 'reagent');
+}
+function syncInventoryTypeSelect(select, { includeAll = false, includeSpace = false } = {}) {
+  if (!select) return '';
+  [...select.options].forEach(option => {
+    const value = option.value;
+    if (value === 'reagent') option.hidden = option.disabled = !canViewReagents();
+    else if (value === 'sample') option.hidden = option.disabled = !canViewSamples();
+    else if (value === 'all') option.hidden = option.disabled = !includeAll;
+    else if (value === 'space') option.hidden = option.disabled = !includeSpace;
+  });
+  if (select.selectedOptions[0]?.disabled || select.selectedOptions[0]?.hidden) {
+    const next = [...select.options].find(option => !option.disabled && !option.hidden);
+    select.value = next?.value || '';
+  }
+  return select.value;
+}
 const VIEW_TITLES = {
   dashboard: '工作台',
   registration: '登记入库',

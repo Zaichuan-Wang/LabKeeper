@@ -38,7 +38,7 @@ REAGENT_PAYLOAD_KEYS = (
 )
 SAMPLE_PAYLOAD_KEYS = (
     "code", "source_code", "name", "category", "tube_count", "amount", "amount_unit",
-    "quantity", "status", "entry_date", "expiration_date", "validation_status",
+    "quantity", "status", "entry_date",
     "storage_node_id", "grid_cell", "separate_items", "note",
 )
 
@@ -67,6 +67,8 @@ def reagent_payload(data: dict[str, Any]) -> dict[str, Any]:
 def sample_payload(data: dict[str, Any]) -> dict[str, Any]:
     if str(data.get("brand") or "").strip() or str(data.get("catalog_no") or "").strip():
         raise ApiError(400, "临床标本不填写品牌或货号")
+    if str(data.get("expiration_date") or "").strip():
+        raise ApiError(400, "临床标本不填写有效期")
     payload: dict[str, Any] = {}
     for key in SAMPLE_PAYLOAD_KEYS:
         _copy_present(data, key, payload)
@@ -374,8 +376,9 @@ def _matched_fields(keyword: str, fields: dict[str, Any]) -> list[str]:
     return [label for label, value in fields.items() if lowered in str(value or "").lower()]
 
 
-def search(query: dict[str, list[str]]) -> dict[str, Any]:
+def search(query: dict[str, list[str]], visible_types: set[str] | None = None) -> dict[str, Any]:
     item_type = _clean_type(_query_value(query, "item_type"))
+    visible = {"reagent", "sample"} if visible_types is None else visible_types
     keyword = _query_value(query, "keyword")
     available_only = _query_value(query, "available") in {"1", "true", "yes", "on"}
     page, page_size, offset = _pagination(query)
@@ -383,13 +386,13 @@ def search(query: dict[str, list[str]]) -> dict[str, Any]:
         path_cache, desc_cache = batch_node_paths_and_descendants(conn)
         items: list[dict[str, Any]] = []
         total = 0
-        if item_type in {"reagent", "all"}:
+        if item_type in {"reagent", "all"} and "reagent" in visible:
             fetch_offset = 0 if item_type == "all" else offset
             fetch_limit = offset + page_size if item_type == "all" else page_size
             reagent_items, reagent_total = _search_reagents(conn, query, keyword, available_only, fetch_limit, fetch_offset, path_cache, desc_cache)
             items.extend(reagent_items)
             total += reagent_total
-        if item_type in {"sample", "all"}:
+        if item_type in {"sample", "all"} and "sample" in visible:
             fetch_offset = 0 if item_type == "all" else offset
             fetch_limit = offset + page_size if item_type == "all" else page_size
             sample_items, sample_total = _search_samples(conn, query, keyword, available_only, fetch_limit, fetch_offset, path_cache, desc_cache)

@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from services import bulk_operations
 from models.request_models import BulkExcelParseRequest, BulkOperationRequest
 from routers.common import download_headers, json_response, strict_query_params
-from core.security import require_permission, require_user
+from core.security import require_inventory_view, require_permission, require_user, visible_inventory_types
 
 router = APIRouter(prefix="/api")
 
@@ -17,6 +17,7 @@ router = APIRouter(prefix="/api")
 def bulk_template(request: Request, user: dict[str, Any] = Depends(require_user)) -> Response:
     require_permission(user, "inventory.manage")
     query = strict_query_params(request, {"operation", "item_type"})
+    require_inventory_view(user, str(query.get("item_type", ["reagent"])[0] or "reagent"))
     body, content_type, filename = bulk_operations.template(query)
     return Response(content=body, media_type=content_type, headers=download_headers(filename, "bulk_template.xlsx"))
 
@@ -31,7 +32,7 @@ def bulk_storage_map(_: dict[str, Any] = Depends(require_user)) -> Response:
 def bulk_current_inventory(request: Request, user: dict[str, Any] = Depends(require_user)) -> Response:
     require_permission(user, "inventory.manage")
     query = strict_query_params(request, {"item_type"})
-    body, content_type, filename = bulk_operations.current_inventory(query)
+    body, content_type, filename = bulk_operations.current_inventory(query, visible_inventory_types(user))
     return Response(content=body, media_type=content_type, headers=download_headers(filename, "current_inventory.xlsx"))
 
 
@@ -44,10 +45,12 @@ def bulk_parse_excel(data: BulkExcelParseRequest, user: dict[str, Any] = Depends
 @router.post("/bulk/preview")
 def bulk_preview(data: BulkOperationRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
     require_permission(user, "inventory.manage")
+    require_inventory_view(user, data.item_type)
     return json_response(bulk_operations.preview(data.payload(), user))
 
 
 @router.post("/bulk/commit")
 def bulk_commit(data: BulkOperationRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
     require_permission(user, "inventory.manage")
+    require_inventory_view(user, data.item_type)
     return json_response(bulk_operations.commit(data.payload(), user))

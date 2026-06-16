@@ -54,8 +54,6 @@ CREATE TABLE IF NOT EXISTS clinical_samples (
     storage_node_id INTEGER NOT NULL DEFAULT -3,
     grid_cell TEXT,
     entry_date TEXT,
-    expiration_date TEXT,
-    validation_status TEXT,
     note TEXT,
     created_by INTEGER,
     updated_by INTEGER,

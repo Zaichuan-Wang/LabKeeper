@@ -25,7 +25,6 @@ from services.storage_inventory import (
 
 MERGEABLE_MOVEMENT_REASONS = {MOVEMENT_REASON_ARRIVAL, MOVEMENT_REASON_MOVE}
 
-
 def sample_object_id(sample: Any) -> str:
     source = sample["code"] or str(sample["id"])
     return str(source)
@@ -249,15 +248,28 @@ def _has_later_movement_for_object(conn: Any, row: Any) -> bool:
     return later is not None
 
 
-def list_movements() -> dict[str, Any]:
+def _visible_movement_clause(visible_types: set[str] | None = None) -> tuple[str, list[str]]:
+    visible = {"reagent", "sample"} if visible_types is None else visible_types
+    if not visible:
+        return "(m.item_type IS NULL OR m.item_type = '')", []
+    placeholders = ",".join("?" for _ in visible)
+    return f"(m.item_type IS NULL OR m.item_type = '' OR m.item_type IN ({placeholders}))", sorted(visible)
+
+
+def list_movements(visible_types: set[str] | None = None) -> dict[str, Any]:
+    visible_clause, visible_params = _visible_movement_clause(visible_types)
+    clauses = [visible_clause]
+    params: list[Any] = [*visible_params]
     with connect() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT m.*, m.from_location_snapshot AS from_location, m.to_location_snapshot AS to_location,
                    u.display_name AS moved_by_name
             FROM movements m LEFT JOIN users u ON u.id = m.moved_by
-            ORDER BY m.moved_at DESC LIMIT 200
-            """
+            WHERE {" AND ".join(clauses)}
+            ORDER BY m.moved_at DESC LIMIT 100
+            """,
+            params,
         ).fetchall()
         items = []
         for row in rows:
@@ -384,17 +396,20 @@ def rollback_movement(movement_id: int, user: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "deleted_id": movement_id, "item": row_dict(movement)}
 
 
-def list_checkouts() -> dict[str, Any]:
+def list_checkouts(visible_types: set[str] | None = None) -> dict[str, Any]:
+    visible_clause, visible_params = _visible_movement_clause(visible_types)
+    clauses = ["(m.reason = ? OR m.to_storage_node_id = ?)", visible_clause]
+    params: list[Any] = [MOVEMENT_REASON_CHECKOUT, SYSTEM_CHECKED_OUT_NODE_ID, *visible_params]
     with connect() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT m.*, m.from_location_snapshot AS from_location, m.to_location_snapshot AS to_location,
                    u.display_name AS moved_by_name
             FROM movements m LEFT JOIN users u ON u.id = m.moved_by
-            WHERE m.reason = ? OR m.to_storage_node_id = ?
-            ORDER BY m.moved_at DESC LIMIT 200
+            WHERE {" AND ".join(clauses)}
+            ORDER BY m.moved_at DESC LIMIT 100
             """,
-            (MOVEMENT_REASON_CHECKOUT, SYSTEM_CHECKED_OUT_NODE_ID),
+            params,
         ).fetchall()
     return {"items": rows_list(rows), "count": len(rows)}
 

@@ -41,13 +41,33 @@ def test_init_db_uses_lightweight_indexes(monkeypatch, tmp_path):
             ).fetchall()
         }
         reagent_columns = {row[1] for row in conn.execute("PRAGMA table_info(reagents)").fetchall()}
+        sample_columns = {row[1] for row in conn.execute("PRAGMA table_info(clinical_samples)").fetchall()}
     assert "idx_reagents_name" not in names
     assert "idx_reagents_validation_updated" not in names
     assert "idx_movements_to_snapshot_moved" not in names
     assert "validation_status" not in reagent_columns
+    assert "expiration_date" not in sample_columns
+    assert "validation_status" not in sample_columns
     assert "idx_reagents_updated" in names
     assert "idx_reagents_storage_status_updated" in names
     assert "idx_validations_catalog_date" in names
+
+
+def test_init_db_drops_removed_sample_columns_from_existing_database(monkeypatch, tmp_path):
+    config, database = _fresh_database(monkeypatch, tmp_path)
+
+    database.init_db()
+    with sqlite3.connect(config.DB_PATH) as conn:
+        conn.execute("ALTER TABLE clinical_samples ADD COLUMN expiration_date TEXT")
+        conn.execute("ALTER TABLE clinical_samples ADD COLUMN validation_status TEXT")
+
+    database.init_db()
+
+    with sqlite3.connect(config.DB_PATH) as conn:
+        sample_columns = {row[1] for row in conn.execute("PRAGMA table_info(clinical_samples)").fetchall()}
+
+    assert "expiration_date" not in sample_columns
+    assert "validation_status" not in sample_columns
 
 
 def test_init_db_drops_removed_order_arrival_tables_and_creates_system_nodes(monkeypatch, tmp_path):
