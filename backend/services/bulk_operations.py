@@ -1,31 +1,34 @@
 from __future__ import annotations
 
+from datetime import date
 from io import BytesIO
 from typing import Any
 
 from core.common import ApiError, create_audit, now_text, row_dict
-from core.constants import PHYSICAL_INVENTORY_STATUS_SQL, STATUS_AVAILABLE, VALIDATION_UNVERIFIED
+from core.constants import PHYSICAL_INVENTORY_STATUS_SQL, STATUS_AVAILABLE
 from db.database import connect
 from services import clinical_samples
 from services import movements
+from services import registration
 from services.excel_utils import clean_excel_cell, new_workbook, parse_excel_data_url, set_column_widths, xlsx_response
 from services.options_config import load_dropdown_options
 from services import reagents
-from services.storage_inventory import get_node, node_full_path, position_options_for_node
+from services.storage_inventory import attach_reagent_validation_statuses, get_node, node_full_path, position_options_for_node
 
 
 REAGENT_TEMPLATE_COLUMNS = [
-    "编号", "名称", "类型", "品牌", "货号", "规格量", "规格单位", "数量", "状态", "验证状态",
+    "编号", "名称", "类型", "品牌", "货号", "规格量", "规格单位", "数量", "价格", "状态",
     "入库日期", "有效期", "存放空间ID", "孔位", "备注",
 ]
 SAMPLE_TEMPLATE_COLUMNS = [
     "系统编号", "样本号", "样本类型", "规格量", "规格单位", "状态", "入库日期", "存放空间ID", "孔位", "备注",
 ]
+VALIDATION_TEMPLATE_COLUMNS = ["货号", "验证日期", "方法", "结果", "说明", "图片路径"]
 CHECKOUT_TEMPLATE_COLUMNS = ["对象类型", "编号", "出库原因", "备注"]
 MOVE_TEMPLATE_COLUMNS = ["对象类型", "编号", "目标空间ID", "孔位", "原因", "备注"]
 EDIT_TEMPLATE_COLUMNS = [
-    "对象类型", "编号", "名称", "类型", "品牌", "货号", "规格量", "规格单位", "数量",
-    "状态", "验证状态", "入库日期", "有效期", "存放空间ID", "孔位", "备注",
+    "对象类型", "编号", "名称", "类型", "品牌", "货号", "规格量", "规格单位", "数量", "价格",
+    "状态", "入库日期", "有效期", "存放空间ID", "孔位", "备注",
 ]
 SAMPLE_EDIT_TEMPLATE_COLUMNS = [
     "对象类型", "编号", "样本号", "样本类型", "规格量", "规格单位",
@@ -36,13 +39,13 @@ def _item_type(value: Any, default: str = "reagent") -> str:
     text = str(value or default).strip().lower()
     if text in {"sample", "clinical_sample", "clinical-sample", "临床标本", "标本"}:
         return "sample"
-    if text in {"reagent", "reagents", "试剂", "耗材", "试剂/耗材"}:
+    if text in {"reagent", "reagents", "试剂"}:
         return "reagent"
     return "reagent"
 
 
 def _item_type_label(item_type: str) -> str:
-    return "临床标本" if item_type == "sample" else "试剂/耗材"
+    return "临床标本" if item_type == "sample" else "试剂"
 
 
 def parse_excel(data: dict[str, Any]) -> dict[str, Any]:
@@ -81,6 +84,9 @@ def template(query: dict[str, list[str]]) -> tuple[bytes, str, str]:
     elif operation == "move":
         columns = MOVE_TEMPLATE_COLUMNS
         filename = "批量移动模板.xlsx"
+    elif operation == "validation":
+        columns = VALIDATION_TEMPLATE_COLUMNS
+        filename = "批量验证记录模板.xlsx"
     elif operation == "edit":
         columns = SAMPLE_EDIT_TEMPLATE_COLUMNS if item_type == "sample" else EDIT_TEMPLATE_COLUMNS
         filename = "批量编辑模板.xlsx"
@@ -101,9 +107,9 @@ def template(query: dict[str, list[str]]) -> tuple[bytes, str, str]:
 
 def _template_example(operation: str, item_type: str) -> dict[str, Any]:
     if operation == "checkout":
-        return {"对象类型": "试剂/耗材", "编号": "RG000001", "出库原因": "实验消耗", "备注": "示例行，上传前请删除或改成真实编号"}
+        return {"对象类型": "试剂", "编号": "RG000001", "出库原因": "实验消耗", "备注": "示例行，上传前请删除或改成真实编号"}
     if operation == "move":
-        return {"对象类型": "试剂/耗材", "编号": "RG000001", "目标空间ID": 12, "孔位": "A1", "原因": "整理库存", "备注": "目标空间ID请从空间对应表复制"}
+        return {"对象类型": "试剂", "编号": "RG000001", "目标空间ID": 12, "孔位": "A1", "原因": "整理库存", "备注": "目标空间ID请从空间对应表复制"}
     if operation == "edit":
         if item_type == "sample":
             return {
@@ -112,21 +118,29 @@ def _template_example(operation: str, item_type: str) -> dict[str, Any]:
                 "备注": "建议从现有库存清单保留要改的行后编辑",
             }
         return {
-            "对象类型": "试剂/耗材", "编号": "RG000001", "名称": "示例抗体", "类型": "抗体",
-            "数量": 1, "状态": STATUS_AVAILABLE, "验证状态": VALIDATION_UNVERIFIED, "存放空间ID": 12,
+            "对象类型": "试剂", "编号": "RG000001", "名称": "示例抗体", "类型": "抗体",
+            "数量": 1, "价格": 1200, "状态": STATUS_AVAILABLE, "存放空间ID": 12,
             "孔位": "A1", "备注": "建议从现有库存清单保留要改的行后编辑",
+        }
+    if operation == "validation":
+        return {
+            "货号": "12345",
+            "验证日期": "2026-06-12",
+            "方法": "流式",
+            "结果": "通过",
+            "说明": "示例行，上传前请删除或改成真实记录",
         }
     if item_type == "sample":
         return {
             "样本号": "P001", "样本类型": "血清", "规格量": 0.5, "规格单位": "mL",
             "状态": STATUS_AVAILABLE, "入库日期": "2026-06-12", "存放空间ID": 12, "孔位": "A1",
-            "备注": "示例行，上传前请删除或改成真实标本",
+            "备注": "示例行，系统编号留空会自动生成，上传前请删除或改成真实标本",
         }
     return {
-        "编号": "RG000001", "名称": "示例抗体", "类型": "抗体", "品牌": "CST", "货号": "12345",
-        "规格量": 100, "规格单位": "uL", "数量": 1, "状态": STATUS_AVAILABLE, "验证状态": VALIDATION_UNVERIFIED,
+        "编号": "", "名称": "示例抗体", "类型": "抗体", "品牌": "CST", "货号": "12345",
+        "规格量": 100, "规格单位": "uL", "数量": 1, "价格": 1200, "状态": STATUS_AVAILABLE,
         "入库日期": "2026-06-12", "有效期": "2027-06-12", "存放空间ID": 12, "孔位": "A1",
-        "备注": "示例行，上传前请删除或改成真实试剂",
+        "备注": "示例行，编号留空会自动生成，上传前请删除或改成真实试剂",
     }
 
 
@@ -135,23 +149,23 @@ def _append_template_help_sheet(wb: Any, operation: str, item_type: str) -> None
     ws = wb.create_sheet("填写说明")
     ws.append(["项目", "可填内容 / 说明"])
     common_notes = [
-        ("对象类型", "批量编辑、移动、出库可填：试剂/耗材、临床标本。单独下载试剂或标本导入模板时不用填对象类型。"),
-        ("编号 / 系统编号", "试剂填写试剂编号，例如 RG000001；临床标本的系统编号可在导入时留空自动生成。批量编辑、移动、出库必须填写已有系统编号。"),
+        ("对象类型", "批量编辑、移动、出库可填：试剂、临床标本。单独下载试剂或标本导入模板时不用填对象类型。"),
+        ("编号 / 系统编号", "批量导入时，试剂编号和临床标本系统编号都可以留空，由系统自动生成；如果手动填写编号，已有编号会报错。修改已有库存请使用批量编辑。批量编辑、移动、出库必须填写已有编号。"),
         ("样本号", "临床标本的业务样本号，允许重复；例如同一样本号可以分别登记血清和组织。"),
         ("存放空间ID / 目标空间ID", "只填写数字 ID。请点击“下载空间对应表”，从其中复制空间ID；不要填写空间名称或路径。"),
         ("孔位", "只有带框架的空间需要填写，例如 A1、B3；不需要孔位时留空。"),
         ("空白单元格", "批量编辑时，空白单元格不会覆盖原值；只会修改你填写且与原值不同的字段。"),
     ]
     operation_notes = {
-        "import": [("操作流程", "下载模板，删除或改写示例行，填写真实数据，读取 Excel 后先预检查，再确认提交。")],
+        "import": [("操作流程", "下载模板，删除或改写示例行，填写真实数据，读取 Excel 后先预检查，再确认提交。批量导入只新增，不更新已有编号；编号留空时系统自动生成。")],
         "edit": [("操作流程", "推荐先下载现有库存，只保留要编辑的行，修改需要变更的字段；预检查会显示旧值 → 新值。")],
         "move": [("操作流程", "填写对象类型、编号、目标空间ID和孔位；预检查通过后会写入移动记录。")],
         "checkout": [("操作流程", "填写对象类型和编号；确认提交后会出库并释放当前位置。")],
+        "validation": [("操作流程", "填写货号、验证日期、方法和结果；预检查通过后会写入验证记录。")],
     }
     option_notes = [
         ("试剂类型", "、".join(options.get("categories") or [])),
         ("试剂状态", "、".join(options.get("reagent_statuses") or [])),
-        ("验证状态", "、".join(options.get("validation_statuses") or [])),
         ("样本类型", "、".join(options.get("sample_names") or [])),
         ("规格单位", "、".join(options.get("amount_units") or [])),
         ("标本状态", "、".join(options.get("sample_statuses") or [])),
@@ -200,13 +214,13 @@ def _current_inventory_row(item: dict[str, Any], item_type: str) -> list[Any]:
         return [
             "临床标本", item.get("code") or item.get("id"), item.get("name") or "",
             item.get("category") or "", "", "", item.get("amount"), item.get("amount_unit") or "",
-            item.get("quantity") or "", item.get("status") or "", "", item.get("entry_date") or "",
+            item.get("quantity") or "", "", item.get("status") or "", "", item.get("entry_date") or "",
             "", item.get("storage_node_id") or "", item.get("grid_cell") or "", item.get("note") or "",
         ]
     return [
-        "试剂/耗材", item.get("code") or item.get("id"), item.get("name") or "",
+        "试剂", item.get("code") or item.get("id"), item.get("name") or "",
         item.get("category") or "", item.get("brand") or "", item.get("catalog_no") or "",
-        item.get("amount"), item.get("amount_unit") or "", item.get("quantity"),
+        item.get("amount"), item.get("amount_unit") or "", item.get("quantity"), item.get("price"),
         item.get("status") or "", item.get("validation_status") or "", item.get("entry_date") or "",
         item.get("expiration_date") or "", item.get("storage_node_id") or "",
         item.get("grid_cell") or "", item.get("note") or "",
@@ -219,7 +233,7 @@ def current_inventory(query: dict[str, list[str]]) -> tuple[bytes, str, str]:
         item_type = "all"
     columns = [
         "对象类型", "编号", "名称", "类别", "品牌", "货号", "规格量", "规格单位",
-        "数量", "状态", "验证状态", "入库日期", "有效期", "存放空间ID", "孔位", "备注",
+        "数量", "价格", "状态", "验证状态", "入库日期", "有效期", "存放空间ID", "孔位", "备注",
     ]
     wb = new_workbook()
     ws = wb.active
@@ -234,8 +248,11 @@ def current_inventory(query: dict[str, list[str]]) -> tuple[bytes, str, str]:
                 ORDER BY updated_at DESC, id DESC
                 """
             ).fetchall()
-            for row in rows:
-                item = row_dict(row) or {}
+            reagent_items = [row_dict(row) or {} for row in rows]
+            for item in reagent_items:
+                item["item_type"] = "reagent"
+            attach_reagent_validation_statuses(conn, reagent_items)
+            for item in reagent_items:
                 ws.append(_current_inventory_row(item, "reagent"))
         if item_type in {"all", "sample"}:
             rows = conn.execute(
@@ -310,8 +327,8 @@ def _normalize_import_row(conn: Any, item_type: str, row: dict[str, Any]) -> dic
         "amount": row.get("规格量") or row.get("amount") or None,
         "amount_unit": str(row.get("规格单位") or row.get("单位") or row.get("amount_unit") or "").strip(),
         "quantity": row.get("数量") or row.get("quantity") or 0,
+        "price": row.get("价格") or row.get("price") or None,
         "status": str(row.get("状态") or row.get("status") or STATUS_AVAILABLE).strip() or STATUS_AVAILABLE,
-        "validation_status": str(row.get("验证状态") or row.get("validation_status") or VALIDATION_UNVERIFIED).strip() or VALIDATION_UNVERIFIED,
         "entry_date": str(row.get("入库日期") or row.get("entry_date") or "").strip(),
         "expiration_date": str(row.get("有效期") or row.get("expiration_date") or "").strip(),
         "storage_node_id": node_id,
@@ -330,6 +347,29 @@ def _normalize_item_ref(conn: Any, row: dict[str, Any], default_type: str) -> tu
     return item_type, item
 
 
+def _normalize_validation_row(conn: Any, row: dict[str, Any]) -> dict[str, Any]:
+    catalog_no = str(row.get("货号") or row.get("catalog_no") or "").strip()
+    if not catalog_no:
+        raise ApiError(400, "货号不能为空")
+    validation_date = str(row.get("验证日期") or row.get("validation_date") or date.today().isoformat()).strip()
+    method = str(row.get("方法") or row.get("method") or "").strip()
+    result = str(row.get("结果") or row.get("result") or "").strip()
+    if not validation_date:
+        raise ApiError(400, "验证日期不能为空")
+    if not method:
+        raise ApiError(400, "验证方法不能为空")
+    if not result:
+        raise ApiError(400, "验证结果不能为空")
+    return {
+        "catalog_no": catalog_no,
+        "validation_date": validation_date,
+        "method": method,
+        "result": result,
+        "description": str(row.get("说明") or row.get("description") or "").strip(),
+        "image_path": str(row.get("图片路径") or row.get("image_path") or "").strip(),
+    }
+
+
 FIELD_LABELS = {
     "name": "名称",
     "category": "类型",
@@ -338,8 +378,8 @@ FIELD_LABELS = {
     "amount": "规格量",
     "amount_unit": "规格单位",
     "quantity": "数量",
+    "price": "价格",
     "status": "状态",
-    "validation_status": "验证状态",
     "entry_date": "入库日期",
     "expiration_date": "有效期",
     "storage_node_id": "存放空间ID",
@@ -382,8 +422,8 @@ def _normalize_edit_row(conn: Any, item_type: str, row: dict[str, Any]) -> dict[
             "amount": row.get("规格量") or row.get("amount"),
             "amount_unit": row.get("规格单位") or row.get("amount_unit"),
             "quantity": row.get("数量") or row.get("quantity"),
+            "price": row.get("价格") or row.get("price"),
             "status": row.get("状态") or row.get("status"),
-            "validation_status": row.get("验证状态") or row.get("validation_status"),
             "entry_date": row.get("入库日期") or row.get("entry_date"),
             "expiration_date": row.get("有效期") or row.get("expiration_date"),
             "note": row.get("备注") or row.get("note"),
@@ -410,18 +450,15 @@ def _normalize_edit_row(conn: Any, item_type: str, row: dict[str, Any]) -> dict[
 
 def _preview_one(conn: Any, operation: str, item_type: str, mode: str, row: dict[str, Any]) -> dict[str, Any]:
     if operation == "import":
+        if mode != "insert":
+            raise ApiError(400, "批量导入只支持新增；如需修改已有编号，请使用批量编辑")
         normalized = _normalize_import_row(conn, item_type, row)
         code_key = "code"
         code = normalized.get(code_key)
         existing = _find_item(conn, item_type, code) if code else None
-        if mode == "update" and not code:
-            raise ApiError(400, "更新已有临床标本时必须填写系统编号")
-        if mode == "insert" and existing:
+        if existing:
             raise ApiError(409, "编号已存在")
-        if mode == "update" and not existing:
-            raise ApiError(404, "编号不存在，不能更新")
-        action = "更新" if existing else "新增"
-        return {"action": action, "normalized": normalized}
+        return {"action": "新增", "normalized": normalized}
     if operation == "move":
         ref_type, item = _normalize_item_ref(conn, row, item_type)
         node_id = _resolve_storage_node(conn, row, "目标空间ID")
@@ -432,13 +469,16 @@ def _preview_one(conn: Any, operation: str, item_type: str, mode: str, row: dict
     if operation == "checkout":
         ref_type, item = _normalize_item_ref(conn, row, item_type)
         return {"action": "出库", "normalized": {"item_type": ref_type, "item_id": item["id"]}}
+    if operation == "validation":
+        normalized = _normalize_validation_row(conn, row)
+        return {"action": "验证", "normalized": normalized, "summary": f"{normalized['catalog_no']} · {normalized['validation_date']} · {normalized['method']} · {normalized['result']}"}
     raise ApiError(400, "批量操作类型不正确")
 
 
 def preview(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     operation = str(data.get("operation", "import")).strip() or "import"
     item_type = _item_type(data.get("item_type", "reagent"))
-    mode = str(data.get("mode", "upsert")).strip() or "upsert"
+    mode = str(data.get("mode", "insert" if operation == "import" else "")).strip() or "insert"
     rows = data.get("rows") or []
     if not isinstance(rows, list):
         raise ApiError(400, "批量数据格式不正确")
@@ -457,22 +497,13 @@ def preview(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
 
 def _commit_import(item_type: str, mode: str, normalized: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     payload = dict(normalized)
-    location_requested = bool(payload.pop("_location_requested", False))
+    payload.pop("_location_requested", None)
     with connect() as conn:
         code_key = "code"
         code = payload.get(code_key)
         existing = _find_item(conn, item_type, code) if code else None
     if existing:
-        if mode == "insert":
-            raise ApiError(409, "编号已存在")
-        if not location_requested:
-            payload.pop("storage_node_id", None)
-            payload.pop("grid_cell", None)
-        if item_type == "sample":
-            return clinical_samples.update_sample(int(existing["id"]), payload, user)["item"]
-        return reagents.update_reagent(int(existing["id"]), payload, user)["item"]
-    if mode == "update":
-        raise ApiError(404, "编号不存在，不能更新")
+        raise ApiError(409, "编号已存在")
     if item_type == "sample":
         return clinical_samples.create_sample(payload, user)["item"]
     return reagents.create_reagent(payload, user)["item"]
@@ -481,7 +512,7 @@ def _commit_import(item_type: str, mode: str, normalized: dict[str, Any], user: 
 def commit(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     operation = str(data.get("operation", "import")).strip() or "import"
     item_type = _item_type(data.get("item_type", "reagent"))
-    mode = str(data.get("mode", "upsert")).strip() or "upsert"
+    mode = str(data.get("mode", "insert" if operation == "import" else "")).strip() or "insert"
     rows = data.get("rows") or []
     if not isinstance(rows, list):
         raise ApiError(400, "批量数据格式不正确")
@@ -520,6 +551,13 @@ def commit(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
                     "note": str(row.get("备注") or row.get("note") or "").strip(),
                 }
                 item = movements.create_checkout(payload, user)["item"]
+            elif operation == "validation":
+                payload = {
+                    **normalized,
+                    "description": str(row.get("说明") or row.get("description") or "").strip(),
+                    "image_path": str(row.get("图片路径") or row.get("image_path") or "").strip(),
+                }
+                item = registration.create_validation(payload, user)["item"]
             else:
                 raise ApiError(400, "批量操作类型不正确")
             success += 1

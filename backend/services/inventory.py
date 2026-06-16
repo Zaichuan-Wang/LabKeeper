@@ -5,15 +5,27 @@ import math
 from typing import Any
 
 from core.common import ApiError, clean_int_range
-from core.constants import PHYSICAL_INVENTORY_STATUS_SQL
+from core.constants import (
+    MOVEMENT_REASON_ARRIVAL,
+    MOVEMENT_REASON_CHECKOUT,
+    MOVEMENT_REASON_MOVE,
+    MOVEMENT_REASON_ORDER,
+    MOVEMENT_REASON_REGISTER,
+    MOVEMENT_REASON_ROLLBACK,
+    MOVEMENT_REASON_SPACE_MOVE,
+    MOVEMENT_REASON_STATUS,
+    PHYSICAL_INVENTORY_STATUS_SQL,
+)
 from db.database import connect
 from services.options_config import load_dropdown_options, space_type_label
 from services.storage_inventory import (
     attach_aliquot_totals,
+    attach_reagent_validation_statuses,
     batch_node_paths_and_descendants,
     descendant_node_ids,
     normalize_reagent_item,
     normalize_sample_item,
+    reagent_validation_status_sql,
 )
 from services import clinical_samples
 from services import reagents
@@ -21,7 +33,7 @@ from services import reagents
 
 REAGENT_PAYLOAD_KEYS = (
     "code", "source_code", "name", "category", "brand", "catalog_no", "amount", "amount_unit",
-    "quantity", "status", "entry_date", "expiration_date", "validation_status",
+    "quantity", "price", "status", "entry_date", "expiration_date",
     "storage_node_id", "grid_cell", "separate_items", "note",
 )
 SAMPLE_PAYLOAD_KEYS = (
@@ -33,7 +45,7 @@ SAMPLE_PAYLOAD_KEYS = (
 
 def clean_item_type(value: Any) -> str:
     item_type = str(value or "").strip().lower().replace("_", "-")
-    if item_type in {"reagent", "reagents", "试剂", "耗材", "试剂/耗材"}:
+    if item_type in {"reagent", "reagents", "试剂"}:
         return "reagent"
     if item_type in {"sample", "samples", "clinical-sample", "clinical-samples", "临床标本", "标本"}:
         return "sample"
@@ -167,7 +179,14 @@ def _keyword_node_ids(
     lowered = keyword.lower()
     ids: set[int] = set()
     space_labels = load_dropdown_options().get("space_types")
-    rows = conn.execute("SELECT id, name, space_type, location_code, note FROM storage_nodes ORDER BY id LIMIT 1000").fetchall()
+    rows = conn.execute(
+        """
+        SELECT id, name, space_type, location_code, note
+        FROM storage_nodes
+        WHERE id > 0 AND COALESCE(node_type, 'space') != 'system'
+        ORDER BY id LIMIT 1000
+        """
+    ).fetchall()
     for row in rows:
         node_id = int(row["id"])
         path = path_cache.get(node_id, "")
@@ -212,7 +231,7 @@ def _search_reagents(
     )
     validation_status = _query_value(query, "validation_status")
     if validation_status:
-        clauses.append("validation_status = ?")
+        clauses.append(f"{reagent_validation_status_sql('reagents')} = ?")
         params.append(validation_status)
     _storage_clause(conn, query, clauses, params, desc_cache)
     sql = "SELECT * FROM reagents"
@@ -222,6 +241,7 @@ def _search_reagents(
     sql += " ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?"
     rows = conn.execute(sql, [*params, limit, offset]).fetchall()
     items = attach_aliquot_totals(conn, [normalize_reagent_item(row, conn, path_cache) for row in rows])
+    attach_reagent_validation_statuses(conn, items)
     return [_with_display_fields(item) for item in items], total
 
 
@@ -278,11 +298,21 @@ def _search_spaces(conn: sqlite3.Connection, keyword: str, limit: int, offset: i
     if keyword:
         where = ""
     if not keyword:
-        total = int(conn.execute(f"SELECT COUNT(*) AS n FROM storage_nodes {where}", params).fetchone()["n"] or 0)
+        total = int(conn.execute(
+            """
+            SELECT COUNT(*) AS n FROM storage_nodes
+            WHERE id > 0 AND COALESCE(node_type, 'space') != 'system'
+            """,
+            params,
+        ).fetchone()["n"] or 0)
     else:
         total = 0
     rows = conn.execute(
-        f"SELECT * FROM storage_nodes {where} ORDER BY sort_order, id LIMIT ?",
+        """
+        SELECT * FROM storage_nodes
+        WHERE id > 0 AND COALESCE(node_type, 'space') != 'system'
+        ORDER BY sort_order, id LIMIT ?
+        """,
         [*params, 1000 if keyword else limit + offset],
     ).fetchall()
     lowered = keyword.lower()
@@ -327,7 +357,7 @@ def _with_display_fields(item: dict[str, Any]) -> dict[str, Any]:
             "display_location": item.get("storage_location") or "",
         })
     else:
-        parts = [item.get("category") or "试剂/耗材", item.get("brand"), f"货号 {item.get('catalog_no')}" if item.get("catalog_no") else ""]
+        parts = [item.get("category") or "试剂", item.get("brand"), f"货号 {item.get('catalog_no')}" if item.get("catalog_no") else ""]
         item.update({
             "display_title": item.get("name") or item.get("code") or item.get("id"),
             "display_subtitle": " | ".join(str(part) for part in parts if part),
@@ -400,7 +430,7 @@ def timeline(item_type: str, item_id: int) -> dict[str, Any]:
                 raise ApiError(404, "试剂不存在")
             item = normalize_reagent_item(row, conn)
             events = _reagent_events(conn, row)
-            title = f"{item.get('code') or item_id} · {item.get('name') or '试剂/耗材'}"
+            title = f"{item.get('code') or item_id} · {item.get('name') or '试剂'}"
     events.sort(key=lambda event: event.get("time") or "", reverse=True)
     return {
         "item": {
@@ -415,7 +445,25 @@ def timeline(item_type: str, item_id: int) -> dict[str, Any]:
 
 
 def _actor(row: Any) -> str:
-    return str(row["actor_name"] or row["username"] or "") if "actor_name" in row.keys() else ""
+    if "actor_name" not in row.keys():
+        return ""
+    return str(row["actor_name"] or row["username"] or "")
+
+
+def _user_actor(conn: Any, user_id: Any) -> str:
+    if not user_id:
+        return ""
+    row = conn.execute(
+        "SELECT display_name AS actor_name, username FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    return _actor(row) if row else ""
+
+
+def _format_price(value: Any) -> str:
+    if value in (None, ""):
+        return "未填写"
+    return f"{float(value):.2f}"
 
 
 def _timeline_event(
@@ -444,20 +492,25 @@ def _timeline_event(
 
 def _sample_events(conn: Any, sample: Any) -> list[dict[str, Any]]:
     item_id = int(sample["id"])
-    events = [_timeline_event(
-        time=sample["created_at"],
-        event_type="sample_created",
-        title="标本入库",
-        summary=f"登记标本 {sample['code']}，样本号 {sample['name']}，类型 {sample['category'] or '未填写'}。",
-        related_table="clinical_samples",
-        related_id=item_id,
-    )]
+    actor = _user_actor(conn, sample["created_by"])
+    events = []
+    if not _has_item_movements(conn, "sample", item_id):
+        events.append(_timeline_event(
+            time=sample["created_at"],
+            event_type="sample_created",
+            title="标本入库",
+            summary=f"登记标本 {sample['code']}，样本号 {sample['name']}，类型 {sample['category'] or '未填写'}。",
+            actor=actor,
+            related_table="clinical_samples",
+            related_id=item_id,
+        ))
     if sample["source_code"] and sample["source_code"] != sample["code"]:
         events.append(_timeline_event(
             time=sample["created_at"],
             event_type="aliquot",
             title="分装生成",
             summary=f"由 {sample['source_code']} 分装生成，当前管号 {sample['aliquot_no'] or '-'}。",
+            actor=actor,
             related_table="clinical_samples",
             related_id=item_id,
         ))
@@ -468,82 +521,29 @@ def _sample_events(conn: Any, sample: Any) -> list[dict[str, Any]]:
 
 def _reagent_events(conn: Any, reagent: Any) -> list[dict[str, Any]]:
     item_id = int(reagent["id"])
-    catalog_no = str(reagent["catalog_no"] or "").strip()
-    events = [_timeline_event(
-        time=reagent["created_at"],
-        event_type="reagent_created",
-        title="试剂入库",
-        summary=f"登记试剂 {reagent['code']}，名称 {reagent['name']}。",
-        related_table="reagents",
-        related_id=item_id,
-    )]
-    events.extend(_arrival_events(conn, item_id))
-    if catalog_no:
-        events.extend(_validation_events(conn, catalog_no))
+    actor = _user_actor(conn, reagent["created_by"])
+    events = []
+    if not _has_item_movements(conn, "reagent", item_id):
+        events.append(_timeline_event(
+            time=reagent["created_at"],
+            event_type="reagent_created",
+            title="试剂入库",
+            summary=f"登记试剂 {reagent['code']}，名称 {reagent['name']}。",
+            actor=actor,
+            related_table="reagents",
+            related_id=item_id,
+        ))
     events.extend(_movement_events(conn, "reagent", item_id))
     events.extend(_audit_events(conn, "reagents", item_id, "信息修改"))
     return events
 
 
-def _arrival_events(conn: Any, reagent_id: int) -> list[dict[str, Any]]:
-    rows = conn.execute(
-        """
-        SELECT a.*, u.display_name AS actor_name, u.username
-        FROM arrivals a
-        LEFT JOIN users u ON u.id = a.received_by
-        WHERE a.item_type = 'reagent' AND a.item_id = ?
-        ORDER BY a.created_at DESC
-        """,
-        (reagent_id,),
-    ).fetchall()
-    return [
-        _timeline_event(
-            time=row["created_at"] or row["entry_date"],
-            event_type="arrival",
-            title="到货入库",
-            summary=f"到货入库到 {row['location_snapshot'] or '未归位'}。",
-            actor=_actor(row),
-            related_table="arrivals",
-            related_id=row["id"],
-            to_location=row["location_snapshot"],
-        )
-        for row in rows
-    ]
-
-
-def _validation_events(conn: Any, catalog_no: str) -> list[dict[str, Any]]:
-    rows = conn.execute(
-        """
-        SELECT v.*, u.display_name AS actor_name, u.username
-        FROM validations v
-        LEFT JOIN users u ON u.id = v.validator_id
-        WHERE v.catalog_no = ?
-        ORDER BY v.created_at DESC
-        """,
-        (catalog_no,),
-    ).fetchall()
-    return [
-        _timeline_event(
-            time=row["created_at"] or row["validation_date"],
-            event_type="validation",
-            title="货号验证",
-            summary=f"货号 {catalog_no} 在 {row['method'] or '未填写方法'} 中结果为 {row['result'] or '未填写'}。",
-            actor=_actor(row),
-            related_table="validations",
-            related_id=row["id"],
-            details={
-                "catalog_no": catalog_no,
-                "validation_date": row["validation_date"],
-                "method": row["method"],
-                "result": row["result"],
-                "validator": _actor(row),
-                "description": row["description"],
-                "image_path": row["image_path"],
-                "created_at": row["created_at"],
-            },
-        )
-        for row in rows
-    ]
+def _has_item_movements(conn: Any, item_type: str, item_id: int) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM movements WHERE item_type = ? AND item_id = ? LIMIT 1",
+        (item_type, item_id),
+    ).fetchone()
+    return row is not None
 
 
 def _movement_events(conn: Any, item_type: str, item_id: int) -> list[dict[str, Any]]:
@@ -560,14 +560,11 @@ def _movement_events(conn: Any, item_type: str, item_id: int) -> list[dict[str, 
     events = []
     for row in rows:
         reason = str(row["reason"] or "")
-        title = "出库登记" if "出库" in reason or str(row["to_location_snapshot"] or "").startswith("未放置（已耗尽") else "位置移动"
-        if reason.startswith("回滚"):
-            title = "移动回滚"
-        elif row["reverted_by_movement_id"]:
-            title = "已被回滚的移动"
+        title, event_type = _movement_title(reason, row)
+        can_rollback = _is_deletable_movement_event(conn, row)
         events.append(_timeline_event(
             time=row["moved_at"],
-            event_type="movement",
+            event_type=event_type,
             title=title,
             summary=f"从 {row['from_location_snapshot'] or '未归位'} 到 {row['to_location_snapshot'] or '未归位'}" + (f"，原因：{reason}" if reason else ""),
             actor=_actor(row),
@@ -575,8 +572,72 @@ def _movement_events(conn: Any, item_type: str, item_id: int) -> list[dict[str, 
             related_id=row["id"],
             from_location=row["from_location_snapshot"],
             to_location=row["to_location_snapshot"],
+            details={
+                "reason": reason,
+                "note": row["note"],
+                "from_storage_node_id": row["from_storage_node_id"],
+                "to_storage_node_id": row["to_storage_node_id"],
+                "from_grid_cell": row["from_grid_cell"],
+                "to_grid_cell": row["to_grid_cell"],
+                "can_rollback": can_rollback,
+            },
         ))
+        if event_type == "order":
+            reagent = conn.execute("SELECT price FROM reagents WHERE id = ?", (item_id,)).fetchone()
+            if reagent and reagent["price"] is not None:
+                events[-1]["details"]["price"] = f"{float(reagent['price']):.2f}"
     return events
+
+
+def _is_deletable_movement_event(conn: Any, row: Any) -> bool:
+    reason = str(row["reason"] or "")
+    if reason not in {MOVEMENT_REASON_MOVE, MOVEMENT_REASON_SPACE_MOVE}:
+        return False
+    if row["reverted_by_movement_id"] is not None:
+        return False
+    object_type = str(row["object_type"] or "")
+    if object_type not in {"试剂", "临床标本", "空间"}:
+        return False
+    if object_type == "临床标本" and not row["item_id"]:
+        return False
+    moved_at = str(row["moved_at"] or "")
+    movement_id = int(row["id"])
+    if row["item_type"] and row["item_id"] is not None:
+        where = "item_type = ? AND item_id = ?"
+        params: list[Any] = [row["item_type"], row["item_id"]]
+    else:
+        where = "object_type = ? AND object_id = ?"
+        params = [row["object_type"], row["object_id"]]
+    later = conn.execute(
+        f"""
+        SELECT 1
+        FROM movements
+        WHERE {where}
+          AND (moved_at > ? OR (moved_at = ? AND id > ?))
+        LIMIT 1
+        """,
+        [*params, moved_at, moved_at, movement_id],
+    ).fetchone()
+    return later is None
+
+
+def _movement_title(reason: str, row: Any) -> tuple[str, str]:
+    title_by_reason = {
+        MOVEMENT_REASON_ORDER: ("订购登记", "order"),
+        MOVEMENT_REASON_ARRIVAL: ("到货入库", "arrival"),
+        MOVEMENT_REASON_REGISTER: ("入库登记", "register"),
+        MOVEMENT_REASON_MOVE: ("位置移动", "movement"),
+        MOVEMENT_REASON_CHECKOUT: ("出库登记", "checkout"),
+        MOVEMENT_REASON_ROLLBACK: ("移动回滚", "rollback"),
+        MOVEMENT_REASON_STATUS: ("状态调整", "status"),
+        MOVEMENT_REASON_SPACE_MOVE: ("空间移动", "space_move"),
+    }
+    title, event_type = title_by_reason.get(reason, ("流转记录", "movement"))
+    if reason == MOVEMENT_REASON_ARRIVAL and str(row["to_location_snapshot"] or "") == "未归位":
+        title = "到货未归位"
+    if row["reverted_by_movement_id"]:
+        title = f"已回滚：{title}"
+    return title, event_type
 
 
 def _audit_events(conn: Any, table: str, item_id: int, title: str) -> list[dict[str, Any]]:

@@ -3,7 +3,13 @@ from __future__ import annotations
 from typing import Any
 
 from core.common import now_text, row_dict
-from core.constants import PHYSICAL_INVENTORY_STATUS_SQL, STATUS_CONSUMED, STATUS_ORDERED
+from core.constants import (
+    PHYSICAL_INVENTORY_STATUS_SQL,
+    STATUS_CONSUMED,
+    STATUS_ORDERED,
+    SYSTEM_CHECKED_OUT_NODE_ID,
+    SYSTEM_NOT_ARRIVED_NODE_ID,
+)
 from db.database import connect
 from services.storage_inventory import computed_storage_location
 
@@ -53,11 +59,11 @@ def _consumed_reagents_with_location(conn: Any) -> dict[str, Any]:
         """
         SELECT id, code, name, status, storage_node_id, grid_cell
         FROM reagents
-        WHERE status = ? AND (storage_node_id IS NOT NULL OR COALESCE(grid_cell, '') != '')
+        WHERE status = ? AND (storage_node_id != ? OR COALESCE(grid_cell, '') != '')
         ORDER BY updated_at DESC, id DESC
         LIMIT 200
         """,
-        (STATUS_CONSUMED,),
+        (STATUS_CONSUMED, SYSTEM_CHECKED_OUT_NODE_ID),
     ).fetchall()
     examples = [
         {
@@ -77,11 +83,11 @@ def _consumed_samples_with_location(conn: Any) -> dict[str, Any]:
         """
         SELECT id, code, name, category, status, storage_node_id, grid_cell
         FROM clinical_samples
-        WHERE status = ? AND (storage_node_id IS NOT NULL OR COALESCE(grid_cell, '') != '')
+        WHERE status = ? AND (storage_node_id != ? OR COALESCE(grid_cell, '') != '')
         ORDER BY updated_at DESC, id DESC
         LIMIT 200
         """,
-        (STATUS_CONSUMED,),
+        (STATUS_CONSUMED, SYSTEM_CHECKED_OUT_NODE_ID),
     ).fetchall()
     examples = [
         {
@@ -102,11 +108,11 @@ def _ordered_reagents_with_location(conn: Any) -> dict[str, Any]:
         """
         SELECT id, code, name, status, storage_node_id, grid_cell
         FROM reagents
-        WHERE status = ? AND (storage_node_id IS NOT NULL OR COALESCE(grid_cell, '') != '')
+        WHERE status = ? AND (storage_node_id != ? OR COALESCE(grid_cell, '') != '')
         ORDER BY updated_at DESC, id DESC
         LIMIT 200
         """,
-        (STATUS_ORDERED,),
+        (STATUS_ORDERED, SYSTEM_NOT_ARRIVED_NODE_ID),
     ).fetchall()
     examples = [
         {
@@ -158,11 +164,11 @@ def _duplicate_positions(conn: Any) -> dict[str, Any]:
         FROM (
             SELECT '试剂' AS item_type, code, name, storage_node_id, grid_cell
             FROM reagents
-            WHERE storage_node_id IS NOT NULL AND COALESCE(grid_cell, '') != '' AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
+            WHERE storage_node_id > 0 AND COALESCE(grid_cell, '') != '' AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
             UNION ALL
             SELECT '标本' AS item_type, code, name, storage_node_id, grid_cell
             FROM clinical_samples
-            WHERE storage_node_id IS NOT NULL AND COALESCE(grid_cell, '') != '' AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
+            WHERE storage_node_id > 0 AND COALESCE(grid_cell, '') != '' AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
         )
         GROUP BY storage_node_id, grid_cell
         HAVING COUNT(*) > 1

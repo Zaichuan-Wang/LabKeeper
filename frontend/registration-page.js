@@ -3,7 +3,7 @@ function syncReagentStorageFields(form = $('reagentForm')) {
   const isConsumed = form.elements.status.value === STATUS_CONSUMED || Number(form.elements.quantity.value || 0) <= 0;
   const storageField = form.elements.storage_node_id;
   const positionField = form.elements.grid_cell;
-  const note = $('reagentStorageState');
+  const note = form.dataset.reagentFormMode === 'edit' ? $('reagentEditStorageState') : $('reagentStorageState');
   if (isConsumed) {
     storageField.value = '';
     positionField.innerHTML = '<option value="">位置将释放</option>';
@@ -47,8 +47,41 @@ async function loadOrdersHistory() {
   const data = await api('/api/orders');
   $('historyOrderCount').textContent = `${data.count} 条`;
   renderPagedTable('historyOrderTable', [
-    { key: 'name', label: '名称' }, { key: 'category', label: '类型', render: badge }, { key: 'brand', label: '品牌' }, { key: 'catalog_no', label: '货号' }, { key: 'amount', label: '规格', render: (_, r) => amountText(r) }, { key: 'quantity', label: '数量' }, { key: 'price', label: '价格' }, { key: 'arrival_status', label: '到货', render: badge }, { key: 'requester_name', label: '登记人' }, { key: 'updated_at', label: '更新时间' }
+    { key: 'name', label: '名称' },
+    { key: 'category', label: '类型', render: badge },
+    { key: 'brand', label: '品牌' },
+    { key: 'catalog_no', label: '货号' },
+    { key: 'amount', label: '规格', render: (_, r) => amountText(r) },
+    { key: 'quantity', label: '订购数量' },
+    { key: 'price', label: '价格' },
+    { key: 'arrival_status', label: '到货信息', render: (_, r) => renderOrderArrivalLedger(r) },
+    { key: 'requester_name', label: '订购人' },
+    { key: 'created_at', label: '订购时间' },
+    { key: 'updated_at', label: '更新时间' },
   ], data.items, { pageSize: 20 });
+}
+
+function compactLedgerText(value) {
+  const parts = String(value || '').split('、').map(part => part.trim()).filter(Boolean);
+  return [...new Set(parts)].join('、');
+}
+
+function ledgerLine(label, value) {
+  const text = compactLedgerText(value);
+  return text ? `<small><b>${esc(label)}</b>${esc(text)}</small>` : '';
+}
+
+function renderOrderArrivalLedger(row = {}) {
+  const hasArrival = Number(row.arrival_count || 0) > 0;
+  const lines = hasArrival ? [
+    ledgerLine('已到数量', row.arrived_quantity || row.arrival_count),
+    ledgerLine('库存编号', row.arrival_codes),
+    ledgerLine('位置', row.arrival_locations),
+    ledgerLine('入库日期', row.arrival_entry_dates),
+    ledgerLine('有效期', row.arrival_expiration_dates),
+    ledgerLine('到货人', row.received_by_names),
+  ].filter(Boolean).join('') : '<small>尚未登记到货</small>';
+  return `<div class="ledger-cell">${badge(row.arrival_status || '未到货')}${lines}</div>`;
 }
 
 function repeatOrderKey(item) {
@@ -74,7 +107,7 @@ function uniqueRepeatOrderItems(items = []) {
 
 function repeatOrderLabel(item) {
   const parts = [
-    item.name || item.code || '试剂/耗材',
+    item.name || item.code || '试剂',
     item.brand || '',
     item.catalog_no || '',
     amountText(item) === '-' ? '' : amountText(item),
@@ -87,12 +120,16 @@ function selectedRepeatOrderItem() {
   return state.repeatOrderItems.find(item => Number(item.id) === Number(select?.value));
 }
 
+function repeatOrderPrice(item = {}) {
+  return item.price ?? '';
+}
+
 function renderRepeatOrderSummary() {
   const summaryBox = $('repeatOrderSummary');
   if (!summaryBox) return;
   const item = selectedRepeatOrderItem();
   summaryBox.innerHTML = item
-    ? `<b>${esc(item.name || item.code || '试剂/耗材')}</b><span>${esc(item.category || '其他')} · ${esc(item.brand || '无品牌')} · ${esc(item.catalog_no || '无货号')} · ${amountText(item)}</span>`
+    ? `<b>${esc(item.name || item.code || '试剂')}</b><span>${esc(item.category || '其他')} · ${esc(item.brand || '无品牌')} · ${esc(item.catalog_no || '无货号')} · ${amountText(item)}</span>`
     : '<span>选择已有试剂后，可带入名称、类型、品牌、货号和规格。</span>';
 }
 
@@ -102,7 +139,7 @@ async function loadRepeatOrderCandidates() {
   const keyword = $('repeatOrderSearch')?.value.trim() || '';
   const data = await searchInventoryObjects({ type: 'reagent', keyword, available: false, limit: 80, purpose: 'form' });
   state.repeatOrderItems = uniqueRepeatOrderItems(data.items);
-  fillSelectObjects(select, state.repeatOrderItems, { placeholder: '请选择已有试剂/耗材', label: repeatOrderLabel });
+  fillSelectObjects(select, state.repeatOrderItems, { placeholder: '请选择已有试剂', label: repeatOrderLabel });
   renderRepeatOrderSummary();
   return { ...data, items: state.repeatOrderItems, count: state.repeatOrderItems.length };
 }
@@ -122,7 +159,7 @@ function setOrderCategory(form, category) {
 function fillOrderFromRepeatItem() {
   const item = selectedRepeatOrderItem();
   if (!item) {
-    toast('请选择已有试剂/耗材');
+    toast('请选择已有试剂');
     return;
   }
   const form = $('orderForm');
@@ -133,10 +170,33 @@ function fillOrderFromRepeatItem() {
     amount: item.amount ?? '',
     amount_unit: item.amount_unit || '',
     quantity: 1,
-    price: '',
+    price: repeatOrderPrice(item),
     reason: form.elements.reason.value || '再次订购',
   });
   setOrderCategory(form, item.category || '');
+  form.elements.name.focus();
+  toast('已带入订购登记');
+}
+
+async function startRepeatOrderFromItem(item = {}) {
+  if (!item?.id) return;
+  activateView('registration');
+  setRegistrationTab('orders', false);
+  await loadRegistrationTab('orders');
+  const form = $('orderForm');
+  setFormValues(form, {
+    name: item.name || '',
+    brand: item.brand || '',
+    catalog_no: item.catalog_no || '',
+    amount: item.amount ?? '',
+    amount_unit: item.amount_unit || '',
+    quantity: 1,
+    price: repeatOrderPrice(item),
+    reason: '再次订购',
+  });
+  setOrderCategory(form, item.category || '');
+  $('repeatOrderSearch').value = item.catalog_no || item.name || '';
+  renderRepeatOrderSummary();
   form.elements.name.focus();
   toast('已带入订购登记');
 }
@@ -167,14 +227,6 @@ async function loadArrivals() {
   return loadArrivalForm();
 }
 
-async function loadArrivalsHistory() {
-  const data = await api('/api/arrivals');
-  $('historyArrivalCount').textContent = `${data.count} 条`;
-  renderPagedTable('historyArrivalTable', [
-    { key: 'id', label: 'ID' }, { key: 'code', label: '编号' }, { key: 'name', label: '名称' }, { key: 'storage_location', label: '位置' }, { key: 'entry_date', label: '入库日期' }, { key: 'expiration_date', label: '有效期' }, { key: 'received_by_name', label: '登记人' }, { key: 'created_at', label: '时间' }
-  ], data.items, { pageSize: 20 });
-}
-
 async function loadValidationForm() {
   await loadReagentCache();
 }
@@ -185,9 +237,10 @@ async function loadValidations() {
 
 async function loadValidationsHistory() {
   const data = await api('/api/validations');
+  state.validations = data.items;
   $('historyValidationCount').textContent = `${data.count} 条`;
   renderPagedTable('historyValidationTable', [
-    { key: 'code', label: '编号' }, { key: 'name', label: '名称' }, { key: 'catalog_no', label: '货号' }, { key: 'validation_date', label: '日期' }, { key: 'method', label: '方法' }, { key: 'result', label: '结果', render: badge }, { key: 'validator_name', label: '验证人' }, { key: 'image_path', label: '图片' }, { key: 'description', label: '说明' }
+    { key: 'code', label: '编号' }, { key: 'name', label: '名称' }, { key: 'catalog_no', label: '货号' }, { key: 'validation_date', label: '日期' }, { key: 'method', label: '方法' }, { key: 'result', label: '结果', render: badge }, { key: 'validator_name', label: '验证人' }, { key: 'image_path', label: '图片' }, { key: 'description', label: '说明' },
   ], data.items, { pageSize: 20 });
 }
 
@@ -210,7 +263,6 @@ async function loadMovementsHistory() {
   $('historyMovementCount').textContent = `${data.count} 条`;
   renderPagedTable('historyMovementTable', [
     { key: 'object_type', label: '类型' },
-    { key: 'id', label: '操作', render: (_, r) => r.can_rollback && canManageLocation() ? actionButton('回滚', 'rollback-movement', r.id, 'danger') : '' },
     { key: 'object_id', label: '编号' },
     { key: 'from_location', label: '原位置', render: v => esc(locationText(v)) },
     { key: 'to_location', label: '新位置', render: v => esc(locationText(v)) },
@@ -221,54 +273,63 @@ async function loadMovementsHistory() {
   ], data.items, { pageSize: 20 });
 }
 
-async function rollbackMovement(id) {
-  if (!id) return;
-  if (!confirm(`确认回滚移动记录 #${id}？\n系统会把对象移回原位置；如果原位置已被占用，会拒绝回滚。`)) return;
-  await api(`/api/movements/${id}/rollback`, { method: 'POST' });
-  toast('已回滚移动记录');
-  await loadMovementsHistory();
-  if (state.view === 'inventory') await loadInventory();
-  if (state.view === 'dashboard') await loadDashboard();
-}
-
 async function startNewReagent(options = {}) {
   const refreshPicker = options?.refreshPicker !== false;
-  if (typeof setManualMode === 'function') setManualMode('reagent');
   const form = $('reagentForm');
   resetForm(form);
-  $('reagentFormTitle').textContent = '新建试剂/耗材';
+  $('reagentFormTitle').textContent = '试剂入库';
+  $('reagentCodePreview').textContent = '保存后由系统自动生成';
   setDefaultDropdownValues();
   fillPositionSelect(form.elements.grid_cell, form.elements.storage_node_id.value);
   syncReagentStorageFields(form);
   syncMultiRegisterFields(form);
   if (refreshPicker) await loadLocationPicker('reagent');
-  $('reagentDetail').innerHTML = '';
+}
+
+function resetReagentEditForm() {
+  const form = $('reagentEditForm');
+  if (!form) return;
+  resetForm(form);
+  $('reagentEditTitle').textContent = '编辑试剂';
+  $('reagentEditCodePreview').textContent = '请先选择已有试剂';
+  $('reagentEditDetail').innerHTML = '<p class="muted">从空间总览或明细查询选择试剂后，在这里维护已有库存信息。</p>';
+  fillPositionSelect(form.elements.grid_cell, form.elements.storage_node_id.value);
+  syncReagentStorageFields(form);
 }
 
 async function editReagent(id) {
-  const data = await api(inventoryObjectDetailPath('reagent', id));
+  const [data, timeline] = await Promise.all([
+    api(inventoryObjectDetailPath('reagent', id)),
+    loadInventoryTimeline('reagent', id),
+  ]);
   const item = data.item;
-  $('reagentFormTitle').textContent = `编辑试剂：${item.code || item.id}`;
-  setFormValues($('reagentForm'), item);
-  fillPositionSelect($('reagentForm').elements.grid_cell, item.storage_node_id, item.grid_cell || '');
-  syncReagentStorageFields($('reagentForm'));
-  syncMultiRegisterFields($('reagentForm'));
-  await loadLocationPicker('reagent');
-  renderReagentDetail(data);
+  const form = $('reagentEditForm');
+  $('reagentEditTitle').textContent = `编辑试剂：${item.code || item.id}`;
+  $('reagentEditCodePreview').textContent = item.code || `ID ${item.id}`;
+  setFormValues(form, item);
+  fillPositionSelect(form.elements.grid_cell, item.storage_node_id, item.grid_cell || '');
+  syncReagentStorageFields(form);
+  await loadLocationPicker('reagentEdit');
+  await renderReagentDetail(data, timeline);
 }
 
-function renderReagentDetail(data) {
+async function renderReagentDetail(data, timeline = null) {
+  const target = $('reagentEditDetail');
+  if (!target) return;
   const item = data.item;
   const actionButtons = inventoryActionButtons(item, 'reagent', { detail: false, editAction: '' });
   const actions = actionButtons ? `<div class="detail-actions">${actionButtons}</div>` : '';
   const aliquotText = reagentAliquotText(item);
-  $('reagentDetail').innerHTML = `
+  const orderEvents = await loadOrderHistoryEvents(item.catalog_no || '');
+  target.innerHTML = `
     ${actions}
     <h4>${esc(item.code || item.id)} · ${esc(item.name)}</h4>
-    <div class="detail-grid"><span>来源：${esc(item.source_code || item.code || '-')}</span><span>货号：${esc(item.catalog_no || '-')}</span>${aliquotText ? `<span>管号：${esc(aliquotText)}</span>` : ''}<span>规格：${amountText(item)}</span><span>类型：${esc(item.category)}</span><span>状态：${esc(item.status)}</span><span>验证：${esc(item.validation_status)}</span><span>位置：${esc(locationText(item.storage_location))}</span></div>
-    <h4>验证记录</h4>${miniRows(data.validations, ['catalog_no', 'validation_date', 'method', 'result', 'description'])}
-    <h4>到货记录</h4>${miniRows(data.arrivals, ['entry_date', 'storage_location', 'expiration_date'])}
-    <h4>移动记录</h4>${miniRows(data.movements, ['from_location', 'to_location', 'moved_at', 'reason'])}
+    <div class="detail-grid"><span>来源：${esc(item.source_code || item.code || '-')}</span><span>货号：${esc(item.catalog_no || '-')}</span>${aliquotText ? `<span>管号：${esc(aliquotText)}</span>` : ''}<span>规格：${amountText(item)}</span><span>价格：${esc(orderPriceText(item.price))}</span><span>类型：${esc(item.category)}</span><span>状态：${esc(item.status)}</span><span>验证：${esc(item.validation_status)}</span><span>位置：${esc(locationText(item.storage_location))}</span></div>
+    <div class="detail-timeline-stack">
+      ${detailTimelineModule('时间线', timeline?.items || [], { open: true, actions: timelineEventActions })}
+      ${detailTimelineModule('历史订购', orderEvents, { open: false })}
+      ${detailTimelineModule('验证记录', validationDetailEvents(data.validations || []), { open: false, count: (data.validations || []).length, actions: validationEventActions })}
+    </div>
   `;
 }
 
@@ -335,7 +396,7 @@ async function loadAliquotCandidates() {
   const data = await searchInventoryObjects({ type, keyword, available: true, limit: 80, purpose: 'aliquot' });
   state.aliquotCandidates = data.items;
   fillSelectObjects(document.querySelector('#aliquotForm select[name="source_item_id"]'), state.aliquotCandidates, {
-    placeholder: type === 'sample' ? '请选择已有标本' : '请选择试剂/耗材',
+    placeholder: type === 'sample' ? '请选择已有标本' : '请选择试剂',
     label: item => inventoryObjectSelectLabel(item, type),
   });
   renderAliquotSourceSummary();
@@ -351,7 +412,7 @@ async function useAliquotSourceLocation() {
     toast('请先选择来源库存');
     return;
   }
-  const nodeId = item.storage_node_id ? String(item.storage_node_id) : '';
+  const nodeId = isRealStorageNodeId(item.storage_node_id) ? String(item.storage_node_id) : '';
   const startPosition = nodeId ? String(item.grid_cell || '') : '';
   form.elements.storage_node_id.value = nodeId;
   fillPositionSelect(form.elements.grid_cell, nodeId, startPosition);
@@ -389,6 +450,15 @@ async function loadRegistrationTab(tab = state.registrationTab) {
   if (tab === 'orders') await loadOrders();
   if (tab === 'arrivals') await loadArrivals();
   if (tab === 'validations') await loadValidations();
+  if (tab === 'reagents') {
+    const form = $('reagentForm');
+    if (!form.elements.id.value) await startNewReagent();
+    else {
+      fillPositionSelect(form.elements.grid_cell, form.elements.storage_node_id.value, form.elements.grid_cell.value);
+      syncReagentStorageFields(form);
+      await loadLocationPicker('reagent');
+    }
+  }
   if (tab === 'samples') await loadSamples();
   if (tab === 'aliquots') await loadAliquotCandidates();
 }
@@ -401,7 +471,6 @@ async function loadHistory() {
 
 async function loadHistoryTab(tab = state.historyTab) {
   if (tab === 'orders') await loadOrdersHistory();
-  if (tab === 'arrivals') await loadArrivalsHistory();
   if (tab === 'validations') await loadValidationsHistory();
   if (tab === 'checkouts') await loadCheckoutsHistory();
   if (tab === 'movements') await loadMovementsHistory();
@@ -416,6 +485,7 @@ async function submitValidation(e) {
   e.preventDefault();
   const form = e.currentTarget;
   const data = formData(form);
+  const id = data.id;
   const reagent = state.reagents.find(r => Number(r.id) === Number(data.item_id));
   if (!data.catalog_no && reagent?.catalog_no) data.catalog_no = reagent.catalog_no;
   const file = form.elements.image_file.files[0];
@@ -423,22 +493,68 @@ async function submitValidation(e) {
   if (file) {
     const uploaded = await api('/api/uploads/validation-image', { method: 'POST', body: JSON.stringify({ data_url: await fileToDataUrl(file), code: reagent?.code || data.catalog_no || 'catalog', method: data.method, validation_date: data.validation_date }) });
     data.image_path = uploaded.path;
+  } else if (id) {
+    data.image_path = form.dataset.imagePath || '';
   }
+  delete data.id;
   delete data.item_id;
   delete data.method_other;
   delete data.image_file;
-  await api('/api/validations', { method: 'POST', body: JSON.stringify(data) });
-  resetForm(form);
-  setDefaultDates();
-  toast('验证记录已保存');
+  await api(id ? `/api/validations/${id}` : '/api/validations', { method: id ? 'PATCH' : 'POST', body: JSON.stringify(data) });
+  resetValidationForm();
+  toast(id ? '验证记录已更新' : '验证记录已保存');
   await loadRegistrationTab('validations');
+  if (state.historyTab === 'validations') await loadValidationsHistory();
+}
+
+function canEditValidation(item) {
+  return isAdmin() || Number(item?.validator_id) === Number(state.user?.id);
+}
+
+async function editValidation(id) {
+  const data = state.validations.find(item => Number(item.id) === Number(id)) || (await api('/api/validations')).items.find(item => Number(item.id) === Number(id));
+  if (!data) throw new Error('验证记录不存在');
+  if (!canEditValidation(data)) throw new Error('只能编辑自己登记的验证记录');
+  activateView('registration');
+  setRegistrationTab('validations', false);
+  await loadValidationForm();
+  const form = $('validationForm');
+  const method = String(data.method || '');
+  const methodInOptions = [...form.elements.method.options].some(option => option.value === method);
+  setFormValues(form, {
+    id: data.id,
+    catalog_no: data.catalog_no,
+    validation_date: data.validation_date,
+    method: methodInOptions ? method : '其他',
+    method_other: methodInOptions ? '' : method,
+    result: data.result,
+    description: data.description,
+  });
+  form.dataset.imagePath = data.image_path || '';
+  $('validationFormTitle').textContent = '编辑验证记录';
+  $('validationFormHint').textContent = `记录 #${data.id} · ${data.validator_name || '验证人'}`;
+  $('cancelValidationEditBtn')?.classList.remove('hidden');
+  $('validationOtherLabel').classList.toggle('hidden', form.elements.method.value !== '其他');
+  form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function resetValidationForm() {
+  const form = $('validationForm');
+  if (!form) return;
+  resetForm(form);
+  delete form.dataset.imagePath;
+  setDefaultDates();
+  $('validationFormTitle').textContent = '验证登记';
+  $('validationFormHint').textContent = '按货号记录验证结果';
+  $('cancelValidationEditBtn')?.classList.add('hidden');
+  $('validationOtherLabel').classList.add('hidden');
 }
 
 async function submitReagent(e) {
   e.preventDefault();
   const form = e.currentTarget;
   const consumed = form.elements.status.value === STATUS_CONSUMED || Number(form.elements.quantity.value || 0) <= 0;
-  if (consumed && form.elements.id.value && !confirm('确认把该试剂/耗材设为已耗尽？\n保存后会释放存放位置，但试剂和验证记录会继续保留。')) return;
+  if (consumed && form.elements.id.value && !confirm('确认把该试剂设为已耗尽？\n保存后会释放存放位置，但试剂和验证记录会继续保留。')) return;
   form.elements.storage_node_id.disabled = false;
   form.elements.grid_cell.disabled = false;
   const data = formData(form);
@@ -448,6 +564,11 @@ async function submitReagent(e) {
   }
   const id = data.id;
   delete data.id;
+  delete data.code;
+  if (!id && form.dataset.reagentFormMode === 'edit') {
+    syncReagentStorageFields(form);
+    throw new Error('请先从空间总览或库存明细中选择一个试剂进行编辑');
+  }
   if (id) delete data.separate_items;
   if (!(await confirmCatalogNameConflict({ catalogNo: data.catalog_no, name: data.name, excludeId: id }))) {
     syncReagentStorageFields(form);
@@ -457,10 +578,15 @@ async function submitReagent(e) {
     const result = id
       ? await api(inventoryObjectDetailPath('reagent', id), { method: 'PATCH', body: JSON.stringify(data) })
       : await api('/api/inventory/items', { method: 'POST', body: JSON.stringify({ ...data, item_type: 'reagent' }) });
-    toast(!id && data.separate_items === false && Number(data.quantity || 1) > 1 ? `试剂已保存为 1 条记录，数量 ${data.quantity}` : (result?.count > 1 ? `已分别登记 ${result.count} 件试剂/耗材` : '试剂已保存'));
-    await startNewReagent();
-    await loadManualEditor();
+    toast(!id && data.separate_items === false && Number(data.quantity || 1) > 1 ? `试剂已保存为 1 条记录，数量 ${data.quantity}` : (result?.count > 1 ? `已分别登记 ${result.count} 件试剂` : '试剂已保存'));
+    if (id) {
+      await editReagent(id);
+    } else {
+      await startNewReagent();
+      await loadRegistrationTab('reagents');
+    }
     if (state.inventoryTab === 'details') await searchInventory();
+    if (state.view === 'inventory') await loadInventory();
   } finally {
     syncReagentStorageFields(form);
   }

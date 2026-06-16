@@ -1,4 +1,4 @@
-const ASSET_VERSION = '20260615-inventory-drag';
+const ASSET_VERSION = '20260616-split-maintenance';
 const APP_SCRIPTS = [
   'core.js',
   'ui-common.js',

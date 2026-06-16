@@ -18,6 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from services import backup
 from core.common import ApiError, get_logger
 from core.config import CORS_ORIGINS, DB_PATH
+from core.constants import STATUS_ORDERED, SYSTEM_NOT_ARRIVED_NODE_ID
 from db.database import compact_database, connect, init_db
 from routers.admin import router as admin_router
 from routers.bulk import router as bulk_router
@@ -91,8 +92,20 @@ def run_check() -> None:
         users_count = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
         reagents_count = conn.execute("SELECT COUNT(*) AS n FROM reagents").fetchone()["n"]
         samples = conn.execute("SELECT COUNT(*) AS n FROM clinical_samples").fetchone()["n"]
-        orders = conn.execute("SELECT COUNT(*) AS n FROM orders").fetchone()["n"]
-    result = {"ok": True, "db": str(DB_PATH), "users": users_count, "reagents": reagents_count, "clinical_samples": samples, "orders": orders}
+        pending_orders = conn.execute(
+            "SELECT COUNT(*) AS n FROM reagents WHERE status = ? AND storage_node_id = ?",
+            (STATUS_ORDERED, SYSTEM_NOT_ARRIVED_NODE_ID),
+        ).fetchone()["n"]
+        movements = conn.execute("SELECT COUNT(*) AS n FROM movements").fetchone()["n"]
+    result = {
+        "ok": True,
+        "db": str(DB_PATH),
+        "users": users_count,
+        "reagents": reagents_count,
+        "clinical_samples": samples,
+        "pending_orders": pending_orders,
+        "movements": movements,
+    }
     logger.info("数据库检查：%s", json.dumps(result, ensure_ascii=False))
     print(json.dumps(result, ensure_ascii=False))
 

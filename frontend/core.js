@@ -22,6 +22,8 @@ const state = {
   selectedWell: '',
   selectedItemType: '',
   selectedItemId: null,
+  detailItemType: '',
+  detailItemId: null,
   // ── 库存筛选 ──
   inventoryItemTypeFilter: 'all',
   inventoryRows: [],
@@ -43,6 +45,7 @@ const state = {
   aliquotCandidates: [],
   aliquotItemType: 'sample',
   orders: [],
+  validations: [],
   repeatOrderItems: [],
   // ── 位置选择器 ──
   activeLocationPicker: null,
@@ -91,7 +94,7 @@ const VIEW_TITLES = {
   dashboard: '工作台',
   registration: '登记入库',
   history: '流转记录',
-  admin: '管理员',
+  admin: '系统管理',
   password: '账号密码',
   inventory: '库存空间',
 };
@@ -177,7 +180,7 @@ function inventorySearchType(type = 'all') {
 function inventoryObjectTypeLabel(itemOrType, fallback = 'reagent') {
   const raw = typeof itemOrType === 'string' ? itemOrType : itemOrType?.item_type;
   if (raw === 'space') return '空间';
-  return inventoryObjectType(itemOrType, fallback) === 'sample' ? '临床标本' : '试剂/耗材';
+  return inventoryObjectType(itemOrType, fallback) === 'sample' ? '临床标本' : '试剂';
 }
 
 function inventoryObjectListPath(type, params) {

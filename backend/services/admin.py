@@ -232,6 +232,107 @@ def excel_import(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     return {"items": summary, "backup": backup_item}
 
 
+DELETE_RECORD_TABLES = {
+    "reagents": "试剂记录",
+    "clinical_samples": "临床标本记录",
+    "validations": "验证记录",
+    "movements": "移动记录",
+}
+
+
+def delete_records(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    table = str(data.get("table") or "").strip()
+    if table not in DELETE_RECORD_TABLES:
+        raise ApiError(400, "这张表不支持在页面直接删除记录")
+    ids = _clean_delete_ids(data.get("ids"))
+    if not ids:
+        raise ApiError(400, "请填写要删除的记录 ID")
+    backup_item = database_backup.create_database_backup(f"before_delete_{table}", user)
+    placeholders = ", ".join("?" for _ in ids)
+    with connect() as conn:
+        existing = conn.execute(
+            f"SELECT * FROM {_quote_ident(table)} WHERE id IN ({placeholders}) ORDER BY id",
+            ids,
+        ).fetchall()
+        if len(existing) != len(ids):
+            found = {int(row["id"]) for row in existing}
+            missing = [item_id for item_id in ids if item_id not in found]
+            raise ApiError(404, f"记录不存在：{', '.join(str(item_id) for item_id in missing)}")
+        old_rows = [row_dict(row) or {} for row in existing]
+        cleared_refs = _clear_delete_references(conn, table, ids)
+        conn.execute(f"DELETE FROM {_quote_ident(table)} WHERE id IN ({placeholders})", ids)
+        create_audit(conn, user["id"], "api_delete_records", table, None, {"ids": ids, "count": len(ids), "cleared_refs": cleared_refs}, old_rows)
+        conn.commit()
+    return {
+        "table": table,
+        "label": DELETE_RECORD_TABLES[table],
+        "ids": ids,
+        "count": len(ids),
+        "items": old_rows,
+        "cleared_refs": cleared_refs,
+        "backup": backup_item,
+    }
+
+
+def _clear_delete_references(conn: Any, table: str, ids: list[int]) -> dict[str, int]:
+    placeholders = ", ".join("?" for _ in ids)
+    if table in {"reagents", "clinical_samples"}:
+        item_type = "reagent" if table == "reagents" else "sample"
+        movement_rows = conn.execute(
+            f"SELECT id FROM movements WHERE item_type = ? AND item_id IN ({placeholders})",
+            [item_type, *ids],
+        ).fetchall()
+        movement_ids = [int(row["id"]) for row in movement_rows]
+        rollback_refs = _clear_movement_rollback_references(conn, movement_ids) if movement_ids else 0
+        conn.execute(
+            f"DELETE FROM movements WHERE item_type = ? AND item_id IN ({placeholders})",
+            [item_type, *ids],
+        )
+        return {"movement_refs": len(movement_ids), "movement_rollback_refs": rollback_refs}
+    if table != "movements":
+        return {}
+    return {"movement_rollback_refs": _clear_movement_rollback_references(conn, ids)}
+
+
+def _clear_movement_rollback_references(conn: Any, movement_ids: list[int]) -> int:
+    if not movement_ids:
+        return 0
+    placeholders = ", ".join("?" for _ in movement_ids)
+    row = conn.execute(
+        f"SELECT COUNT(*) AS n FROM movements WHERE reverted_by_movement_id IN ({placeholders}) AND id NOT IN ({placeholders})",
+        movement_ids + movement_ids,
+    ).fetchone()
+    conn.execute(
+        f"UPDATE movements SET reverted_by_movement_id = NULL WHERE reverted_by_movement_id IN ({placeholders}) AND id NOT IN ({placeholders})",
+        movement_ids + movement_ids,
+    )
+    return int(row["n"] or 0)
+
+
+def _clean_delete_ids(raw_ids: Any) -> list[int]:
+    if isinstance(raw_ids, str):
+        raw_items = [item.strip() for item in raw_ids.replace("，", ",").split(",")]
+    elif isinstance(raw_ids, list):
+        raw_items = raw_ids
+    else:
+        raw_items = []
+    ids: list[int] = []
+    for raw in raw_items:
+        if raw in ("", None):
+            continue
+        try:
+            item_id = int(raw)
+        except (TypeError, ValueError):
+            raise ApiError(400, "记录 ID 必须是整数")
+        if item_id <= 0:
+            raise ApiError(400, "记录 ID 必须大于 0")
+        if item_id not in ids:
+            ids.append(item_id)
+    if len(ids) > 100:
+        raise ApiError(400, "单次最多删除 100 条记录")
+    return ids
+
+
 def _table_names(conn: Any) -> list[str]:
     rows = conn.execute(
         """
@@ -304,9 +405,6 @@ def _import_sheet(conn: Any, table: str, sheet: Any, mode: str) -> dict[str, Any
                 record[col] = timestamp
         if table == "users" and "password_hash" in allowed_columns and not record.get("password_hash"):
             record["password_hash"] = hash_password("123456")
-        if table == "arrivals" and not record.get("storage_node_id"):
-            record["grid_cell"] = None
-            record["location_snapshot"] = record.get("location_snapshot") or "未归位"
         if mode == "append" and "id" in record and "id" in pk_cols:
             record.pop("id", None)
         try:

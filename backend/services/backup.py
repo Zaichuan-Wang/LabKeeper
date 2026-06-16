@@ -19,7 +19,7 @@ logger = get_logger("lab.backup")
 BACKUP_DIR = DB_PATH.parent / "backups"
 BACKUP_NAME_RE = re.compile(r"^lab_inventory[A-Za-z0-9_.-]*\.sqlite3$")
 BACKUP_PARTS_RE = re.compile(r"^lab_inventory_(?P<reason>[A-Za-z0-9_.-]+)_\d{8}_\d{6}\.sqlite3$")
-COUNT_TABLES = ("users", "storage_nodes", "reagents", "clinical_samples", "orders", "arrivals", "validations", "movements")
+COUNT_TABLES = ("users", "storage_nodes", "reagents", "clinical_samples", "validations", "movements")
 DEFAULT_SETTINGS = {
     "enabled": False,
     "interval_hours": 24,

@@ -33,6 +33,7 @@ DEFAULT_DROPDOWN_SETTINGS = {
     "amount_units": ["mL", "uL", "L", "g", "mg", "ug", "ng"],
     "sample_statuses": list(SAMPLE_STATUSES),
     "space_types": ["盒子", "冰箱", "液氮罐", "架子", "其他"],
+    "movement_merge_window_minutes": 30,
 }
 
 FIXED_DROPDOWN_SETTINGS = {
@@ -107,12 +108,15 @@ def clean_options(values: Any) -> list[str]:
     return cleaned
 
 
-def normalize_dropdown_options(data: Any, fallback: dict[str, list[str]] | None = None) -> dict[str, list[str]]:
+def normalize_dropdown_options(data: Any, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
     source = data if isinstance(data, dict) else {}
     base = fallback or DEFAULT_DROPDOWN_SETTINGS
-    clean: dict[str, list[str]] = {}
+    clean: dict[str, Any] = {}
     for key, defaults in DEFAULT_DROPDOWN_SETTINGS.items():
         values = source.get(key, base.get(key, defaults))
+        if key == "movement_merge_window_minutes":
+            clean[key] = clean_movement_merge_window(values)
+            continue
         if key in FIXED_DROPDOWN_SETTINGS:
             required = clean_options(FIXED_DROPDOWN_SETTINGS[key])
             if key == "space_types":
@@ -125,7 +129,15 @@ def normalize_dropdown_options(data: Any, fallback: dict[str, list[str]] | None 
     return clean
 
 
-def load_dropdown_options() -> dict[str, list[str]]:
+def clean_movement_merge_window(value: Any) -> int:
+    try:
+        minutes = int(float(value))
+    except (TypeError, ValueError):
+        minutes = int(DEFAULT_DROPDOWN_SETTINGS["movement_merge_window_minutes"])
+    return max(0, min(minutes, 24 * 60))
+
+
+def load_dropdown_options() -> dict[str, Any]:
     if not OPTIONS_CONFIG_PATH.exists():
         return normalize_dropdown_options({})
     try:
@@ -135,7 +147,7 @@ def load_dropdown_options() -> dict[str, list[str]]:
     return normalize_dropdown_options(saved)
 
 
-def save_dropdown_options(data: Any) -> dict[str, list[str]]:
+def save_dropdown_options(data: Any) -> dict[str, Any]:
     clean = normalize_dropdown_options(data, load_dropdown_options())
     OPTIONS_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = OPTIONS_CONFIG_PATH.with_name(f"{OPTIONS_CONFIG_PATH.name}.tmp")

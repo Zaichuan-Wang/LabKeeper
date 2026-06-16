@@ -17,7 +17,19 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from services.auth import hash_password  # noqa: E402
-from core.constants import PHYSICAL_INVENTORY_STATUSES, PHYSICAL_INVENTORY_STATUS_SQL  # noqa: E402
+from core.constants import (  # noqa: E402
+    MOVEMENT_REASON_ARRIVAL,
+    MOVEMENT_REASON_MOVE,
+    MOVEMENT_REASON_ORDER,
+    MOVEMENT_REASON_REGISTER,
+    PHYSICAL_INVENTORY_STATUSES,
+    PHYSICAL_INVENTORY_STATUS_SQL,
+    SYSTEM_CHECKED_OUT_NODE_ID,
+    SYSTEM_NOT_ARRIVED_NODE_ID,
+    SYSTEM_NOT_ORDERED_NODE_ID,
+    SYSTEM_STORAGE_NODE_LABELS,
+    SYSTEM_UNPLACED_NODE_ID,
+)
 
 BULK_REAGENT_COUNT = 220
 BULK_SAMPLE_GROUP_COUNT = 120
@@ -53,12 +65,13 @@ def remove_sqlite_files(path: Path) -> None:
 def seed(conn: sqlite3.Connection) -> None:
     now = "2026-06-13 09:00:00"
     seed_users(conn, now)
+    seed_system_storage_nodes(conn, now)
     storage_dims = seed_storage(conn, now)
     positions = PositionAllocator(storage_dims)
     reagent_ids = seed_reagents(conn, positions, now)
     sample_ids = seed_samples(conn, positions, now)
-    order_ids = seed_orders(conn, now)
-    seed_arrivals(conn, order_ids, reagent_ids)
+    pending_order_ids = seed_pending_order_reagents(conn, now)
+    seed_arrival_movements(conn, pending_order_ids, reagent_ids, positions)
     seed_validations(conn, now)
     seed_movements(conn, now, reagent_ids, sample_ids)
     seed_audit_logs(conn, now)
@@ -76,6 +89,90 @@ def coord_options(rows: int, cols: int) -> list[str]:
         for col in range(1, cols + 1):
             coords.append(f"{row_label}{col}")
     return coords
+
+
+def next_row_id(conn: sqlite3.Connection, table: str) -> int:
+    row = conn.execute(f"SELECT COALESCE(MAX(id), 0) + 1 FROM {table}").fetchone()
+    return int(row[0])
+
+
+def seed_system_storage_nodes(conn: sqlite3.Connection, now: str) -> None:
+    rows = [
+        (SYSTEM_NOT_ORDERED_NODE_ID, SYSTEM_STORAGE_NODE_LABELS[SYSTEM_NOT_ORDERED_NODE_ID], -100),
+        (SYSTEM_NOT_ARRIVED_NODE_ID, SYSTEM_STORAGE_NODE_LABELS[SYSTEM_NOT_ARRIVED_NODE_ID], -99),
+        (SYSTEM_UNPLACED_NODE_ID, SYSTEM_STORAGE_NODE_LABELS[SYSTEM_UNPLACED_NODE_ID], -98),
+        (SYSTEM_CHECKED_OUT_NODE_ID, SYSTEM_STORAGE_NODE_LABELS[SYSTEM_CHECKED_OUT_NODE_ID], -97),
+    ]
+    conn.executemany(
+        """
+        INSERT INTO storage_nodes
+            (id, parent_id, name, node_type, space_type, location_code, rows, cols, grid_row, grid_col, note, sort_order,
+             created_by, updated_by, created_at, updated_at)
+        VALUES (?, NULL, ?, 'system', 5, ?, NULL, NULL, NULL, NULL, '系统状态节点', ?, NULL, NULL, ?, ?)
+        """,
+        [(node_id, label, label, sort_order, now, now) for node_id, label, sort_order in rows],
+    )
+
+
+def require_position(positions: "PositionAllocator", node_id: int) -> str:
+    position = positions.next(node_id)
+    if position is None:
+        raise RuntimeError(f"Demo storage node {node_id} has no free grid position")
+    return position
+
+
+def movement_object_type(item_type: str) -> str:
+    if item_type == "sample":
+        return "临床标本"
+    if item_type == "space":
+        return "空间"
+    return "试剂"
+
+
+def insert_movement(
+    conn: sqlite3.Connection,
+    *,
+    item_type: str,
+    item_id: int,
+    object_id: str,
+    from_node_id: int,
+    to_node_id: int,
+    moved_by: int,
+    moved_at: str,
+    reason: str,
+    note: str = "",
+    from_grid_cell: str | None = None,
+    to_grid_cell: str | None = None,
+    movement_id: int | None = None,
+) -> int:
+    if movement_id is None:
+        movement_id = next_row_id(conn, "movements")
+    conn.execute(
+        """
+        INSERT INTO movements
+            (id, object_type, object_id, item_type, item_id, from_storage_node_id, from_grid_cell,
+             to_storage_node_id, to_grid_cell, from_location_snapshot, to_location_snapshot, moved_by, moved_at, reason, note)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            movement_id,
+            movement_object_type(item_type),
+            object_id,
+            item_type,
+            item_id,
+            from_node_id,
+            from_grid_cell,
+            to_node_id,
+            to_grid_cell,
+            storage_snapshot(conn, from_node_id, from_grid_cell),
+            storage_snapshot(conn, to_node_id, to_grid_cell),
+            moved_by,
+            moved_at,
+            reason,
+            note,
+        ),
+    )
+    return movement_id
 
 
 class PositionAllocator:
@@ -178,6 +275,7 @@ def seed_storage(conn: sqlite3.Connection, now: str) -> dict[int, tuple[int, int
         (31, 11, "样本格架-004", 1, "SMP-004", 9, 9, 2, 2, "循环生成标本", 50),
         (32, 11, "样本格架-005", 1, "SMP-005", 9, 9, 2, 3, "循环生成标本", 60),
         (33, 7, "样本格架-006", 1, "SMP-006", 9, 9, 1, 3, "循环生成标本", 30),
+        (34, 23, "联动测试周转格架", 4, "LINK-STG", 4, 4, 1, 2, "订单、到货、归位联动测试专用", 20),
     ]
     conn.executemany(
         """
@@ -217,15 +315,20 @@ def seed_reagents(conn: sqlite3.Connection, positions: PositionAllocator, now: s
         for offset in range(count):
             reagent_id = next_id
             code = f"RG{reagent_id:06d}"
-            placed_node_id = storage_node_id if status in PHYSICAL_INVENTORY_STATUSES else None
+            if status == "已耗尽":
+                placed_node_id = SYSTEM_CHECKED_OUT_NODE_ID
+            elif storage_node_id and status in PHYSICAL_INVENTORY_STATUSES:
+                placed_node_id = storage_node_id
+            else:
+                placed_node_id = SYSTEM_UNPLACED_NODE_ID
             position = positions.next(placed_node_id)
             conn.execute(
                 """
                 INSERT INTO reagents
                     (id, code, source_code, aliquot_no, name, category, brand, catalog_no, amount, amount_unit, quantity,
-                     status, storage_node_id, grid_cell, entry_date, expiration_date, validation_status, note,
+                     status, storage_node_id, grid_cell, entry_date, expiration_date, note,
                      created_by, updated_by, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
                 """,
                 (
                     reagent_id,
@@ -244,7 +347,6 @@ def seed_reagents(conn: sqlite3.Connection, positions: PositionAllocator, now: s
                     position,
                     entry_date,
                     expiration_date,
-                    validation_status,
                     f"{note}；分装 {offset + 1}/{count}" if count > 1 else note,
                     stamp(entry_date),
                     now,
@@ -253,6 +355,15 @@ def seed_reagents(conn: sqlite3.Connection, positions: PositionAllocator, now: s
             reagent_ids[code] = reagent_id
             codes.append(code)
             next_id += 1
+        if catalog_no and validation_status and validation_status != "未验证":
+            conn.execute(
+                """
+                INSERT INTO validations
+                    (catalog_no, validator_id, validation_date, method, result, description, image_path, created_at)
+                VALUES (?, 1, ?, 'Demo 记录', ?, ?, '', ?)
+                """,
+                (catalog_no, entry_date, validation_status, f"{note}：由 Demo 试剂状态生成的验证记录。", now),
+            )
         return codes
 
     add("Anti-CD45 抗体", "抗体", "BioLegend", "103101", 100, "uL", 1, "可用", 4, "2026-05-20", "2027-05-20", "通过", "Demo 验证通过抗体", 2)
@@ -376,7 +487,12 @@ def seed_samples(conn: sqlite3.Connection, positions: PositionAllocator, now: st
         for offset in range(count):
             sample_id = next_id
             code = f"SP{sample_id:06d}"
-            placed_node_id = storage_node_id if status in PHYSICAL_INVENTORY_STATUSES else None
+            if status == "已耗尽":
+                placed_node_id = SYSTEM_CHECKED_OUT_NODE_ID
+            elif storage_node_id and status in PHYSICAL_INVENTORY_STATUSES:
+                placed_node_id = storage_node_id
+            else:
+                placed_node_id = SYSTEM_UNPLACED_NODE_ID
             position = positions.next(placed_node_id)
             conn.execute(
                 """
@@ -454,8 +570,8 @@ def seed_samples(conn: sqlite3.Connection, positions: PositionAllocator, now: st
     return sample_ids
 
 
-def seed_orders(conn: sqlite3.Connection, now: str) -> dict[str, int]:
-    orders = [
+def seed_pending_order_reagents(conn: sqlite3.Connection, now: str) -> dict[str, int]:
+    pending_order_rows = [
         ("anti_cd45", 1, "Anti-CD45 抗体", "抗体", "BioLegend", "103101", 100, "uL", 2, "流式面板补货", 3600, "已订购", "2026-05-18 09:00:00", "2026-05-20 09:30:00"),
         ("pbs", 1, "PBS 缓冲液", "缓冲液", "Thermo Fisher", "10010023", 500, "mL", 1, "常规补货", 260, "已订购", "2026-05-28 10:00:00", "2026-06-01 11:00:00"),
         ("anti_cd3", 2, "Anti-CD3e 抗体", "抗体", "BioLegend", "100201", 100, "uL", 1, "T 细胞面板", 1800, "已订购", "2026-05-26 14:30:00", "2026-05-28 11:00:00"),
@@ -472,19 +588,41 @@ def seed_orders(conn: sqlite3.Connection, now: str) -> dict[str, int]:
         ("seahorse", 1, "Seahorse XF Assay Medium", "培养基", "Agilent", "103575-100", 500, "mL", 1, "代谢实验", 980, "已订购", "2026-06-07 16:00:00", now),
         ("old_order", 1, "旧项目抗体", "抗体", "Abcam", "ab-old", 100, "uL", 1, "项目取消", 1600, "停用", "2026-05-01 09:00:00", "2026-05-03 09:00:00"),
     ]
-    order_ids: dict[str, int] = {}
-    for order_id, row in enumerate(orders, start=1):
+    pending_order_ids: dict[str, int] = {}
+    next_id = next_row_id(conn, "reagents")
+    for row in pending_order_rows:
         key, requester_id, name, category, brand, catalog_no, amount, amount_unit, quantity, reason, price, status, created_at, updated_at = row
+        order_id = next_id
+        code = f"RG{order_id:06d}"
+        target_node_id = SYSTEM_NOT_ARRIVED_NODE_ID if status == "已订购" else SYSTEM_NOT_ORDERED_NODE_ID
         conn.execute(
             """
-            INSERT INTO orders
-                (id, requester_id, name, category, brand, catalog_no, amount, amount_unit, quantity, reason, price, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO reagents
+                (id, code, source_code, aliquot_no, name, category, brand, catalog_no, amount, amount_unit, quantity,
+                 price, status, storage_node_id, grid_cell, entry_date, expiration_date, note,
+                 created_by, updated_by, created_at, updated_at)
+            VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '', '', ?,
+                    ?, ?, ?, ?)
             """,
-            (order_id, requester_id, name, category, brand, catalog_no, amount, amount_unit, quantity, reason, price, status, created_at, updated_at),
+            (
+                order_id, code, code, name, category, brand, catalog_no, amount, amount_unit, quantity,
+                price, status, target_node_id, reason, requester_id, requester_id, created_at, updated_at,
+            ),
         )
-        order_ids[key] = order_id
-    next_id = len(orders) + 1
+        insert_movement(
+            conn,
+            item_type="reagent",
+            item_id=order_id,
+            object_id=code,
+            from_node_id=SYSTEM_NOT_ORDERED_NODE_ID,
+            to_node_id=target_node_id,
+            moved_by=requester_id,
+            moved_at=created_at,
+            reason=MOVEMENT_REASON_ORDER,
+            note=reason,
+        )
+        pending_order_ids[key] = order_id
+        next_id += 1
     order_templates = [
         ("Demo 订购抗体", "抗体", "BioLegend", "ORD-AB", 100, "uL", 1, "流式面板备货", 1800),
         ("Demo 订购细胞因子", "细胞因子", "R&D Systems", "ORD-CYT", 10, "ug", 1, "刺激实验备货", 2200),
@@ -498,15 +636,21 @@ def seed_orders(conn: sqlite3.Connection, now: str) -> dict[str, int]:
         status = "停用" if index % 29 == 0 else "已订购"
         created_at = f"2026-06-{(index % 13) + 1:02d} {(8 + index % 9):02d}:{(index * 7) % 60:02d}:00"
         order_id = next_id
+        code = f"RG{order_id:06d}"
+        target_node_id = SYSTEM_NOT_ARRIVED_NODE_ID if status == "已订购" else SYSTEM_NOT_ORDERED_NODE_ID
         conn.execute(
             """
-            INSERT INTO orders
-                (id, requester_id, name, category, brand, catalog_no, amount, amount_unit, quantity, reason, price, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO reagents
+                (id, code, source_code, aliquot_no, name, category, brand, catalog_no, amount, amount_unit, quantity,
+                 price, status, storage_node_id, grid_cell, entry_date, expiration_date, note,
+                 created_by, updated_by, created_at, updated_at)
+            VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '', '', ?,
+                    ?, ?, ?, ?)
             """,
             (
                 order_id,
-                1 + (index % 3),
+                code,
+                code,
                 f"{name} {index}",
                 category,
                 brand,
@@ -514,16 +658,31 @@ def seed_orders(conn: sqlite3.Connection, now: str) -> dict[str, int]:
                 amount,
                 amount_unit,
                 quantity,
-                f"{reason} {index}",
                 price,
                 status,
+                target_node_id,
+                f"{reason} {index}",
+                1 + (index % 3),
+                1 + (index % 3),
                 created_at,
                 now,
             ),
         )
-        order_ids[f"bulk_order_{index:03d}"] = order_id
+        insert_movement(
+            conn,
+            item_type="reagent",
+            item_id=order_id,
+            object_id=code,
+            from_node_id=SYSTEM_NOT_ORDERED_NODE_ID,
+            to_node_id=target_node_id,
+            moved_by=1 + (index % 3),
+            moved_at=created_at,
+            reason=MOVEMENT_REASON_ORDER,
+            note=f"{reason} {index}",
+        )
+        pending_order_ids[f"bulk_order_{index:03d}"] = order_id
         next_id += 1
-    return order_ids
+    return pending_order_ids
 
 
 def storage_snapshot(conn: sqlite3.Connection, node_id: int | None, position: str | None = None) -> str:
@@ -541,54 +700,94 @@ def storage_snapshot(conn: sqlite3.Connection, node_id: int | None, position: st
     return f"{path} / {position}" if position else path
 
 
-def seed_arrivals(conn: sqlite3.Connection, order_ids: dict[str, int], reagent_ids: dict[str, int]) -> None:
-    arrivals = [
-        ("anti_cd45", "2026-05-20", "2027-05-20", "Demo 到货：抗体两支分装"),
-        ("pbs", "2026-06-01", "2026-09-01", "Demo 到货：短期缓冲液"),
-        ("anti_cd3", "2026-05-28", "2026-07-01", "Demo 到货：即将到期抗体"),
-        ("gmcsf", "2026-05-16", "2027-05-16", "Demo 到货：细胞因子两管"),
-        ("il5_elisa", "2026-05-18", "2026-11-18", "Demo 到货：ELISA 试剂盒"),
-        ("plates", "2026-05-24", None, "Demo 到货：耗材"),
-        ("dapi", "2026-06-05", "2027-06-05", "Demo 到货：染料"),
-        ("rna_kit", "2026-04-30", "2026-10-30", "Demo 到货：分子试剂盒"),
+def seed_arrival_movements(conn: sqlite3.Connection, pending_order_ids: dict[str, int], reagent_ids: dict[str, int], positions: PositionAllocator) -> None:
+    arrival_rows = [
+        ("anti_cd45", 4, "2026-05-20", "2027-05-20", "Demo 到货：抗体两支分装"),
+        ("pbs", 15, "2026-06-01", "2026-09-01", "Demo 到货：短期缓冲液"),
+        ("anti_cd3", 4, "2026-05-28", "2026-07-01", "Demo 到货：即将到期抗体"),
+        ("gmcsf", 6, "2026-05-16", "2027-05-16", "Demo 到货：细胞因子两管"),
+        ("il5_elisa", 20, "2026-05-18", "2026-11-18", "Demo 到货：ELISA 试剂盒"),
+        ("plates", 19, "2026-05-24", None, "Demo 到货：耗材"),
+        ("dapi", 16, "2026-06-05", "2027-06-05", "Demo 到货：染料"),
+        ("rna_kit", 20, "2026-04-30", "2026-10-30", "Demo 到货：分子试剂盒"),
     ]
-    for order_key, entry_date, expiration_date, note in arrivals:
-        order = conn.execute("SELECT * FROM orders WHERE id = ?", (order_ids[order_key],)).fetchone()
+    for order_key, storage_node_id, entry_date, expiration_date, note in arrival_rows:
+        order = conn.execute("SELECT * FROM reagents WHERE id = ?", (pending_order_ids[order_key],)).fetchone()
         if order is None:
             continue
-        reagent_rows = conn.execute(
-            """
-            SELECT id, storage_node_id, grid_cell
-            FROM reagents
-            WHERE catalog_no = ?
-            ORDER BY id
-            LIMIT ?
-            """,
-            (order["catalog_no"], int(order["quantity"] or 1)),
-        ).fetchall()
-        for item in reagent_rows:
-            reagent_id = int(item["id"])
+        source_code = str(order["source_code"] or order["code"])
+        arrival_count = int(float(order["quantity"] or 1))
+        for offset in range(arrival_count):
+            aliquot_no = offset + 1 if arrival_count > 1 else None
+            if offset == 0:
+                reagent_id = int(order["id"])
+                code = str(order["code"])
+                conn.execute(
+                    """
+                    UPDATE reagents
+                    SET source_code = ?, aliquot_no = ?, quantity = 1, status = '可用',
+                        storage_node_id = ?, grid_cell = ?, entry_date = ?, expiration_date = ?,
+                        note = ?, updated_by = 1, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        source_code,
+                        aliquot_no,
+                        storage_node_id,
+                        positions.next(storage_node_id),
+                        entry_date,
+                        expiration_date,
+                        note,
+                        stamp(entry_date, "10:00:00"),
+                        reagent_id,
+                    ),
+                )
+            else:
+                reagent_id = next_row_id(conn, "reagents")
+                code = f"RG{reagent_id:06d}"
+                conn.execute(
+                    """
+                    INSERT INTO reagents
+                        (id, code, source_code, aliquot_no, name, category, brand, catalog_no, amount, amount_unit, quantity,
+                         price, status, storage_node_id, grid_cell, entry_date, expiration_date, note,
+                         created_by, updated_by, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, '可用', ?, ?, ?, ?, ?,
+                            1, 1, ?, ?)
+                    """,
+                    (
+                        reagent_id,
+                        code,
+                        source_code,
+                        aliquot_no,
+                        order["name"],
+                        order["category"],
+                        order["brand"],
+                        order["catalog_no"],
+                        order["amount"],
+                        order["amount_unit"],
+                        order["price"],
+                        storage_node_id,
+                        positions.next(storage_node_id),
+                        entry_date,
+                        expiration_date,
+                        note,
+                        stamp(entry_date, "10:00:00"),
+                        stamp(entry_date, "10:00:00"),
+                    ),
+                )
             item = conn.execute("SELECT storage_node_id, grid_cell FROM reagents WHERE id = ?", (reagent_id,)).fetchone()
-            node_id = item["storage_node_id"] if item else None
-            position = item["grid_cell"] if item else None
-            conn.execute(
-                """
-                INSERT INTO arrivals
-                    (order_id, item_type, item_id, entry_date, received_by, storage_node_id, grid_cell,
-                     location_snapshot, expiration_date, note, created_at)
-                VALUES (?, 'reagent', ?, ?, 1, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    order_ids[order_key],
-                    reagent_id,
-                    entry_date,
-                    node_id,
-                    position,
-                    storage_snapshot(conn, node_id, position),
-                    expiration_date,
-                    note,
-                    stamp(entry_date, "10:00:00"),
-                ),
+            insert_movement(
+                conn,
+                item_type="reagent",
+                item_id=reagent_id,
+                object_id=code,
+                from_node_id=SYSTEM_NOT_ARRIVED_NODE_ID,
+                to_node_id=int(item["storage_node_id"]),
+                to_grid_cell=item["grid_cell"],
+                moved_by=1,
+                moved_at=stamp(entry_date, "10:00:00"),
+                reason=MOVEMENT_REASON_ARRIVAL,
+                note=note,
             )
 
 
@@ -608,15 +807,15 @@ def seed_validations(conn: sqlite3.Connection, now: str) -> None:
         ("11141ES60", 1, "2026-05-03", "qPCR", "通过", "反转录效率合格。"),
         ("556419", 2, "2026-06-01", "流式", "待复核", "Annexin V-FITC 临近效期。"),
     ]
-    for validation_id, row in enumerate(validations, start=1):
+    for row in validations:
         catalog_no, validator_id, validation_date, method, result, description = row
         conn.execute(
             """
             INSERT INTO validations
-                (id, catalog_no, validator_id, validation_date, method, result, description, image_path, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, '', ?)
+                (catalog_no, validator_id, validation_date, method, result, description, image_path, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, '', ?)
             """,
-            (validation_id, catalog_no, validator_id, validation_date, method, result, description, now),
+            (catalog_no, validator_id, validation_date, method, result, description, now),
         )
 
 
@@ -626,7 +825,7 @@ def seed_movements(
     reagent_ids: dict[str, int],
     sample_ids: dict[str, int],
 ) -> None:
-    movement_id = 1
+    movement_id = next_row_id(conn, "movements")
 
     def add_movement(item_type: str, item_id: int, moved_at: str, reason: str, note: str = "") -> None:
         nonlocal movement_id
@@ -634,54 +833,51 @@ def seed_movements(
         item = conn.execute(f"SELECT storage_node_id, grid_cell FROM {table} WHERE id = ?", (item_id,)).fetchone()
         if item is None or not item["storage_node_id"]:
             return
-        conn.execute(
-            """
-            INSERT INTO movements
-                (id, object_type, object_id, item_type, item_id, from_storage_node_id, from_grid_cell,
-                 to_storage_node_id, to_grid_cell, from_location_snapshot, to_location_snapshot, moved_by, moved_at, reason, note)
-            VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, '未归位', ?, 1, ?, ?, ?)
-            """,
-            (
-                movement_id,
-                item_type,
-                str(item_id),
-                item_type,
-                item_id,
-                item["storage_node_id"],
-                item["grid_cell"],
-                storage_snapshot(conn, item["storage_node_id"], item["grid_cell"]),
-                moved_at,
-                reason,
-                note,
-            ),
+        insert_movement(
+            conn,
+            item_type=item_type,
+            item_id=item_id,
+            object_id=str(item_id),
+            from_node_id=SYSTEM_UNPLACED_NODE_ID if item_type == "sample" else SYSTEM_NOT_ORDERED_NODE_ID,
+            to_node_id=int(item["storage_node_id"]),
+            to_grid_cell=item["grid_cell"],
+            moved_by=1,
+            moved_at=moved_at,
+            reason=reason,
+            note=note,
+            movement_id=movement_id,
         )
         movement_id += 1
 
     reagent_rows = conn.execute(
         f"""
         SELECT id, entry_date FROM reagents
-        WHERE storage_node_id IS NOT NULL AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
+        WHERE storage_node_id IS NOT NULL
+          AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
+          AND id NOT IN (SELECT item_id FROM movements WHERE item_type = 'reagent' AND item_id IS NOT NULL)
         ORDER BY id
         """
     ).fetchall()
     for row in reagent_rows:
-        add_movement("reagent", int(row["id"]), stamp(row["entry_date"], "10:30:00"), "Demo 入库", "随 Demo 数据自动生成")
+        add_movement("reagent", int(row["id"]), stamp(row["entry_date"], "10:30:00"), MOVEMENT_REASON_REGISTER, "随 Demo 数据自动生成")
 
     sample_rows = conn.execute(
         f"""
         SELECT id, entry_date FROM clinical_samples
-        WHERE storage_node_id IS NOT NULL AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
+        WHERE storage_node_id IS NOT NULL
+          AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
+          AND id NOT IN (SELECT item_id FROM movements WHERE item_type = 'sample' AND item_id IS NOT NULL)
         ORDER BY id
         """
     ).fetchall()
     for row in sample_rows:
-        add_movement("sample", int(row["id"]), stamp(row["entry_date"], "11:00:00"), "Demo 标本入库", "随 Demo 数据自动生成")
+        add_movement("sample", int(row["id"]), stamp(row["entry_date"], "11:00:00"), MOVEMENT_REASON_REGISTER, "随 Demo 数据自动生成")
 
     # 额外保留几条高频操作记录，便于演示流转记录和详情页。
     extra_moves = [
-        ("reagent", reagent_ids["RG000004"], "2026-06-03 16:20:00", "整理抗体格架", "从前排格位调整到当前位置"),
-        ("reagent", reagent_ids["RG000048"], "2026-06-13 09:30:00", "新到货待归位", "暂未分配位置，特殊关注中可见"),
-        ("sample", sample_ids["SP000040"], "2026-06-13 10:00:00", "新样本待归位", "暂存在待处理区外，未分配格位"),
+        ("reagent", reagent_ids["RG000004"], "2026-06-03 16:20:00", MOVEMENT_REASON_MOVE, "整理抗体格架"),
+        ("reagent", reagent_ids["RG000048"], "2026-06-13 09:30:00", MOVEMENT_REASON_MOVE, "新到货待归位"),
+        ("sample", sample_ids["SP000040"], "2026-06-13 10:00:00", MOVEMENT_REASON_MOVE, "新样本待归位"),
     ]
     for item_type, item_id, moved_at, reason, note in extra_moves:
         add_movement(item_type, item_id, moved_at, reason, note)
@@ -691,7 +887,7 @@ def seed_audit_logs(conn: sqlite3.Connection, now: str) -> None:
     conn.execute(
         """
         INSERT INTO audit_logs (user_id, action, target_table, target_id, new_value, created_at)
-        VALUES (1, 'dev_seed_demo_database', 'database', NULL, '{"source":"dev_tools/build_demo_db.py","profile":"expanded"}', ?)
+        VALUES (1, 'dev_seed_demo_database', 'database', NULL, '{"source":"dev_tools/build_demo_db.py","profile":"demo"}', ?)
         """,
         (now,),
     )
@@ -701,6 +897,9 @@ def assert_integrity(conn: sqlite3.Connection) -> None:
     row = conn.execute("PRAGMA integrity_check").fetchone()
     if not row or row[0] != "ok":
         raise RuntimeError("Demo database integrity check failed")
+    foreign_key_errors = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if foreign_key_errors:
+        raise RuntimeError(f"Demo database foreign key check failed: {foreign_key_errors[:5]}")
 
 
 if __name__ == "__main__":

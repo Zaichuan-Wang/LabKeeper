@@ -42,10 +42,6 @@ class OrderCreateRequest(ApiRequest):
     reason: str = ""
 
 
-class OrderUpdateRequest(ApiRequest):
-    status: Literal["已订购", "停用"]
-
-
 class ArrivalCreateRequest(ApiRequest):
     order_id: int
     entry_date: str = ""
@@ -73,6 +69,15 @@ class ValidationCreateRequest(ApiRequest):
     image_path: str = ""
 
 
+class ValidationUpdateRequest(ApiRequest):
+    catalog_no: str | None = None
+    validation_date: str | None = None
+    method: str | None = None
+    result: str | None = None
+    description: str | None = None
+    image_path: str | None = None
+
+
 class StorageTargetRequest(ApiRequest):
     storage_node_id: OptionalInt = None
     grid_cell: str = ""
@@ -89,12 +94,12 @@ class InventoryItemCreateRequest(StorageTargetRequest):
     amount: OptionalFloat = None
     amount_unit: str = ""
     quantity: OptionalFloat = None
+    price: OptionalFloat = None
     tube_count: OptionalInt = 1
     separate_items: bool = True
     status: str = ""
     entry_date: str = ""
     expiration_date: str = ""
-    validation_status: str = ""
     note: str = ""
 
 
@@ -108,10 +113,10 @@ class InventoryItemUpdateRequest(StorageTargetRequest):
     amount: OptionalFloat = None
     amount_unit: str | None = None
     quantity: OptionalFloat = None
+    price: OptionalFloat = None
     status: str | None = None
     entry_date: str | None = None
     expiration_date: str | None = None
-    validation_status: str | None = None
     note: str | None = None
     storage_node_id: OptionalInt = Field(default=None)
     grid_cell: str | None = None
@@ -171,16 +176,17 @@ class StorageNodeUpdateRequest(ApiRequest):
 
 
 class DropdownSettingsRequest(ApiRequest):
-    categories: list[str]
-    brands: list[str]
-    reagent_statuses: list[str]
-    validation_statuses: list[str]
-    validation_methods: list[str]
-    sample_prefixes: list[str]
-    sample_names: list[str]
-    amount_units: list[str]
-    sample_statuses: list[str]
-    space_types: list[str]
+    categories: list[str] | None = None
+    brands: list[str] | None = None
+    reagent_statuses: list[str] | None = None
+    validation_statuses: list[str] | None = None
+    validation_methods: list[str] | None = None
+    sample_prefixes: list[str] | None = None
+    sample_names: list[str] | None = None
+    amount_units: list[str] | None = None
+    sample_statuses: list[str] | None = None
+    space_types: list[str] | None = None
+    movement_merge_window_minutes: OptionalInt = None
 
 
 class UserCreateRequest(ApiRequest):
@@ -228,7 +234,12 @@ class BulkExcelParseRequest(ApiRequest):
 
 
 class BulkOperationRequest(ApiRequest):
-    operation: Literal["import", "edit", "move", "checkout"] = "import"
+    operation: Literal["import", "edit", "move", "checkout", "validation"] = "import"
     item_type: Literal["sample", "reagent"] = "reagent"
-    mode: Literal["insert", "update", "upsert"] = "upsert"
+    mode: Literal["insert", "update", "upsert"] = "insert"
     rows: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AdminDeleteRecordRequest(ApiRequest):
+    table: Literal["reagents", "clinical_samples", "validations", "movements"] = "validations"
+    ids: list[int] = Field(default_factory=list)

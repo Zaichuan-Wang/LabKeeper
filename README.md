@@ -2,6 +2,8 @@
 
 LabKeeper 是一个给实验室、课题组或小型平台使用的库存管理系统。它用浏览器操作，不需要安装数据库服务器；数据保存在一个 SQLite 文件里，方便备份、搬迁和在低性能服务器上部署。
 
+系统会把订购、到货、移动和出库统一记进流转记录，便于追溯；未订购、未到货、未归位和已出库则用系统位置节点表示。
+
 LabKeeper is a lightweight inventory management system for laboratories, research groups, and small core facilities. It runs in a browser, requires no database server, and stores data in a SQLite file for easy backup, migration, and deployment on low-resource servers.
 
 说明：英文版仍在开发中，当前界面和文档以中文为主。
@@ -196,7 +198,7 @@ python backend/server.py --compact
 
 ## 备份
 
-管理员可在系统的“管理员 > 数据库备份”里创建、下载和清理备份。
+管理员可在系统的“系统管理 > 系统维护”里创建、下载和清理备份。
 
 建议在这些操作前备份：
 
@@ -229,7 +231,7 @@ tests/         自动化测试
 USER_MANUAL.md
 ```
 
-建议先阅读其中的“日常使用流程”“库存空间”“管理员功能”和“常见问题”。
+建议先阅读其中的“日常使用流程”“库存空间”“系统管理”和“常见问题”。
 
 ## 给维护人员
 

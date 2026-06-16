@@ -24,12 +24,12 @@ CREATE TABLE IF NOT EXISTS reagents (
     amount REAL,
     amount_unit TEXT NOT NULL DEFAULT '',
     quantity REAL NOT NULL DEFAULT 0,
+    price REAL,
     status TEXT NOT NULL DEFAULT '可用',
-    storage_node_id INTEGER,
+    storage_node_id INTEGER NOT NULL DEFAULT -3,
     grid_cell TEXT,
     entry_date TEXT,
     expiration_date TEXT,
-    validation_status TEXT NOT NULL DEFAULT '未验证',
     note TEXT,
     created_by INTEGER,
     updated_by INTEGER,
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS clinical_samples (
     amount_unit TEXT NOT NULL DEFAULT '',
     quantity REAL NOT NULL DEFAULT 1,
     status TEXT NOT NULL DEFAULT '可用',
-    storage_node_id INTEGER,
+    storage_node_id INTEGER NOT NULL DEFAULT -3,
     grid_cell TEXT,
     entry_date TEXT,
     expiration_date TEXT,
@@ -86,43 +86,6 @@ CREATE TABLE IF NOT EXISTS storage_nodes (
     FOREIGN KEY (parent_id) REFERENCES storage_nodes(id) ON DELETE CASCADE,
     FOREIGN KEY (created_by) REFERENCES users(id),
     FOREIGN KEY (updated_by) REFERENCES users(id)
-);
-
-CREATE TABLE IF NOT EXISTS orders (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    requester_id INTEGER,
-    name TEXT NOT NULL,
-    category TEXT,
-    brand TEXT,
-    catalog_no TEXT,
-    amount REAL,
-    amount_unit TEXT NOT NULL DEFAULT '',
-    quantity REAL NOT NULL DEFAULT 1,
-    reason TEXT,
-    price REAL,
-    status TEXT NOT NULL DEFAULT '已订购',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY (requester_id) REFERENCES users(id)
-);
-
-CREATE TABLE IF NOT EXISTS arrivals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    order_id INTEGER,
-    item_type TEXT NOT NULL DEFAULT 'reagent',
-    item_id INTEGER NOT NULL,
-    entry_date TEXT NOT NULL,
-    received_by INTEGER,
-    storage_node_id INTEGER,
-    grid_cell TEXT,
-    location_snapshot TEXT,
-    expiration_date TEXT,
-    note TEXT,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (order_id) REFERENCES orders(id),
-    FOREIGN KEY (item_id) REFERENCES reagents(id),
-    FOREIGN KEY (storage_node_id) REFERENCES storage_nodes(id),
-    FOREIGN KEY (received_by) REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS validations (

@@ -177,20 +177,15 @@ function syncUserPermissionFields() {
 const SETTINGS_GROUPS = [
   { key: 'categories', title: '试剂类型', scope: '试剂登记', note: '用于订购、入库和筛选。' },
   { key: 'brands', title: '品牌/厂家', scope: '试剂登记', note: '用于订购和新建试剂时快速选择常用品牌，也可以临时手动输入。' },
-  { key: 'reagent_statuses', title: '试剂状态', scope: '库存状态', fixed: true, note: '内置状态用于判断是否占位、是否到货和是否耗尽，不能删除或改名；可按实验室习惯添加新状态。' },
-  { key: 'validation_statuses', title: '验证状态', scope: '验证登记', fixed: true, note: '内置状态用于验证结果和待办统计，不能删除或改名；可添加补充状态。' },
   { key: 'validation_methods', title: '验证方法', scope: '验证登记', note: '用于记录实验验证方式。' },
   { key: 'sample_prefixes', title: '样本号前缀', scope: '临床标本', note: '用于登记时快速拼接样本号，例如 SMP；表单里可选择建议项，也可以临时手动输入。' },
   { key: 'sample_names', title: '样本类型', scope: '临床标本', note: '用于临床标本入库和筛选，例如血清、组织、灌洗液。' },
   { key: 'amount_units', title: '规格单位', scope: '试剂/标本', note: '用于规格量的常用单位，也可以在表单里临时手动输入。' },
-  { key: 'sample_statuses', title: '标本状态', scope: '临床标本', fixed: true, note: '内置状态用于判断标本是否占位和是否耗尽，不能删除或改名；可按实验室习惯添加新状态。' },
   { key: 'space_types', title: '空间类型', scope: '库存空间', fixed: true, kind: 'space-types', note: '固定 5 类；前四个名称可以改，第五个固定为其他。' },
+  { key: 'movement_merge_window_minutes', title: '移动记录合并窗口', scope: '流转记录', kind: 'number', unit: '分钟', min: 0, max: 1440, note: '同一对象在窗口内连续移动会合并；0 表示不合并。订购和到货仍保持独立记录。' },
 ];
 
 const FIXED_OPTION_VALUES = {
-  reagent_statuses: [STATUS_ORDERED, STATUS_AVAILABLE, STATUS_DISABLED, STATUS_CONSUMED],
-  validation_statuses: [VALIDATION_UNVERIFIED, '通过', '不通过', '待复核'],
-  sample_statuses: [STATUS_AVAILABLE, STATUS_DISABLED, STATUS_CONSUMED],
   space_types: ['其他'],
 };
 
@@ -200,20 +195,25 @@ function fillSettingsForms() {
   if (!container) return;
   $('settingsGroupCount').textContent = `${SETTINGS_GROUPS.length} 组`;
   container.innerHTML = SETTINGS_GROUPS.map(group => {
-    const values = group.kind === 'space-types' ? currentSpaceTypes() : (state.options[group.key] || []);
-    const itemCount = group.kind === 'space-types'
+    const isNumber = group.kind === 'number';
+    const values = group.kind === 'space-types' ? currentSpaceTypes() : (isNumber ? Number(state.options[group.key] ?? 0) : (state.options[group.key] || []));
+    const itemCount = isNumber
+      ? `${values} ${group.unit || ''}`.trim()
+      : group.kind === 'space-types'
       ? values.filter((value, index) => index === 4 || value).length
       : values.length;
     const fixed = Boolean(group.fixed);
     const isSpaceTypes = group.kind === 'space-types';
     return `
-      <article class="settings-card${fixed ? ' fixed-settings-card' : ''}${isSpaceTypes ? ' space-type-settings-card' : ''}" data-settings-key="${esc(group.key)}" data-settings-fixed="${fixed ? '1' : '0'}">
+      <article class="settings-card${fixed ? ' fixed-settings-card' : ''}${isSpaceTypes ? ' space-type-settings-card' : ''}${isNumber ? ' numeric-settings-card' : ''}" data-settings-key="${esc(group.key)}" data-settings-kind="${esc(group.kind || 'options')}" data-settings-fixed="${fixed ? '1' : '0'}">
         <div class="settings-card-head">
-          <div><h4>${esc(group.title)}</h4><span>${esc(group.scope)} · <b data-settings-count>${itemCount}</b> 项${fixed ? ' · 含内置项' : ''}</span></div>
+          <div><h4>${esc(group.title)}</h4><span>${esc(group.scope)} · <b data-settings-count>${esc(itemCount)}</b>${isNumber ? '' : ' 项'}${fixed ? ' · 含内置项' : ''}</span></div>
         </div>
         <p class="settings-note">${esc(group.note)}</p>
         ${isSpaceTypes
           ? renderSpaceTypeEditor(values)
+          : isNumber
+            ? renderNumberSetting(group, values)
           : `<div class="settings-options">${values.map(value => renderSettingsChip(value, { fixed: isFixedOption(group.key, value) })).join('') || '<span class="settings-empty">暂无选项</span>'}</div>
         <div class="settings-add-row">
           <input data-settings-input="${esc(group.key)}" placeholder="输入新选项" autocomplete="off" />
@@ -222,6 +222,15 @@ function fillSettingsForms() {
       </article>
     `;
   }).join('');
+}
+
+function renderNumberSetting(group, value) {
+  return `
+    <label class="number-setting-row">
+      <input type="number" data-settings-number="${esc(group.key)}" value="${esc(value)}" min="${esc(group.min ?? 0)}" max="${esc(group.max ?? '')}" step="1" />
+      <span>${esc(group.unit || '')}</span>
+    </label>
+  `;
 }
 
 function renderSpaceTypeEditor(values) {
@@ -252,6 +261,13 @@ function settingsValuesFor(card) {
   if (card.dataset.settingsKey === 'space_types') {
     return normalizeSpaceTypeSettings([...card.querySelectorAll('[data-space-type-slot]')].map(input => input.value));
   }
+  if (card.dataset.settingsKind === 'number') {
+    const input = card.querySelector('[data-settings-number]');
+    const value = Number(input?.value || 0);
+    const min = Number(input?.min || 0);
+    const max = input?.max === '' ? Number.POSITIVE_INFINITY : Number(input?.max || Number.POSITIVE_INFINITY);
+    return Math.min(Math.max(Number.isFinite(value) ? value : min, min), max);
+  }
   return [...card.querySelectorAll('.option-chip')].map(chip => chip.dataset.value).filter(Boolean);
 }
 
@@ -259,7 +275,9 @@ function refreshSettingsCard(card) {
   const count = card.querySelector('[data-settings-count]');
   if (count) {
     const values = settingsValuesFor(card);
-    count.textContent = card.dataset.settingsKey === 'space_types'
+    count.textContent = card.dataset.settingsKind === 'number'
+      ? `${values} 分钟`
+      : card.dataset.settingsKey === 'space_types'
       ? values.filter((value, index) => index === 4 || value).length
       : values.length;
   }
@@ -308,6 +326,9 @@ function settingsPayload() {
       const values = card ? [...card.querySelectorAll('[data-space-type-slot]')].map(input => input.value) : (state.options[group.key] || []);
       return [group.key, spaceTypePayload(values)];
     }
+    if (group.kind === 'number') {
+      return [group.key, card ? settingsValuesFor(card) : Number(state.options[group.key] || 0)];
+    }
     return [group.key, card ? settingsValuesFor(card) : state.options[group.key] || []];
   }));
 }
@@ -344,6 +365,34 @@ async function submitExcelImport(e) {
   $('excelImportResult').innerHTML = `${backupText}${miniRows(result.items, ['table', 'sheet', 'success', 'inserted', 'updated', 'failed'])}`;
   toast('导入完成');
   await loadExcel();
+}
+
+async function submitRecordDelete(e) {
+  e.preventDefault();
+  const form = e.currentTarget;
+  const data = formData(form);
+  const ids = String(data.ids || '').split(/[,\s，]+/).map(item => item.trim()).filter(Boolean);
+  if (!ids.length) throw new Error('请填写要删除的记录 ID');
+  const tableLabel = form.elements.table.selectedOptions[0]?.textContent || data.table;
+  if (!confirm(`确认删除 ${tableLabel} 中的 ${ids.length} 条记录？\nID：${ids.join(', ')}\n\n系统会先自动备份数据库，但删除会改变历史记录，请只在确认为误录或迁移修复时继续。`)) return;
+  const result = await api('/api/admin/records/delete', {
+    method: 'POST',
+    body: JSON.stringify({ table: data.table, ids }),
+  });
+  const backupText = result.backup
+    ? `<p class="form-note">删除前已自动备份：${esc(result.backup.filename)}，完整性：${esc(result.backup.integrity_check)}</p>`
+    : '';
+  const movementRefs = result.cleared_refs?.movement_refs || 0;
+  const rollbackRefs = result.cleared_refs?.movement_rollback_refs || 0;
+  const refsText = movementRefs || rollbackRefs
+    ? `<p class="form-note">${movementRefs ? `已删除关联移动记录：${esc(movementRefs)} 条。` : ''}${rollbackRefs ? `已清理移动回滚引用：${esc(rollbackRefs)} 条。` : ''}</p>`
+    : '';
+  $('recordDeleteResult').innerHTML = `${backupText}${refsText}${miniRows([{ table: result.label || result.table, count: result.count, ids: (result.ids || []).join(', ') }], ['table', 'count', 'ids'])}`;
+  form.elements.ids.value = '';
+  toast(`已删除 ${result.count || 0} 条记录`);
+  if (state.historyTab === 'validations' && data.table === 'validations') await loadValidationsHistory();
+  if (state.historyTab === 'movements' && ['reagents', 'clinical_samples', 'movements'].includes(data.table)) await loadMovementsHistory();
+  await loadBackups();
 }
 
 async function submitBackup(e) {

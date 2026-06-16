@@ -33,9 +33,7 @@ def inventory_search_route(request: Request, user: dict[str, Any] = Depends(requ
         require_permission(user, "inventory.search")
     elif purpose == "movement":
         require_permission(user, "location.manage")
-    elif purpose == "aliquot":
-        require_permission(user, "inventory.manage")
-    elif purpose == "checkout":
+    elif purpose in {"aliquot", "checkout"}:
         pass
     else:
         raise ApiError(400, "库存搜索用途不正确")
@@ -53,7 +51,6 @@ def catalog_conflicts(request: Request, _: dict[str, Any] = Depends(require_user
 
 @router.post("/inventory/items")
 def create_inventory_item(data: InventoryItemCreateRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
-    require_permission(user, "inventory.manage")
     return json_response(inventory.create_item(data.payload(), user), 201)
 
 
@@ -80,7 +77,6 @@ def update_inventory_item(request: Request, data: InventoryItemUpdateRequest, us
 
 @router.post("/aliquots")
 def create_aliquots(data: AliquotCreateRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
-    require_permission(user, "inventory.manage")
     payload = data.payload()
     if data.item_type == "sample":
         return json_response(clinical_samples.create_aliquots(payload, user), 201)

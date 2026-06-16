@@ -41,6 +41,38 @@ def test_save_dropdown_options_persists_required_and_custom_status_options(monke
 
     persisted = json.loads(options_path.read_text(encoding="utf-8-sig"))
     assert persisted["reagent_statuses"] == ["已订购", "可用", "停用", "已耗尽", "Available"]
+    assert persisted["movement_merge_window_minutes"] == 30
+
+
+def test_movement_merge_window_is_numeric_and_clamped():
+    assert options_config.normalize_dropdown_options({"movement_merge_window_minutes": "45"})["movement_merge_window_minutes"] == 45
+    assert options_config.normalize_dropdown_options({"movement_merge_window_minutes": "-5"})["movement_merge_window_minutes"] == 0
+    assert options_config.normalize_dropdown_options({"movement_merge_window_minutes": "9999"})["movement_merge_window_minutes"] == 1440
+    assert options_config.normalize_dropdown_options({"movement_merge_window_minutes": "bad"})["movement_merge_window_minutes"] == 30
+
+
+def test_save_dropdown_options_preserves_hidden_status_groups(monkeypatch, tmp_path):
+    options_path = tmp_path / "dropdown_options.json"
+    monkeypatch.setattr(options_config, "OPTIONS_CONFIG_PATH", options_path)
+    options_path.write_text(json.dumps({
+        "reagent_statuses": ["已订购", "可用", "停用", "已耗尽", "借出"],
+        "validation_statuses": ["未验证", "通过", "不通过", "待复核", "外送"],
+        "sample_statuses": ["可用", "停用", "已耗尽", "待处理"],
+    }, ensure_ascii=False), encoding="utf-8-sig")
+
+    saved = options_config.save_dropdown_options({
+        "categories": ["抗体"],
+        "brands": ["TestBrand"],
+        "validation_methods": ["WB"],
+        "sample_prefixes": ["SMP"],
+        "sample_names": ["血清"],
+        "amount_units": ["mL"],
+        "space_types": ["冷冻盒", "冰箱", "", "", "其他"],
+    })
+
+    assert saved["reagent_statuses"] == ["已订购", "可用", "停用", "已耗尽", "借出"]
+    assert saved["validation_statuses"] == ["未验证", "通过", "不通过", "待复核", "外送"]
+    assert saved["sample_statuses"] == ["可用", "停用", "已耗尽", "待处理"]
 
 
 def test_space_type_options_are_limited_to_four_editable_slots_plus_other():

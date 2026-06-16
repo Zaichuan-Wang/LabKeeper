@@ -11,10 +11,11 @@ function setLoggedIn(isLoggedIn) {
     if (!isLoggedIn) return false;
     if (form.id === 'loginForm') return true;
     if (form.closest('#admin')) return isAdmin();
-    if (['reagentForm', 'sampleEditForm'].includes(form.id)) return canManageInventory();
+    if (form.id === 'reagentForm') return true;
+    if (form.id === 'reagentEditForm') return canManageInventory();
+    if (form.id === 'sampleEditForm') return canManageInventory();
     if (form.id === 'bulkForm') return canManageInventory();
-    if (form.id === 'sampleForm') return state.registrationTab === 'samples' ? true : canManageInventory();
-    if (form.id === 'aliquotForm') return canManageInventory();
+    if (['sampleForm', 'aliquotForm'].includes(form.id)) return true;
     if (['nodeForm', 'movementForm'].includes(form.id)) return canManageLocation();
     return true;
   };
@@ -103,7 +104,8 @@ function canUseInventoryTab(tab) {
 }
 
 function canUseRegistrationTab(tab) {
-  if (tab === 'samples' || tab === 'aliquots') return canManageInventory();
+  if (tab === 'reagents') return true;
+  if (tab === 'samples' || tab === 'aliquots') return true;
   return true;
 }
 
@@ -115,7 +117,7 @@ function setWorkbenchTab(scope, tab, shouldLoad = true) {
   if (scope === 'history') state.historyTab = tab;
   if (scope === 'admin') state.adminTab = tab;
   if (scope === 'expiration') state.expirationTab = tab;
-  document.querySelectorAll(`.tab-btn[data-tab-scope="${scope}"], #${scope} .tab-btn:not([data-tab-scope])`).forEach(btn => {
+  document.querySelectorAll(`.tab-btn[data-tab-scope="${scope}"], #${scope} .tab-btn[data-tab]:not([data-tab-scope])`).forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tab === tab);
     btn.setAttribute('aria-selected', btn.dataset.tab === tab ? 'true' : 'false');
   });
@@ -168,7 +170,7 @@ async function loadDashboard() {
   const m = data.metrics;
   const metrics = [
     ['全部库存', m.total_inventory],
-    ['试剂/耗材', m.total_reagents],
+    ['试剂', m.total_reagents],
     ['临床标本', m.total_samples],
     ['未归位', m.unplaced_inventory],
     ['待验证/复核', m.todo_validations],
@@ -229,7 +231,7 @@ async function confirmCatalogNameConflict({ catalogNo, name, excludeId = '' }) {
   const result = await api(`/api/inventory/catalog-conflicts?${params}`);
   if (!result.has_conflict) return true;
   const examples = result.items.slice(0, 5).map(item => `- ${item.code || item.id}：${item.name}`).join('\n');
-  return confirm(`货号“${catalog}”已有不同名称的试剂/耗材。\n验证记录按货号关联，继续保存可能把验证记录关联到不同名称。\n\n已有记录：\n${examples}\n\n确定继续？`);
+  return confirm(`货号“${catalog}”已有不同名称的试剂。\n验证记录按货号关联，继续保存可能把验证记录关联到不同名称。\n\n已有记录：\n${examples}\n\n确定继续？`);
 }
 
 async function loadCurrentView() {
@@ -376,7 +378,7 @@ function wireEvents() {
     if (reagent?.catalog_no) e.currentTarget.form.elements.catalog_no.value = reagent.catalog_no;
   });
   $('validationForm').addEventListener('submit', guard(submitValidation));
-  $('newReagentBtn').addEventListener('click', () => void startNewReagent());
+  $('cancelValidationEditBtn').addEventListener('click', resetValidationForm);
   wireLocationFields('reagent', {
     extraFields: ['status', 'quantity'],
     onBeforeLoad: e => {
@@ -388,6 +390,16 @@ function wireEvents() {
   $('reagentForm').elements.quantity.addEventListener('input', e => {
     syncReagentStorageFields(e.currentTarget.form);
     syncMultiRegisterFields(e.currentTarget.form);
+  });
+  wireLocationFields('reagentEdit', {
+    extraFields: ['status', 'quantity'],
+    onBeforeLoad: e => {
+      if (['status', 'quantity', 'storage_node_id', 'grid_cell'].includes(e.target.name)) syncReagentStorageFields(e.currentTarget);
+    },
+  });
+  $('reagentEditForm').addEventListener('submit', guard(submitReagent));
+  $('reagentEditForm').elements.quantity.addEventListener('input', e => {
+    syncReagentStorageFields(e.currentTarget.form);
   });
   wireLocationFields('sampleEdit');
   $('sampleEditForm').addEventListener('submit', guard(submitSampleEdit));
@@ -409,6 +421,7 @@ function wireEvents() {
   $('aliquotForm').addEventListener('submit', guard(submitAliquot));
   $('excelExportForm').addEventListener('submit', guard(submitExcelExport));
   $('excelImportForm').addEventListener('submit', guard(submitExcelImport));
+  $('recordDeleteForm')?.addEventListener('submit', guard(submitRecordDelete));
   $('backupForm')?.addEventListener('submit', guard(submitBackup));
   $('backupSettingsForm')?.addEventListener('submit', guard(submitBackupSettings));
   $('backupCleanupForm')?.addEventListener('submit', guard(submitBackupCleanup));
@@ -474,6 +487,9 @@ function wireEvents() {
   $('userForm').addEventListener('submit', guard(submitUser));
   $('passwordForm').addEventListener('submit', guard(submitPassword));
   $('settingsForm').addEventListener('submit', guard(async e => { e.preventDefault(); await saveSettings(); }));
+  $('settingsForm').addEventListener('input', e => {
+    if (e.target.matches('[data-settings-number]')) refreshSettingsCard(e.target.closest('.settings-card'));
+  });
   $('settingsForm').addEventListener('keydown', e => {
     if (e.key === 'Enter' && e.target.matches('[data-settings-input]')) {
       e.preventDefault();
@@ -626,9 +642,10 @@ async function handleActions(e) {
   const id = btn.dataset.id;
   const fromPositionMenu = btn.closest('#positionActionMenu');
   const fromInventoryDetail = btn.closest('#inventoryDetailDialog');
+  const inPlaceDetailActions = new Set(['close-inventory-detail']);
   if (fromPositionMenu && action !== 'position-actions') closePositionActionMenu?.();
-  if (fromInventoryDetail && action !== 'close-inventory-detail') closeInventoryDetailDialog?.();
-  if (await handleDetailActions(action, id)) return;
+  if (fromInventoryDetail && !inPlaceDetailActions.has(action)) closeInventoryDetailDialog?.();
+  if (await handleDetailActions(action, id, btn)) return;
   if (await handleInventoryActions(action, id, btn)) return;
   if (await handleSpaceActions(action, id, btn)) return;
   if (await handlePickerActions(action, id, btn)) return;
@@ -636,17 +653,22 @@ async function handleActions(e) {
   await handleRegistrationActions(action, id);
 }
 
-async function handleDetailActions(action, id) {
+async function handleDetailActions(action, id, btn) {
   if (action === 'edit-reagent') {
-    await editReagent(id);
+    await openReagentEditor(id);
     return true;
   }
   if (action === 'detail-reagent') {
-    renderReagentDetail(await api(inventoryObjectDetailPath('reagent', id)));
+    await showInventoryItemDetailDialog('reagent', id);
     return true;
   }
   if (action === 'detail-sample') {
     renderSampleDetail(await api(inventoryObjectDetailPath('sample', id)));
+    return true;
+  }
+  if (action === 'detail-repeat-order') {
+    const data = await api(inventoryObjectDetailPath('reagent', id));
+    await startRepeatOrderFromItem(data.item);
     return true;
   }
   return false;
@@ -785,7 +807,7 @@ async function handleRegistrationActions(action, id) {
   const actions = {
     'repeat-order-fill': () => fillOrderFromRepeatItem(),
     'aliquot-use-source-location': () => useAliquotSourceLocation(),
-    'rollback-movement': () => rollbackMovement(id),
+    'edit-validation': () => editValidation(id),
   };
   const handler = actions[action];
   if (!handler) return false;

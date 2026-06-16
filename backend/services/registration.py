@@ -9,11 +9,21 @@ from typing import Any
 
 from core.common import ApiError, clean_int_range, clean_optional_positive_int, create_audit, now_text, row_dict, rows_list, safe_float
 from core.config import ROOT, VALIDATION_IMAGE_DIR
-from core.constants import STATUS_AVAILABLE, STATUS_DISABLED, STATUS_ORDERED, VALIDATION_UNVERIFIED
+from core.constants import (
+    MOVEMENT_REASON_ARRIVAL,
+    MOVEMENT_REASON_ORDER,
+    STATUS_AVAILABLE,
+    STATUS_ORDERED,
+    SYSTEM_NOT_ARRIVED_NODE_ID,
+    SYSTEM_NOT_ORDERED_NODE_ID,
+    SYSTEM_UNPLACED_NODE_ID,
+)
 from db.database import connect
+from services.movements import record_reagent_transfer
 from services.storage_inventory import (
     assign_reagent_to_node,
     sequential_frame_positions,
+    storage_target_or_default,
     storage_location_text,
 )
 
@@ -31,32 +41,103 @@ MAX_VALIDATION_IMAGE_SIDE = 1800
 
 def list_orders(query: dict[str, list[str]]) -> dict[str, Any]:
     status = query.get("status", [""])[0].strip()
-    clauses = []
-    params: list[Any] = []
-    if status:
-        if status in {"未到货", "已到货"}:
-            clauses.append("(CASE WHEN COALESCE(a.arrival_count, 0) > 0 THEN '已到货' ELSE '未到货' END) = ?")
-        else:
-            clauses.append("o.status = ?")
+    catalog_no = query.get("catalog_no", [""])[0].strip()
+    clauses = ["m.reason = ?"]
+    params: list[Any] = [MOVEMENT_REASON_ORDER]
+    post_status = ""
+    if status in {"未到货", "已到货"}:
+        post_status = status
+    elif status:
+        clauses.append("r.status = ?")
         params.append(status)
-    sql = """
-        SELECT o.*, u.display_name AS requester_name,
-               COALESCE(a.arrival_count, 0) AS arrival_count,
-               CASE WHEN COALESCE(a.arrival_count, 0) > 0 THEN '已到货' ELSE '未到货' END AS arrival_status
-        FROM orders o LEFT JOIN users u ON u.id = o.requester_id
-        LEFT JOIN (
-            SELECT order_id, COUNT(*) AS arrival_count
-            FROM arrivals
-            WHERE order_id IS NOT NULL
-            GROUP BY order_id
-        ) a ON a.order_id = o.id
+    if catalog_no:
+        clauses.append("TRIM(COALESCE(r.catalog_no, '')) = ?")
+        params.append(catalog_no)
+    sql = f"""
+        SELECT r.*, m.id AS order_movement_id, m.note AS order_reason, m.moved_at AS ordered_at,
+               m.moved_by AS requester_id, u.display_name AS requester_name
+        FROM movements m
+        JOIN reagents r ON r.id = m.item_id AND m.item_type = 'reagent'
+        LEFT JOIN users u ON u.id = m.moved_by
+        WHERE {" AND ".join(clauses)}
+        ORDER BY m.moved_at DESC, m.id DESC
+        LIMIT 200
     """
-    if clauses:
-        sql += " WHERE " + " AND ".join(clauses)
-    sql += " ORDER BY o.updated_at DESC LIMIT 200"
     with connect() as conn:
         rows = conn.execute(sql, params).fetchall()
-    return {"items": rows_list(rows), "count": len(rows)}
+        items = [_order_ledger_item(conn, row) for row in rows]
+    if post_status:
+        items = [item for item in items if item.get("arrival_status") == post_status]
+    return {"items": items, "count": len(items)}
+
+
+def _source_key(row: Any) -> str:
+    return str(row["source_code"] or row["code"] or row["id"])
+
+
+def _arrival_rows_for_source(conn: Any, source_key: str) -> list[Any]:
+    return conn.execute(
+        """
+        SELECT m.*, r.code, r.name, r.quantity, r.entry_date, r.expiration_date,
+               u.display_name AS received_by_name
+        FROM movements m
+        JOIN reagents r ON r.id = m.item_id AND m.item_type = 'reagent'
+        LEFT JOIN users u ON u.id = m.moved_by
+        WHERE m.reason = ?
+          AND COALESCE(r.source_code, r.code, r.id) = ?
+        ORDER BY m.moved_at DESC, m.id DESC
+        """,
+        (MOVEMENT_REASON_ARRIVAL, source_key),
+    ).fetchall()
+
+
+def _order_ledger_item(conn: Any, row: Any) -> dict[str, Any]:
+    item = row_dict(row) or {}
+    source_key = _source_key(row)
+    arrivals = _arrival_rows_for_source(conn, source_key)
+    arrived_quantity = sum(float(arrival["quantity"] or 0) for arrival in arrivals)
+    arrival_locations = [str(arrival["to_location_snapshot"] or "") for arrival in arrivals if str(arrival["to_location_snapshot"] or "").strip()]
+    arrival_dates = [str(arrival["entry_date"] or arrival["moved_at"] or "") for arrival in arrivals if str(arrival["entry_date"] or arrival["moved_at"] or "").strip()]
+    expiration_dates = [str(arrival["expiration_date"] or "") for arrival in arrivals if str(arrival["expiration_date"] or "").strip()]
+    receiver_names = [str(arrival["received_by_name"] or "") for arrival in arrivals if str(arrival["received_by_name"] or "").strip()]
+    item.update({
+        "id": item.get("id"),
+        "requester_id": item.get("requester_id"),
+        "reason": item.get("order_reason") or item.get("note") or "",
+        "created_at": item.get("ordered_at") or item.get("created_at"),
+        "updated_at": item.get("updated_at") or item.get("ordered_at"),
+        "arrival_count": len(arrivals),
+        "arrived_quantity": arrived_quantity,
+        "arrival_status": "已到货" if arrivals else "未到货",
+        "arrival_ids": "、".join(str(arrival["id"]) for arrival in arrivals),
+        "arrival_codes": "、".join(str(arrival["code"] or "") for arrival in arrivals if str(arrival["code"] or "").strip()),
+        "arrival_locations": "、".join(arrival_locations),
+        "arrival_entry_dates": "、".join(arrival_dates),
+        "arrival_expiration_dates": "、".join(expiration_dates),
+        "received_by_names": "、".join(receiver_names),
+        "last_arrival_at": arrivals[0]["moved_at"] if arrivals else None,
+    })
+    if arrivals:
+        item["quantity"] = arrived_quantity or item.get("quantity")
+    return item
+
+
+def _ensure_reagent_code(conn: Any, reagent_id: int) -> str:
+    row = conn.execute("SELECT code FROM reagents WHERE id = ?", (reagent_id,)).fetchone()
+    code = str(row["code"] or "").strip() if row else ""
+    if code:
+        return code
+    code = f"RG{reagent_id:06d}"
+    conn.execute(
+        """
+        UPDATE reagents
+        SET code = CASE WHEN code IS NULL OR TRIM(code) = '' THEN ? ELSE code END,
+            source_code = CASE WHEN source_code IS NULL OR TRIM(source_code) = '' THEN ? ELSE source_code END
+        WHERE id = ?
+        """,
+        (code, code, reagent_id),
+    )
+    return code
 
 
 def create_order(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
@@ -65,7 +146,9 @@ def create_order(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
         raise ApiError(400, "订购名称不能为空")
     timestamp = now_text()
     values = {
-        "requester_id": user["id"],
+        "code": None,
+        "source_code": None,
+        "aliquot_no": None,
         "name": name,
         "category": str(data.get("category", "")).strip(),
         "brand": str(data.get("brand", "")).strip(),
@@ -73,22 +156,55 @@ def create_order(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
         "amount": None if data.get("amount") in (None, "") else safe_float(data.get("amount"), 0),
         "amount_unit": str(data.get("amount_unit", "")).strip(),
         "quantity": safe_float(data.get("quantity"), 1),
-        "reason": str(data.get("reason", "")).strip(),
         "price": None if data.get("price") in (None, "") else safe_float(data.get("price"), 0),
         "status": STATUS_ORDERED,
+        "storage_node_id": SYSTEM_NOT_ARRIVED_NODE_ID,
+        "grid_cell": None,
+        "entry_date": "",
+        "expiration_date": "",
+        "note": str(data.get("reason", "")).strip(),
+        "created_by": user["id"],
+        "updated_by": user["id"],
         "created_at": timestamp,
         "updated_at": timestamp,
     }
     cols = list(values)
     with connect() as conn:
         cur = conn.execute(
-            f"INSERT INTO orders ({', '.join(cols)}) VALUES ({', '.join(['?'] * len(cols))})",
+            f"INSERT INTO reagents ({', '.join(cols)}) VALUES ({', '.join(['?'] * len(cols))})",
             [values[col] for col in cols],
         )
-        create_audit(conn, user["id"], "api_create_order", "orders", cur.lastrowid, data)
+        reagent_id = int(cur.lastrowid)
+        code = f"RG{reagent_id:06d}"
+        conn.execute("UPDATE reagents SET code = ?, source_code = ? WHERE id = ?", (code, code, reagent_id))
+        movement_id = record_reagent_transfer(
+            conn,
+            object_id=code,
+            item_id=reagent_id,
+            from_node_id=SYSTEM_NOT_ORDERED_NODE_ID,
+            from_position=None,
+            to_node_id=SYSTEM_NOT_ARRIVED_NODE_ID,
+            to_position=None,
+            user_id=user["id"],
+            moved_at=timestamp,
+            reason=MOVEMENT_REASON_ORDER,
+            note=str(data.get("reason", "")).strip(),
+        )
+        create_audit(conn, user["id"], "api_create_order", "reagents", reagent_id, data)
         conn.commit()
-        row = conn.execute("SELECT * FROM orders WHERE id = ?", (cur.lastrowid,)).fetchone()
-    return {"item": row_dict(row)}
+        row = conn.execute(
+            """
+            SELECT r.*, m.id AS order_movement_id, m.note AS order_reason, m.moved_at AS ordered_at,
+                   m.moved_by AS requester_id, u.display_name AS requester_name
+            FROM movements m
+            JOIN reagents r ON r.id = m.item_id AND m.item_type = 'reagent'
+            LEFT JOIN users u ON u.id = m.moved_by
+            WHERE m.id = ?
+            """,
+            (movement_id,),
+        ).fetchone()
+        item = _order_ledger_item(conn, row)
+    return {"item": item}
 
 
 def clean_arrival_count(value: Any, fallback: Any = 1) -> int:
@@ -99,54 +215,8 @@ def clean_arrival_count(value: Any, fallback: Any = 1) -> int:
     return clean_int_range(value, default, 1, 300)
 
 
-def update_order(order_id: int, data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
-    status = str(data.get("status", "")).strip()
-    if status not in {STATUS_ORDERED, STATUS_DISABLED}:
-        raise ApiError(400, "没有可更新字段")
-    with connect() as conn:
-        old = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
-        if old is None:
-            raise ApiError(404, "订购登记不存在")
-        conn.execute("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?", (status, now_text(), order_id))
-        create_audit(conn, user["id"], "api_update_order", "orders", order_id, data, row_dict(old))
-        conn.commit()
-        row = conn.execute(
-            """
-            SELECT o.*, u.display_name AS requester_name,
-                   COALESCE(a.arrival_count, 0) AS arrival_count,
-                   CASE WHEN COALESCE(a.arrival_count, 0) > 0 THEN '已到货' ELSE '未到货' END AS arrival_status
-            FROM orders o LEFT JOIN users u ON u.id = o.requester_id
-            LEFT JOIN (
-                SELECT order_id, COUNT(*) AS arrival_count
-                FROM arrivals
-                WHERE order_id IS NOT NULL
-                GROUP BY order_id
-            ) a ON a.order_id = o.id
-            WHERE o.id = ?
-            """,
-            (order_id,),
-        ).fetchone()
-    return {"item": row_dict(row)}
-
-
-def list_arrivals() -> dict[str, Any]:
-    with connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT a.*, a.location_snapshot AS storage_location,
-                   r.code, r.name, u.display_name AS received_by_name
-            FROM arrivals a
-            LEFT JOIN reagents r ON r.id = a.item_id AND a.item_type = 'reagent'
-            LEFT JOIN users u ON u.id = a.received_by
-            ORDER BY a.created_at DESC LIMIT 200
-            """
-        ).fetchall()
-    return {"items": rows_list(rows), "count": len(rows)}
-
-
 def create_arrival(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     order_id = clean_optional_positive_int(data.get("order_id")) or 0
-    storage_node_id = clean_optional_positive_int(data.get("storage_node_id"))
     if not order_id:
         raise ApiError(400, "必须选择订购登记")
     entry_date = str(data.get("entry_date") or date.today().isoformat())
@@ -154,89 +224,147 @@ def create_arrival(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
     note = str(data.get("note", "")).strip()
     position = str(data.get("grid_cell", "")).strip() or None
     with connect() as conn:
-        order = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+        order = conn.execute("SELECT * FROM reagents WHERE id = ?", (order_id,)).fetchone()
         if order is None:
             raise ApiError(404, "订购登记不存在")
-        arrived = conn.execute("SELECT 1 FROM arrivals WHERE order_id = ? LIMIT 1", (order_id,)).fetchone()
+        order_movement = conn.execute(
+            "SELECT * FROM movements WHERE item_type = 'reagent' AND item_id = ? AND reason = ? ORDER BY id LIMIT 1",
+            (order_id, MOVEMENT_REASON_ORDER),
+        ).fetchone()
+        if order_movement is None:
+            raise ApiError(404, "订购登记不存在")
+        if str(order["status"] or "") != STATUS_ORDERED or int(order["storage_node_id"] or 0) != SYSTEM_NOT_ARRIVED_NODE_ID:
+            raise ApiError(409, "该订购登记不是未到货状态")
+        arrived = conn.execute(
+            """
+            SELECT 1
+            FROM movements m JOIN reagents r ON r.id = m.item_id AND m.item_type = 'reagent'
+            WHERE m.reason = ? AND COALESCE(r.source_code, r.code, r.id) = ?
+            LIMIT 1
+            """,
+            (MOVEMENT_REASON_ARRIVAL, _source_key(order)),
+        ).fetchone()
         if arrived:
             raise ApiError(409, "该订购登记已登记到货")
         timestamp = now_text()
         arrival_count = clean_arrival_count(data.get("arrival_quantity"), order["quantity"])
         separate_items = bool(data.get("separate_items", True))
         row_count = arrival_count if separate_items else 1
-        positions = sequential_frame_positions(conn, storage_node_id, row_count, position) if storage_node_id and row_count > 1 else [position if storage_node_id else None] * row_count
+        storage_node_id = storage_target_or_default(data.get("storage_node_id"), STATUS_AVAILABLE)
+        if storage_node_id != SYSTEM_UNPLACED_NODE_ID and storage_node_id <= 0:
+            raise ApiError(400, "到货位置只能选择真实空间或未归位")
+        real_storage = storage_node_id > 0
+        positions = sequential_frame_positions(conn, storage_node_id, row_count, position) if real_storage and row_count > 1 else [position if real_storage else None] * row_count
         reagent_ids: list[int] = []
         arrival_rows: list[dict[str, Any]] = []
-        source_code = None
+        source_code = str(order["source_code"] or order["code"] or "").strip()
+        if not source_code:
+            source_code = _ensure_reagent_code(conn, order_id)
         for index in range(row_count):
             aliquot_no = index + 1 if row_count > 1 else None
             row_quantity = 1 if separate_items else arrival_count
-            cur = conn.execute(
-                """
-                INSERT INTO reagents
-                    (code, source_code, aliquot_no, name, category, brand, catalog_no, amount, amount_unit, quantity, status,
-                     entry_date, expiration_date, validation_status, note, created_by, updated_by, created_at, updated_at)
-                VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    source_code, aliquot_no,
-                    order["name"], order["category"] or "其他", order["brand"] or "", order["catalog_no"] or "",
-                    order["amount"], order["amount_unit"] or "", row_quantity, STATUS_AVAILABLE,
-                    entry_date, expiration_date, VALIDATION_UNVERIFIED, note, user["id"], user["id"], timestamp, timestamp,
-                ),
-            )
-            reagent_id = int(cur.lastrowid)
-            reagent_ids.append(reagent_id)
-            code = f"RG{reagent_id:06d}"
-            if row_count > 1 and source_code is None:
-                source_code = code
+            if index == 0:
+                reagent_id = order_id
+                code = _ensure_reagent_code(conn, reagent_id)
                 conn.execute(
-                    "UPDATE reagents SET code = ?, source_code = ? WHERE id = ?",
-                    (code, source_code, reagent_id),
+                    """
+                    UPDATE reagents
+                    SET source_code = ?, aliquot_no = ?, quantity = ?, status = ?, entry_date = ?,
+                        expiration_date = ?, note = ?, updated_by = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (source_code, aliquot_no, row_quantity, STATUS_AVAILABLE, entry_date, expiration_date, note, user["id"], timestamp, reagent_id),
                 )
             else:
-                conn.execute("UPDATE reagents SET code = ?, source_code = COALESCE(source_code, ?) WHERE id = ?", (code, source_code or code, reagent_id))
-            if storage_node_id:
-                assign_reagent_to_node(conn, reagent_id, storage_node_id, user["id"], positions[index])
-            storage_location = storage_location_text(conn, storage_node_id, positions[index]) if storage_node_id else "未归位"
-            arrival = conn.execute(
-                """
-                INSERT INTO arrivals
-                    (order_id, item_type, item_id, entry_date, received_by, storage_node_id, grid_cell,
-                     location_snapshot, expiration_date, note, created_at)
-                VALUES (?, 'reagent', ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (order_id, reagent_id, entry_date, user["id"], storage_node_id, positions[index], storage_location, expiration_date, note, timestamp),
+                values = {
+                    "code": None,
+                    "source_code": source_code,
+                    "aliquot_no": aliquot_no,
+                    "name": order["name"],
+                    "category": order["category"] or "其他",
+                    "brand": order["brand"] or "",
+                    "catalog_no": order["catalog_no"] or "",
+                    "amount": order["amount"],
+                    "amount_unit": order["amount_unit"] or "",
+                    "quantity": row_quantity,
+                    "price": order["price"],
+                    "status": STATUS_AVAILABLE,
+                    "storage_node_id": SYSTEM_NOT_ARRIVED_NODE_ID,
+                    "grid_cell": None,
+                    "entry_date": entry_date,
+                    "expiration_date": expiration_date,
+                    "note": note,
+                    "created_by": user["id"],
+                    "updated_by": user["id"],
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                }
+                cols = list(values)
+                cur = conn.execute(
+                    f"INSERT INTO reagents ({', '.join(cols)}) VALUES ({', '.join(['?'] * len(cols))})",
+                    [values[col] for col in cols],
+                )
+                reagent_id = int(cur.lastrowid)
+                code = f"RG{reagent_id:06d}"
+                conn.execute("UPDATE reagents SET code = ? WHERE id = ?", (code, reagent_id))
+            reagent_ids.append(reagent_id)
+            assign_reagent_to_node(conn, reagent_id, storage_node_id, user["id"], positions[index])
+            storage_location = storage_location_text(conn, storage_node_id, positions[index])
+            movement_id = record_reagent_transfer(
+                conn,
+                object_id=code,
+                item_id=reagent_id,
+                from_node_id=SYSTEM_NOT_ARRIVED_NODE_ID,
+                from_position=None,
+                to_node_id=storage_node_id,
+                to_position=positions[index],
+                user_id=user["id"],
+                moved_at=timestamp,
+                reason=MOVEMENT_REASON_ARRIVAL,
+                note=note,
             )
-            row = conn.execute("SELECT * FROM arrivals WHERE id = ?", (arrival.lastrowid,)).fetchone()
-            arrival_item = row_dict(row) or {}
-            arrival_item["storage_location"] = arrival_item.get("location_snapshot") or ""
+            arrival_item = {
+                "id": movement_id,
+                "order_id": order_id,
+                "item_type": "reagent",
+                "item_id": reagent_id,
+                "entry_date": entry_date,
+                "received_by": user["id"],
+                "storage_node_id": storage_node_id,
+                "grid_cell": positions[index],
+                "location_snapshot": storage_location,
+                "storage_location": storage_location,
+                "expiration_date": expiration_date,
+                "note": note,
+                "created_at": timestamp,
+                "code": code,
+                "name": order["name"],
+            }
             arrival_rows.append(arrival_item)
-        conn.execute("UPDATE orders SET updated_at = ? WHERE id = ?", (timestamp, order_id))
-        create_audit(conn, user["id"], "api_create_arrival", "arrivals", arrival_rows[0]["id"], {"order_id": order_id, "item_type": "reagent", "item_ids": reagent_ids, "arrival_quantity": arrival_count, "separate_items": separate_items})
+        create_audit(conn, user["id"], "api_create_arrival", "movements", arrival_rows[0]["id"], {"order_id": order_id, "item_type": "reagent", "item_ids": reagent_ids, "arrival_quantity": arrival_count, "separate_items": separate_items})
         conn.commit()
     return {"item": arrival_rows[0], "items": arrival_rows, "count": len(arrival_rows), "item_type": "reagent", "item_id": reagent_ids[0], "item_ids": reagent_ids}
 
 
+VALIDATION_SELECT_SQL = """
+    SELECT
+        v.id, NULL AS item_id, v.catalog_no,
+        v.validator_id, v.validation_date, v.method, v.result, v.description, v.image_path, v.created_at,
+        r.code, r.name, u.display_name AS validator_name
+    FROM validations v
+    LEFT JOIN (
+        SELECT catalog_no, MIN(code) AS code, MIN(name) AS name
+        FROM reagents
+        WHERE COALESCE(catalog_no, '') != ''
+        GROUP BY catalog_no
+    ) r ON r.catalog_no = v.catalog_no
+    LEFT JOIN users u ON u.id = v.validator_id
+"""
+
+
 def list_validations() -> dict[str, Any]:
     with connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                v.id, NULL AS item_id, v.catalog_no,
-                v.validator_id, v.validation_date, v.method, v.result, v.description, v.image_path, v.created_at,
-                r.code, r.name, u.display_name AS validator_name
-            FROM validations v
-            LEFT JOIN (
-                SELECT catalog_no, MIN(code) AS code, MIN(name) AS name
-                FROM reagents
-                WHERE COALESCE(catalog_no, '') != ''
-                GROUP BY catalog_no
-            ) r ON r.catalog_no = v.catalog_no
-            LEFT JOIN users u ON u.id = v.validator_id
-            ORDER BY v.created_at DESC LIMIT 200
-            """
-        ).fetchall()
+        rows = conn.execute(f"{VALIDATION_SELECT_SQL} ORDER BY v.created_at DESC LIMIT 200").fetchall()
     return {"items": rows_list(rows), "count": len(rows)}
 
 
@@ -260,27 +388,44 @@ def create_validation(data: dict[str, Any], user: dict[str, Any]) -> dict[str, A
                 str(data.get("image_path", "")).strip(), timestamp,
             ),
         )
-        conn.execute("UPDATE reagents SET validation_status = ?, updated_by = ?, updated_at = ? WHERE catalog_no = ?", (result, user["id"], timestamp, catalog_no))
         create_audit(conn, user["id"], "api_create_validation", "validations", cur.lastrowid, data)
         conn.commit()
-        row = conn.execute(
-            """
-            SELECT
-                v.id, NULL AS item_id, v.catalog_no,
-                v.validator_id, v.validation_date, v.method, v.result, v.description, v.image_path, v.created_at,
-                r.code, r.name
-            FROM validations v
-            LEFT JOIN (
-                SELECT catalog_no, MIN(code) AS code, MIN(name) AS name
-                FROM reagents
-                WHERE COALESCE(catalog_no, '') != ''
-                GROUP BY catalog_no
-            ) r ON r.catalog_no = v.catalog_no
-            WHERE v.id = ?
-            """,
-            (cur.lastrowid,),
-        ).fetchone()
+        row = _validation_public_row(conn, int(cur.lastrowid))
     return {"item": row_dict(row)}
+
+
+def update_validation(validation_id: int, data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    allowed = {"catalog_no", "validation_date", "method", "result", "description", "image_path"}
+    updates = {key: data[key] for key in allowed if key in data}
+    if not updates:
+        raise ApiError(400, "没有可更新字段")
+    if "catalog_no" in updates:
+        updates["catalog_no"] = str(updates["catalog_no"] or "").strip()
+        if not updates["catalog_no"]:
+            raise ApiError(400, "验证登记必须填写货号")
+    if "result" in updates:
+        updates["result"] = str(updates["result"] or "").strip()
+        if not updates["result"]:
+            raise ApiError(400, "验证结果不能为空")
+    for key in ("validation_date", "method", "description", "image_path"):
+        if key in updates:
+            updates[key] = str(updates[key] or "").strip()
+    assignments = ", ".join(f"{key} = ?" for key in updates)
+    with connect() as conn:
+        old = conn.execute("SELECT * FROM validations WHERE id = ?", (validation_id,)).fetchone()
+        if old is None:
+            raise ApiError(404, "验证记录不存在")
+        if user.get("role") != "admin" and int(old["validator_id"] or 0) != int(user["id"]):
+            raise ApiError(403, "只能编辑自己登记的验证记录")
+        conn.execute(f"UPDATE validations SET {assignments} WHERE id = ?", list(updates.values()) + [validation_id])
+        create_audit(conn, user["id"], "api_update_validation", "validations", validation_id, updates, row_dict(old))
+        conn.commit()
+        row = _validation_public_row(conn, validation_id)
+    return {"item": row_dict(row)}
+
+
+def _validation_public_row(conn: Any, validation_id: int) -> Any:
+    return conn.execute(f"{VALIDATION_SELECT_SQL} WHERE v.id = ?", (validation_id,)).fetchone()
 
 
 def upload_validation_image(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:

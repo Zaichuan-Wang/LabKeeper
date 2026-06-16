@@ -11,6 +11,13 @@ from core.config import (
     DB_PATH,
     SCHEMA_PATH,
 )
+from core.constants import (
+    SYSTEM_CHECKED_OUT_NODE_ID,
+    SYSTEM_NOT_ARRIVED_NODE_ID,
+    SYSTEM_NOT_ORDERED_NODE_ID,
+    SYSTEM_STORAGE_NODE_LABELS,
+    SYSTEM_UNPLACED_NODE_ID,
+)
 
 logger = get_logger("lab.database")
 
@@ -19,7 +26,6 @@ LIGHTWEIGHT_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_reagents_updated ON reagents(updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_reagents_status_updated ON reagents(status, updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_reagents_category_updated ON reagents(category, updated_at DESC, id DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_reagents_validation_updated ON reagents(validation_status, updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_reagents_storage_status_updated ON reagents(storage_node_id, status, updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_reagents_storage_position_status ON reagents(storage_node_id, grid_cell, status)",
     "CREATE INDEX IF NOT EXISTS idx_reagents_catalog_updated ON reagents(catalog_no, updated_at DESC, id DESC)",
@@ -32,15 +38,10 @@ LIGHTWEIGHT_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_clinical_samples_storage_status_updated ON clinical_samples(storage_node_id, status, updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_clinical_samples_storage_position_status ON clinical_samples(storage_node_id, grid_cell, status)",
     "CREATE INDEX IF NOT EXISTS idx_clinical_samples_source_aliquot ON clinical_samples(COALESCE(source_code, code, id), aliquot_no)",
-    "CREATE INDEX IF NOT EXISTS idx_arrivals_storage_node ON arrivals(storage_node_id)",
-    "CREATE INDEX IF NOT EXISTS idx_arrivals_item_created ON arrivals(item_type, item_id, created_at DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_arrivals_order ON arrivals(order_id)",
-    "CREATE INDEX IF NOT EXISTS idx_arrivals_created ON arrivals(created_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_validations_catalog_date ON validations(catalog_no, validation_date DESC, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_validations_created ON validations(created_at DESC, id DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_orders_status_updated ON orders(status, updated_at DESC, id DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_orders_updated ON orders(updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_movements_item_moved ON movements(item_type, item_id, moved_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_movements_reason_moved ON movements(reason, moved_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_movements_from_storage_node ON movements(from_storage_node_id)",
     "CREATE INDEX IF NOT EXISTS idx_movements_to_storage_node ON movements(to_storage_node_id)",
     "CREATE INDEX IF NOT EXISTS idx_movements_moved ON movements(moved_at DESC, id DESC)",
@@ -52,12 +53,18 @@ LIGHTWEIGHT_INDEX_SQL = (
 
 OBSOLETE_INDEX_NAMES = (
     "idx_reagents_name",
+    "idx_reagents_validation_updated",
     "idx_reagents_storage_node",
     "idx_reagents_source",
     "idx_clinical_samples_storage_node",
     "idx_arrivals_item",
+    "idx_arrivals_storage_node",
+    "idx_arrivals_order",
+    "idx_arrivals_created",
     "idx_validations_catalog_no",
     "idx_orders_status",
+    "idx_orders_status_updated",
+    "idx_orders_updated",
     "idx_movements_object",
     "idx_movements_to_snapshot_moved",
     "idx_storage_nodes_parent",
@@ -82,6 +89,7 @@ def init_db() -> None:
     try:
         _apply_base_schema(conn)
         _ensure_indexes(conn)
+        _ensure_system_storage_nodes(conn)
         _ensure_admin_user(conn)
         _ensure_root_storage_node(conn)
         _repair_known_inconsistencies(conn)
@@ -95,14 +103,30 @@ def _apply_base_schema(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_indexes(conn: sqlite3.Connection) -> None:
+    _drop_removed_business_tables(conn)
     _drop_obsolete_indexes(conn)
+    _drop_removed_reagent_columns(conn)
     for sql in LIGHTWEIGHT_INDEX_SQL:
         conn.execute(sql)
+
+
+def _drop_removed_business_tables(conn: sqlite3.Connection) -> None:
+    conn.execute("DROP TABLE IF EXISTS arrivals")
+    conn.execute("DROP TABLE IF EXISTS orders")
 
 
 def _drop_obsolete_indexes(conn: sqlite3.Connection) -> None:
     for index_name in OBSOLETE_INDEX_NAMES:
         conn.execute(f'DROP INDEX IF EXISTS "{index_name}"')
+
+
+def _drop_removed_reagent_columns(conn: sqlite3.Connection) -> None:
+    if not _column_exists(conn, "reagents", "validation_status"):
+        return
+    try:
+        conn.execute("ALTER TABLE reagents DROP COLUMN validation_status")
+    except sqlite3.OperationalError:
+        logger.warning("当前 SQLite 不支持删除旧列 reagents.validation_status，代码将忽略该闲置列。")
 
 
 def compact_database() -> dict[str, int]:
@@ -157,11 +181,39 @@ def _ensure_admin_user(conn: sqlite3.Connection) -> None:
     )
 
 
+def _ensure_system_storage_nodes(conn: sqlite3.Connection) -> None:
+    timestamp = now_text()
+    rows = (
+        (SYSTEM_NOT_ORDERED_NODE_ID, SYSTEM_STORAGE_NODE_LABELS[SYSTEM_NOT_ORDERED_NODE_ID], -100),
+        (SYSTEM_NOT_ARRIVED_NODE_ID, SYSTEM_STORAGE_NODE_LABELS[SYSTEM_NOT_ARRIVED_NODE_ID], -99),
+        (SYSTEM_UNPLACED_NODE_ID, SYSTEM_STORAGE_NODE_LABELS[SYSTEM_UNPLACED_NODE_ID], -98),
+        (SYSTEM_CHECKED_OUT_NODE_ID, SYSTEM_STORAGE_NODE_LABELS[SYSTEM_CHECKED_OUT_NODE_ID], -97),
+    )
+    for node_id, label, sort_order in rows:
+        conn.execute(
+            """
+            INSERT INTO storage_nodes
+                (id, parent_id, name, node_type, space_type, location_code, rows, cols, grid_row, grid_col,
+                 note, sort_order, created_by, updated_by, created_at, updated_at)
+            VALUES (?, NULL, ?, 'system', 5, ?, NULL, NULL, NULL, NULL,
+                    '系统状态节点', ?, NULL, NULL, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                node_type = 'system',
+                location_code = excluded.location_code,
+                note = excluded.note,
+                sort_order = excluded.sort_order,
+                updated_at = excluded.updated_at
+            """,
+            (node_id, label, label, sort_order, timestamp, timestamp),
+        )
+
+
 def _ensure_root_storage_node(conn: sqlite3.Connection) -> None:
     root = conn.execute(
         """
         SELECT id FROM storage_nodes
-        WHERE parent_id IS NULL
+        WHERE parent_id IS NULL AND id > 0 AND COALESCE(node_type, 'space') != 'system'
         ORDER BY id LIMIT 1
         """
     ).fetchone()
@@ -182,6 +234,7 @@ def _ensure_root_storage_node(conn: sqlite3.Connection) -> None:
 
 
 def _repair_known_inconsistencies(conn: sqlite3.Connection) -> None:
+    _ensure_reagent_price_column(conn)
     _repair_storage_references(conn)
 
 
@@ -191,16 +244,22 @@ def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
     return any(col["name"] == column for col in cols)
 
 
+def _ensure_reagent_price_column(conn: sqlite3.Connection) -> None:
+    price_column_added = not _column_exists(conn, "reagents", "price")
+    if price_column_added:
+        conn.execute("ALTER TABLE reagents ADD COLUMN price REAL")
+
+
 def _repair_storage_references(conn: sqlite3.Connection) -> None:
-    for table in ("reagents", "clinical_samples", "arrivals"):
+    for table in ("reagents", "clinical_samples"):
         has_grid_cell = _column_exists(conn, table, "grid_cell")
-        set_clause = "storage_node_id = NULL, grid_cell = NULL" if has_grid_cell else "storage_node_id = NULL"
+        set_clause = f"storage_node_id = {SYSTEM_UNPLACED_NODE_ID}, grid_cell = NULL" if has_grid_cell else f"storage_node_id = {SYSTEM_UNPLACED_NODE_ID}"
         cursor = conn.execute(
             f"""
             UPDATE {table}
             SET {set_clause}
-            WHERE storage_node_id IS NOT NULL
-              AND storage_node_id NOT IN (SELECT id FROM storage_nodes)
+            WHERE storage_node_id IS NULL
+               OR storage_node_id NOT IN (SELECT id FROM storage_nodes)
             """
         )
         if cursor.rowcount:
@@ -209,7 +268,7 @@ def _repair_storage_references(conn: sqlite3.Connection) -> None:
         cursor = conn.execute(
             f"""
             UPDATE movements
-            SET {column} = NULL
+            SET {column} = {SYSTEM_UNPLACED_NODE_ID}
             WHERE {column} IS NOT NULL
               AND {column} NOT IN (SELECT id FROM storage_nodes)
             """

@@ -366,6 +366,7 @@ function grid_position_from_row_col(row, col, cols) {
 const pickerConfigs = {
   arrival: { container: 'arrivalStoragePicker', form: 'arrivalForm', nodeField: 'storage_node_id', positionField: 'grid_cell', title: '到货存放位置', label: '到货登记' },
   reagent: { container: 'reagentStoragePicker', form: 'reagentForm', nodeField: 'storage_node_id', positionField: 'grid_cell', title: '试剂存放位置', label: '试剂位置' },
+  reagentEdit: { container: 'reagentEditStoragePicker', form: 'reagentEditForm', nodeField: 'storage_node_id', positionField: 'grid_cell', title: '试剂存放位置', label: '试剂位置' },
   sample: { container: 'sampleStoragePicker', form: 'sampleForm', nodeField: 'storage_node_id', positionField: 'grid_cell', title: '临床标本存放位置', label: '标本位置' },
   sampleEdit: { container: 'sampleEditStoragePicker', form: 'sampleEditForm', nodeField: 'storage_node_id', positionField: 'grid_cell', title: '标本存放位置', label: '标本位置' },
   aliquot: { container: 'aliquotStoragePicker', form: 'aliquotForm', nodeField: 'storage_node_id', positionField: 'grid_cell', title: '分装存放位置', label: '分装位置' },

@@ -40,11 +40,35 @@ def test_init_db_uses_lightweight_indexes(monkeypatch, tmp_path):
                 "SELECT name FROM sqlite_master WHERE type IN ('table', 'index', 'trigger') AND name NOT LIKE 'sqlite_%'"
             ).fetchall()
         }
+        reagent_columns = {row[1] for row in conn.execute("PRAGMA table_info(reagents)").fetchall()}
     assert "idx_reagents_name" not in names
+    assert "idx_reagents_validation_updated" not in names
     assert "idx_movements_to_snapshot_moved" not in names
+    assert "validation_status" not in reagent_columns
     assert "idx_reagents_updated" in names
     assert "idx_reagents_storage_status_updated" in names
     assert "idx_validations_catalog_date" in names
+
+
+def test_init_db_drops_removed_order_arrival_tables_and_creates_system_nodes(monkeypatch, tmp_path):
+    config, database = _fresh_database(monkeypatch, tmp_path)
+
+    database.init_db()
+
+    with sqlite3.connect(config.DB_PATH) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+        nodes = {
+            row[0]: row[1]
+            for row in conn.execute("SELECT id, name FROM storage_nodes WHERE id IN (-1, -2, -3, -4)").fetchall()
+        }
+        reagent_default = next(row for row in conn.execute("PRAGMA table_info(reagents)").fetchall() if row[1] == "storage_node_id")[4]
+        sample_default = next(row for row in conn.execute("PRAGMA table_info(clinical_samples)").fetchall() if row[1] == "storage_node_id")[4]
+
+    assert "orders" not in tables
+    assert "arrivals" not in tables
+    assert nodes == {-1: "未订购", -2: "未到货", -3: "未归位", -4: "已出库"}
+    assert reagent_default == "-3"
+    assert sample_default == "-3"
 
 
 def test_storage_nodes_schema_uses_single_space_model(monkeypatch, tmp_path):

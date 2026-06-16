@@ -8,6 +8,7 @@ from services import admin
 from services import backup
 from services import data_health
 from models.request_models import (
+    AdminDeleteRecordRequest,
     BackupCleanupRequest,
     BackupCreateRequest,
     BackupSettingsRequest,
@@ -30,7 +31,7 @@ def dropdown_options(_: dict[str, Any] = Depends(require_user)) -> dict[str, Any
 @router.patch("/settings/dropdowns")
 def update_dropdown_options(data: DropdownSettingsRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
     require_admin(user)
-    return json_response(admin.update_dropdown_options(data.payload(), user))
+    return json_response(admin.update_dropdown_options(data.payload(patch=True), user))
 
 
 @router.get("/users")
@@ -117,3 +118,9 @@ def excel_export(request: Request, user: dict[str, Any] = Depends(require_user))
 def excel_import(data: ExcelImportRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
     require_admin(user)
     return json_response(admin.excel_import(data.payload(), user))
+
+
+@router.post("/admin/records/delete")
+def delete_admin_records(data: AdminDeleteRecordRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
+    require_admin(user)
+    return json_response(admin.delete_records(data.payload(), user))

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.common import ApiError, clean_int_range, clean_optional_positive_int, create_audit, now_text, row_dict, rows_list
+from core.constants import MOVEMENT_REASON_SPACE_MOVE, SYSTEM_UNPLACED_NODE_ID
 from db.database import connect
 from services.storage_inventory import (
     assign_grid_positions,
@@ -28,7 +29,7 @@ from services.storage_inventory import (
 from services.options_config import clean_space_type_code
 
 
-VIRTUAL_UNPLACED_NODE_ID = -1
+VIRTUAL_UNPLACED_NODE_ID = SYSTEM_UNPLACED_NODE_ID
 DEFAULT_ROOT_STORAGE_NODE_ID = 1
 
 
@@ -88,6 +89,7 @@ def storage_tree() -> dict[str, Any]:
             """
             SELECT n.*, p.name AS parent_name
             FROM storage_nodes n LEFT JOIN storage_nodes p ON p.id = n.parent_id
+            WHERE n.id > 0 AND COALESCE(n.node_type, 'space') != 'system'
             ORDER BY COALESCE(n.parent_id, 0), n.sort_order, n.name
             """
         ).fetchall()
@@ -107,6 +109,8 @@ def storage_tree() -> dict[str, Any]:
 def storage_child_items(conn: Any, rows: list[Any], direct_counts: dict[int, int], node_id: int, path_cache: dict[int, str] | None = None, desc_cache: dict[int, list[int]] | None = None) -> list[dict[str, Any]]:
     child_items = []
     for row in rows:
+        if int(row["id"]) <= 0 or str(row["node_type"] or "") == "system":
+            continue
         if int(row["parent_id"] or 0) != int(node_id):
             continue
         item = row_dict(row) or {}
@@ -132,7 +136,13 @@ def storage_visual(
     selected_item_id: int | None = None,
 ) -> dict[str, Any]:
     with connect() as conn:
-        rows = conn.execute("SELECT * FROM storage_nodes ORDER BY COALESCE(parent_id, 0), sort_order, name").fetchall()
+        rows = conn.execute(
+            """
+            SELECT * FROM storage_nodes
+            WHERE id > 0 AND COALESCE(node_type, 'space') != 'system'
+            ORDER BY COALESCE(parent_id, 0), sort_order, name
+            """
+        ).fetchall()
         direct_counts = storage_item_counts(conn)
         path_cache, desc_cache = batch_node_paths_and_descendants(conn)
         parent_by_id = {int(row["id"]): row["parent_id"] for row in rows}
@@ -226,7 +236,14 @@ def storage_visual(
         current = get_node(conn, node_id)
         if current is None:
             raise ApiError(404, "空间节点不存在")
-        children = conn.execute("SELECT * FROM storage_nodes WHERE parent_id = ? ORDER BY sort_order, name", (node_id,)).fetchall()
+        children = conn.execute(
+            """
+            SELECT * FROM storage_nodes
+            WHERE parent_id = ? AND id > 0 AND COALESCE(node_type, 'space') != 'system'
+            ORDER BY sort_order, name
+            """,
+            (node_id,),
+        ).fetchall()
         direct_items = inventory_items_at_node(conn, node_id, direct_only=True)
         current_descendant_ids = desc_cache.get(node_id, [node_id])
         direct_item_count = direct_counts.get(node_id, 0)
@@ -455,9 +472,9 @@ def update_storage_node(node_id: int, data: dict[str, Any], user: dict[str, Any]
                 VALUES (?, ?, 'space', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    "空间", str(node_id), node_id, old_parent_id, from_grid_label, final_parent_id, to_grid_label,
+                    "空间", str(node_id), node_id, old_parent_id or SYSTEM_UNPLACED_NODE_ID, from_grid_label, final_parent_id or SYSTEM_UNPLACED_NODE_ID, to_grid_label,
                     from_snapshot, to_snapshot, user["id"], now_text(),
-                    "空间移动", f"{old['name']} 的上级或格位已调整",
+                    MOVEMENT_REASON_SPACE_MOVE, f"{old['name']} 的上级或格位已调整",
                 ),
             )
         audit_new_value = {**data, "cleared_out_of_bounds": cleared} if any(cleared.values()) else data
@@ -469,23 +486,15 @@ def update_storage_node(node_id: int, data: dict[str, Any], user: dict[str, Any]
 
 def _clear_deleted_storage_history_references(conn: Any, deleted_ids: list[int]) -> dict[str, int]:
     placeholders = ",".join("?" for _ in deleted_ids)
-    counts = {"arrivals": 0, "movement_refs": 0}
-    counts["arrivals"] = int(conn.execute(
-        f"SELECT COUNT(*) AS n FROM arrivals WHERE storage_node_id IN ({placeholders})",
-        deleted_ids,
-    ).fetchone()["n"] or 0)
-    conn.execute(
-        f"UPDATE arrivals SET storage_node_id = NULL, grid_cell = NULL, location_snapshot = COALESCE(NULLIF(location_snapshot, ''), '未归位') WHERE storage_node_id IN ({placeholders})",
-        deleted_ids,
-    )
+    counts = {"movement_refs": 0}
     for column in ("from_storage_node_id", "to_storage_node_id"):
         counts["movement_refs"] += int(conn.execute(
             f"SELECT COUNT(*) AS n FROM movements WHERE {column} IN ({placeholders})",
             deleted_ids,
         ).fetchone()["n"] or 0)
         conn.execute(
-            f"UPDATE movements SET {column} = NULL WHERE {column} IN ({placeholders})",
-            deleted_ids,
+            f"UPDATE movements SET {column} = ? WHERE {column} IN ({placeholders})",
+            [SYSTEM_UNPLACED_NODE_ID, *deleted_ids],
         )
     return counts
 
@@ -495,6 +504,8 @@ def delete_storage_node(node_id: int, user: dict[str, Any]) -> dict[str, Any]:
         old = get_node(conn, node_id)
         if old is None:
             raise ApiError(404, "空间节点不存在")
+        if int(old["id"]) <= 0 or str(old["node_type"] or "") == "system":
+            raise ApiError(400, "系统状态节点不能删除")
         child_count = conn.execute(
             "SELECT COUNT(*) AS n FROM storage_nodes WHERE parent_id = ?",
             (node_id,),
@@ -519,7 +530,7 @@ def delete_storage_node(node_id: int, user: dict[str, Any]) -> dict[str, Any]:
         top_level_count = conn.execute(
             """
             SELECT COUNT(*) AS n FROM storage_nodes
-            WHERE parent_id IS NULL
+            WHERE parent_id IS NULL AND id > 0 AND COALESCE(node_type, 'space') != 'system'
             """
         ).fetchone()["n"]
         if old["parent_id"] is None and top_level_count <= 1:
@@ -531,6 +542,8 @@ def delete_storage_node(node_id: int, user: dict[str, Any]) -> dict[str, Any]:
                 """
                 SELECT id FROM storage_nodes
                 WHERE id != ?
+                  AND id > 0
+                  AND COALESCE(node_type, 'space') != 'system'
                 ORDER BY COALESCE(parent_id, 0), sort_order, name
                 LIMIT 1
                 """,

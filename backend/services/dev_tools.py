@@ -8,6 +8,7 @@ from typing import Any
 from services import backup
 from core import config
 from core.common import ApiError, now_text
+from core.constants import STATUS_ORDERED, SYSTEM_NOT_ARRIVED_NODE_ID
 from db import database
 
 
@@ -132,7 +133,11 @@ def _database_stats(path: Path) -> dict[str, int]:
             "storage_nodes": int(conn.execute("SELECT COUNT(*) AS n FROM storage_nodes").fetchone()["n"]),
             "reagents": int(conn.execute("SELECT COUNT(*) AS n FROM reagents").fetchone()["n"]),
             "clinical_samples": int(conn.execute("SELECT COUNT(*) AS n FROM clinical_samples").fetchone()["n"]),
-            "orders": int(conn.execute("SELECT COUNT(*) AS n FROM orders").fetchone()["n"]),
+            "pending_orders": int(conn.execute(
+                "SELECT COUNT(*) AS n FROM reagents WHERE status = ? AND storage_node_id = ?",
+                (STATUS_ORDERED, SYSTEM_NOT_ARRIVED_NODE_ID),
+            ).fetchone()["n"]),
+            "movements": int(conn.execute("SELECT COUNT(*) AS n FROM movements").fetchone()["n"]),
             "validations": int(conn.execute("SELECT COUNT(*) AS n FROM validations").fetchone()["n"]),
         }
     finally:

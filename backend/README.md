@@ -24,3 +24,15 @@ router 里。
 - 优先保留能服务常见路径的索引：位置、状态、更新时间、有效期、货号、分装来源、时间线。
 - 大量清理后，文件体积需要通过 `python backend/server.py --compact` 才会真正缩小。
 - `db/`、`data/`、`dev_tools/demo.sqlite3` 都是运行时或本机测试产物，不应写入源码仓库；`data/.gitkeep` 只用于让 GitHub 部署时保留空目录。
+
+## 订购、到货和流转
+
+当前数据库不再保留独立的 `orders`、`arrivals` 业务表。
+
+- `/api/orders` 和 `/api/arrivals` 仍是前端入口名，但数据写入 `reagents` 和 `movements`。
+- 订购会创建 `status='已订购'`、`storage_node_id=-2` 的试剂记录，并写入 `reason='订购'` 的流转。
+- 到货会把未到货试剂转为实际库存；未选择真实空间时写入 `storage_node_id=-3`，显示为“未归位”。
+- 多件到货沿用分装/同源语义，通过 `source_code + aliquot_no` 关联。
+- 临床标本不走订购和未到货状态，只在入库、移动、出库时写入流转。
+
+系统位置节点固定为：`-1 未订购`、`-2 未到货`、`-3 未归位`、`-4 已出库`。真实存储空间必须使用正数 `storage_nodes.id`。

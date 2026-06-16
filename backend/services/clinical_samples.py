@@ -5,7 +5,15 @@ from datetime import date
 from typing import Any
 
 from core.common import ApiError, clean_int_range, clean_optional_positive_int, create_audit, now_text, row_dict, safe_float
-from core.constants import STATUS_AVAILABLE
+from core.constants import (
+    MOVEMENT_REASON_MOVE,
+    MOVEMENT_REASON_REGISTER,
+    MOVEMENT_REASON_STATUS,
+    STATUS_AVAILABLE,
+    STATUS_CONSUMED,
+    SYSTEM_CHECKED_OUT_NODE_ID,
+    SYSTEM_UNPLACED_NODE_ID,
+)
 from db.database import connect
 from services.options_config import dropdown_values
 from services.storage_inventory import (
@@ -15,6 +23,8 @@ from services.storage_inventory import (
     occupies_storage,
     release_sample_storage,
     sequential_frame_positions,
+    storage_location_text,
+    storage_target_or_default,
 )
 
 SAMPLE_CODE_PREFIX = "SP"
@@ -82,6 +92,50 @@ def normalize_sample_rows(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> 
     return attach_aliquot_totals(conn, [normalize_sample_item(row, conn) for row in rows])
 
 
+def sample_target_for_status(status: str | None, requested_node_id: Any = None) -> int:
+    if str(status or "").strip() == STATUS_CONSUMED:
+        return SYSTEM_CHECKED_OUT_NODE_ID
+    return storage_target_or_default(requested_node_id, status)
+
+
+def record_sample_transfer(
+    conn: sqlite3.Connection,
+    *,
+    item_id: int,
+    object_id: str,
+    from_node_id: int,
+    from_position: str | None,
+    to_node_id: int,
+    to_position: str | None,
+    user_id: int | None,
+    reason: str,
+    note: str = "",
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO movements
+            (object_type, object_id, item_type, item_id, from_storage_node_id, from_grid_cell,
+             to_storage_node_id, to_grid_cell, from_location_snapshot, to_location_snapshot,
+             moved_by, moved_at, reason, note)
+        VALUES ('临床标本', ?, 'sample', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            object_id,
+            item_id,
+            from_node_id,
+            from_position,
+            to_node_id,
+            to_position,
+            storage_location_text(conn, from_node_id, from_position),
+            storage_location_text(conn, to_node_id, to_position),
+            user_id,
+            now_text(),
+            reason,
+            note,
+        ),
+    )
+
+
 def sample_detail(conn: sqlite3.Connection, sample_id: int) -> dict[str, Any]:
     row = conn.execute("SELECT * FROM clinical_samples WHERE id = ?", (sample_id,)).fetchone()
     if row is None:
@@ -104,13 +158,17 @@ def insert_sample_tubes(
     start_position: str | None,
     auto_find_from_start: bool = False,
 ) -> list[dict[str, Any]]:
+    target_node_id = sample_target_for_status(values.get("status"), node_id)
+    values["storage_node_id"] = target_node_id
+    if target_node_id <= 0:
+        values["grid_cell"] = None
     if not values["source_code"]:
         values["code"] = values["code"] or next_code(conn)
         values["source_code"] = values["code"]
     first_aliquot = next_aliquot_no(conn, values["source_code"])
-    if node_id and occupies_storage(values["status"]) and (tube_count > 1 or auto_find_from_start):
-        positions = sequential_frame_positions(conn, node_id, tube_count, start_position)
-    elif node_id and occupies_storage(values["status"]):
+    if target_node_id > 0 and occupies_storage(values["status"]) and (tube_count > 1 or auto_find_from_start):
+        positions = sequential_frame_positions(conn, target_node_id, tube_count, start_position)
+    elif target_node_id > 0 and occupies_storage(values["status"]):
         positions = [start_position]
     else:
         positions = [None] * tube_count
@@ -127,10 +185,22 @@ def insert_sample_tubes(
             [row_values[col] for col in cols],
         )
         sample_id = int(cur.lastrowid)
-        if node_id and occupies_storage(row_values["status"]):
-            assign_sample_to_node(conn, sample_id, node_id, user_id, positions[offset])
+        assign_sample_to_node(conn, sample_id, target_node_id, user_id, positions[offset])
         row = conn.execute("SELECT * FROM clinical_samples WHERE id = ?", (sample_id,)).fetchone()
-        inserted.append(normalize_sample_item(row, conn))
+        item = normalize_sample_item(row, conn)
+        record_sample_transfer(
+            conn,
+            item_id=sample_id,
+            object_id=item["code"] or str(sample_id),
+            from_node_id=SYSTEM_UNPLACED_NODE_ID,
+            from_position=None,
+            to_node_id=int(item["storage_node_id"] or SYSTEM_UNPLACED_NODE_ID),
+            to_position=str(item.get("grid_cell") or "").strip() or None,
+            user_id=user_id,
+            reason=MOVEMENT_REASON_REGISTER,
+            note=str(row_values.get("note") or ""),
+        )
+        inserted.append(item)
     return attach_aliquot_totals(conn, inserted)
 
 
@@ -142,11 +212,15 @@ def insert_combined_sample(
     node_id: int | None,
     start_position: str | None,
 ) -> list[dict[str, Any]]:
+    target_node_id = sample_target_for_status(values.get("status"), node_id)
     row_values = values.copy()
     row_values["code"] = row_values["code"] or next_code(conn)
     row_values["source_code"] = row_values["source_code"] or row_values["code"]
     row_values["quantity"] = quantity
     row_values["aliquot_no"] = None
+    row_values["storage_node_id"] = target_node_id
+    if target_node_id <= 0:
+        row_values["grid_cell"] = None
     ensure_unique_sample_aliquot(conn, row_values["code"], row_values["aliquot_no"], source_code=row_values["source_code"])
     cols = list(row_values.keys())
     cur = conn.execute(
@@ -154,10 +228,23 @@ def insert_combined_sample(
         [row_values[col] for col in cols],
     )
     sample_id = int(cur.lastrowid)
-    if node_id and occupies_storage(row_values["status"]):
-        assign_sample_to_node(conn, sample_id, node_id, user_id, start_position)
+    target_position = start_position if target_node_id > 0 and occupies_storage(row_values["status"]) else None
+    assign_sample_to_node(conn, sample_id, target_node_id, user_id, target_position)
     row = conn.execute("SELECT * FROM clinical_samples WHERE id = ?", (sample_id,)).fetchone()
-    return attach_aliquot_totals(conn, [normalize_sample_item(row, conn)])
+    item = normalize_sample_item(row, conn)
+    record_sample_transfer(
+        conn,
+        item_id=sample_id,
+        object_id=item["code"] or str(sample_id),
+        from_node_id=SYSTEM_UNPLACED_NODE_ID,
+        from_position=None,
+        to_node_id=int(item["storage_node_id"] or SYSTEM_UNPLACED_NODE_ID),
+        to_position=str(item.get("grid_cell") or "").strip() or None,
+        user_id=user_id,
+        reason=MOVEMENT_REASON_REGISTER,
+        note=str(row_values.get("note") or ""),
+    )
+    return attach_aliquot_totals(conn, [item])
 
 
 def base_sample_values(data: dict[str, Any], user: dict[str, Any], source: str | None = None) -> dict[str, Any]:
@@ -179,7 +266,7 @@ def base_sample_values(data: dict[str, Any], user: dict[str, Any], source: str |
         "amount_unit": str(data.get("amount_unit", "") or "").strip(),
         "quantity": safe_float(data.get("quantity"), 1),
         "status": str(data.get("status", STATUS_AVAILABLE)).strip() or STATUS_AVAILABLE,
-        "storage_node_id": None,
+        "storage_node_id": SYSTEM_UNPLACED_NODE_ID,
         "grid_cell": None,
         "entry_date": str(data.get("entry_date") or date.today().isoformat()),
         "expiration_date": str(data.get("expiration_date") or "").strip(),
@@ -263,9 +350,31 @@ def update_sample(sample_id: int, data: dict[str, Any], user: dict[str, Any]) ->
         current = conn.execute("SELECT * FROM clinical_samples WHERE id = ?", (sample_id,)).fetchone()
         if not occupies_storage(current["status"]):
             release_sample_storage(conn, sample_id, user["id"])
-        elif move_node_requested:
-            target_node_id = clean_optional_positive_int(move_node_id)
-            assign_sample_to_node(conn, sample_id, target_node_id, user["id"], str(move_position or "").strip() or None)
+        else:
+            current_node_id = int(current["storage_node_id"] or SYSTEM_UNPLACED_NODE_ID)
+            needs_default_from_system = current_node_id <= 0 and current_node_id not in {SYSTEM_UNPLACED_NODE_ID, SYSTEM_CHECKED_OUT_NODE_ID}
+            if move_node_requested or needs_default_from_system:
+                target_node_id = sample_target_for_status(current["status"], move_node_id if move_node_requested else None)
+                if target_node_id <= 0 and target_node_id != SYSTEM_UNPLACED_NODE_ID:
+                    raise ApiError(400, "存放位置只能选择真实空间或未归位")
+                target_position = str(move_position or "").strip() or None
+                target_position = target_position if target_node_id > 0 else None
+                from_node_id = current_node_id
+                from_position = str(current["grid_cell"] or "").strip() or None
+                assign_sample_to_node(conn, sample_id, target_node_id, user["id"], target_position)
+                if int(from_node_id) != int(target_node_id) or str(from_position or "") != str(target_position or ""):
+                    record_sample_transfer(
+                        conn,
+                        item_id=sample_id,
+                        object_id=current["code"] or str(sample_id),
+                        from_node_id=from_node_id,
+                        from_position=from_position,
+                        to_node_id=target_node_id,
+                        to_position=target_position,
+                        user_id=user["id"],
+                        reason=MOVEMENT_REASON_MOVE if move_node_requested else MOVEMENT_REASON_STATUS,
+                        note="标本位置已更新" if move_node_requested else "标本状态调整后自动进入未归位",
+                    )
         create_audit(conn, user["id"], "api_update_clinical_sample", "clinical_samples", sample_id, data, row_dict(old))
         conn.commit()
         return {"item": sample_detail(conn, sample_id)["item"]}

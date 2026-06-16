@@ -31,6 +31,12 @@ function amountText(item) {
   return `${esc(item.amount)}${esc(item.amount_unit || '')}`;
 }
 
+function orderPriceText(value) {
+  if (value === null || value === undefined || value === '') return '未填写';
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(2) : String(value);
+}
+
 function syncMultiRegisterFields(form) {
   if (!form) return;
   form.querySelectorAll('[data-multi-register-row]').forEach(row => {
@@ -79,6 +85,7 @@ function allInventoryColumns() {
     { key: 'quantity', label: '数量/规格', render: (_, r) => inventoryObjectType(r, r.item_type) === 'sample'
       ? amountText(r)
       : (r.item_type === 'space' ? '-' : esc(r.quantity)) },
+    { key: 'price', label: '价格', render: (_, r) => r.item_type === 'reagent' ? esc(orderPriceText(r.price)) : '-' },
     { key: 'status', label: '状态', render: badge },
     { key: 'storage_location', label: '位置', render: v => esc(locationText(v)) },
     { key: 'updated_at', label: '更新时间' },
@@ -239,9 +246,18 @@ function nodeLabel(node) { return node.path || node.name; }
 function nodeById(id) { return state.storageNodes.find(node => Number(node.id) === Number(id)); }
 
 const DEFAULT_ROOT_STORAGE_NODE_ID = '1';
-const VIRTUAL_UNPLACED_NODE_ID = '-1';
+const VIRTUAL_UNPLACED_NODE_ID = '-3';
 
 function isVirtualUnplacedId(id) { return String(id || '') === VIRTUAL_UNPLACED_NODE_ID; }
+
+function isRealStorageNodeId(id) {
+  return Number.isFinite(Number(id)) && Number(id) > 0;
+}
+
+function isSystemStorageNode(nodeOrId) {
+  if (typeof nodeOrId === 'object') return !isRealStorageNodeId(nodeOrId?.id) || nodeOrId?.node_type === 'system';
+  return !isRealStorageNodeId(nodeOrId);
+}
 
 function isVirtualUnplacedNode(nodeOrId) {
   if (typeof nodeOrId === 'object') return Boolean(nodeOrId?.is_virtual_unplaced) || isVirtualUnplacedId(nodeOrId?.id);
@@ -249,10 +265,10 @@ function isVirtualUnplacedNode(nodeOrId) {
 }
 
 function selectableStorageNodes() {
-  return state.storageNodes;
+  return state.storageNodes.filter(node => !isSystemStorageNode(node));
 }
 
-function parentStorageNodes() { return state.storageNodes; }
+function parentStorageNodes() { return selectableStorageNodes(); }
 
 function rootStorageNode() {
   return nodeById(DEFAULT_ROOT_STORAGE_NODE_ID)
@@ -290,7 +306,7 @@ function spaceTypeOptions() {
 }
 
 function isUnframedNode(node) {
-  return Boolean(node && Number(node.rows || 1) === 1 && Number(node.cols || 1) === 1);
+  return Boolean(node && (isSystemStorageNode(node) || (Number(node.rows || 1) === 1 && Number(node.cols || 1) === 1)));
 }
 
 function storageContext(node) {
@@ -331,6 +347,11 @@ function fillPositionSelect(select, nodeId, current = '') {
     select.value = current || '';
     return;
   }
+  if (!isRealStorageNodeId(nodeId)) {
+    select.innerHTML = '<option value="">无</option>';
+    select.value = '';
+    return;
+  }
   const node = nodeById(nodeId);
   const coords = positionOptionsForNode(node);
   select.innerHTML = '<option value="">无</option>';
@@ -368,7 +389,7 @@ async function loadOptions() {
   });
   document.querySelectorAll('#sampleForm select[name="status"], #sampleEditForm select[name="status"]').forEach(sel => fillSelect(sel, currentOptions('sample_statuses')));
   document.querySelectorAll('#sampleForm select[name="category"], #sampleEditForm select[name="category"]').forEach(sel => fillSelect(sel, currentOptions('sample_names')));
-  document.querySelectorAll('select[name="validation_status"], select[name="result"]').forEach(sel => fillSelect(sel, currentOptions('validation_statuses')));
+  document.querySelectorAll('select[name="result"]').forEach(sel => fillSelect(sel, currentOptions('validation_statuses')));
   document.querySelectorAll('select[name="method"]').forEach(sel => fillSelect(sel, currentOptions('validation_methods')));
   document.querySelectorAll('#nodeForm select[name="space_type"]').forEach(sel => {
     fillSelectObjects(sel, spaceTypeOptions(), { valueKey: 'value', label: item => item.label });
@@ -392,8 +413,12 @@ function setDefaultDropdownValues() {
   if (reagentForm && !reagentForm.elements.id.value) {
     reagentForm.elements.category.value = currentOptions('categories').includes('其他') ? '其他' : currentOptions('categories')[0] || '';
     reagentForm.elements.status.value = currentOptions('reagent_statuses').includes(STATUS_AVAILABLE) ? STATUS_AVAILABLE : currentOptions('reagent_statuses')[0] || '';
-    reagentForm.elements.validation_status.value = currentOptions('validation_statuses').includes(VALIDATION_UNVERIFIED) ? VALIDATION_UNVERIFIED : currentOptions('validation_statuses')[0] || '';
     if (reagentForm.elements.separate_items) reagentForm.elements.separate_items.checked = true;
+  }
+  const reagentEditForm = $('reagentEditForm');
+  if (reagentEditForm && !reagentEditForm.elements.id.value) {
+    reagentEditForm.elements.category.value ||= currentOptions('categories').includes('其他') ? '其他' : currentOptions('categories')[0] || '';
+    reagentEditForm.elements.status.value ||= currentOptions('reagent_statuses').includes(STATUS_AVAILABLE) ? STATUS_AVAILABLE : currentOptions('reagent_statuses')[0] || '';
   }
   const sampleForm = $('sampleForm');
   if (sampleForm) {
@@ -457,6 +482,7 @@ function reagentColumns(showActions = false) {
     { key: 'brand', label: '品牌' },
     { key: 'catalog_no', label: '货号' },
     { key: 'quantity', label: '数量', render: v => esc(v) },
+    { key: 'price', label: '价格', render: v => esc(orderPriceText(v)) },
     { key: 'status', label: '状态', render: badge },
     { key: 'validation_status', label: '验证', render: badge },
     { key: 'storage_location', label: '位置', render: v => esc(locationText(v)) },

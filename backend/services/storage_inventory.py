@@ -5,11 +5,18 @@ from typing import Any
 
 from core.common import ApiError, now_text, row_dict, safe_float
 from core.constants import (
+    MOVEMENT_REASON_STATUS,
     PHYSICAL_INVENTORY_STATUSES,
     PHYSICAL_INVENTORY_STATUS_SQL,
+    SYSTEM_CHECKED_OUT_NODE_ID,
+    SYSTEM_NOT_ARRIVED_NODE_ID,
+    SYSTEM_STORAGE_NODE_IDS,
+    SYSTEM_STORAGE_NODE_LABELS,
+    SYSTEM_UNPLACED_NODE_ID,
     STATUS_CONSUMED,
     STATUS_DISABLED,
     STATUS_ORDERED,
+    VALIDATION_UNVERIFIED,
 )
 
 INVENTORY_TABLES = {
@@ -17,9 +24,119 @@ INVENTORY_TABLES = {
     "sample": "clinical_samples",
 }
 
+VALIDATION_STATUS_SQL = """
+COALESCE((
+    SELECT v.result
+    FROM validations v
+    WHERE v.catalog_no = {alias}.catalog_no
+      AND COALESCE(v.catalog_no, '') != ''
+    ORDER BY
+      CASE v.result
+        WHEN '通过' THEN 1
+        WHEN '不通过' THEN 2
+        WHEN '待复核' THEN 3
+        WHEN '未验证' THEN 5
+        ELSE 4
+      END,
+      v.validation_date DESC,
+      v.created_at DESC,
+      v.id DESC
+    LIMIT 1
+), '未验证')
+"""
+
+
+def reagent_validation_status_sql(reagent_alias: str = "reagents") -> str:
+    return VALIDATION_STATUS_SQL.format(alias=reagent_alias)
+
+
+def reagent_validation_statuses_by_catalogs(conn: sqlite3.Connection, catalog_numbers: list[str]) -> dict[str, str]:
+    catalogs = sorted({str(catalog or "").strip() for catalog in catalog_numbers if str(catalog or "").strip()})
+    statuses = {catalog: VALIDATION_UNVERIFIED for catalog in catalogs}
+    if not catalogs:
+        return statuses
+    placeholders = ",".join("?" for _ in catalogs)
+    rows = conn.execute(
+        f"""
+        SELECT catalog_no, result
+        FROM validations
+        WHERE catalog_no IN ({placeholders})
+        ORDER BY
+          catalog_no,
+          CASE result
+            WHEN '通过' THEN 1
+            WHEN '不通过' THEN 2
+            WHEN '待复核' THEN 3
+            WHEN '未验证' THEN 5
+            ELSE 4
+          END,
+          validation_date DESC,
+          created_at DESC,
+          id DESC
+        """,
+        catalogs,
+    ).fetchall()
+    seen: set[str] = set()
+    for row in rows:
+        catalog = str(row["catalog_no"] or "").strip()
+        if not catalog or catalog in seen:
+            continue
+        statuses[catalog] = str(row["result"] or "").strip() or VALIDATION_UNVERIFIED
+        seen.add(catalog)
+    return statuses
+
+
+def attach_reagent_validation_statuses(conn: sqlite3.Connection, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    reagent_items = [item for item in items if item.get("item_type") == "reagent"]
+    catalogs = [str(item.get("catalog_no") or "").strip() for item in reagent_items]
+    statuses = reagent_validation_statuses_by_catalogs(conn, catalogs)
+    for item in reagent_items:
+        catalog = str(item.get("catalog_no") or "").strip()
+        item["validation_status"] = statuses.get(catalog, VALIDATION_UNVERIFIED)
+    return items
+
 
 def occupies_storage(status: str | None) -> bool:
     return str(status or "").strip() in PHYSICAL_INVENTORY_STATUSES
+
+
+def is_system_storage_node_id(node_id: Any) -> bool:
+    try:
+        return int(node_id) in SYSTEM_STORAGE_NODE_IDS
+    except (TypeError, ValueError):
+        return False
+
+
+def is_real_storage_node_id(node_id: Any) -> bool:
+    try:
+        return int(node_id) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def system_storage_label(node_id: Any) -> str:
+    try:
+        return SYSTEM_STORAGE_NODE_LABELS.get(int(node_id), "")
+    except (TypeError, ValueError):
+        return ""
+
+
+def default_storage_node_for_status(status: str | None) -> int:
+    clean_status = str(status or "").strip()
+    if clean_status == STATUS_ORDERED:
+        return SYSTEM_NOT_ARRIVED_NODE_ID
+    if clean_status == STATUS_CONSUMED:
+        return SYSTEM_CHECKED_OUT_NODE_ID
+    return SYSTEM_UNPLACED_NODE_ID
+
+
+def storage_target_or_default(node_id: Any, status: str | None = None) -> int:
+    if node_id in (None, ""):
+        return default_storage_node_for_status(status)
+    try:
+        return int(node_id)
+    except (TypeError, ValueError):
+        return default_storage_node_for_status(status)
 
 
 def grid_label(index: int, cols: int | None = None) -> str:
@@ -79,6 +196,8 @@ def coord_list(rows: int, cols: int) -> list[str]:
 def position_options_for_node(node: sqlite3.Row | dict[str, Any] | None) -> list[str]:
     if node is None:
         return []
+    if int(node["id"]) in SYSTEM_STORAGE_NODE_IDS or str(node["node_type"] or "") == "system":
+        return []
     rows, cols = default_grid_for_node(node["rows"], node["cols"])
     if rows == 1 and cols == 1:
         return []
@@ -118,6 +237,8 @@ def get_node(conn: sqlite3.Connection, node_id: int | None) -> sqlite3.Row | Non
 
 def node_path(conn: sqlite3.Connection, node_id: int | None) -> list[dict[str, Any]]:
     path: list[dict[str, Any]] = []
+    if is_system_storage_node_id(node_id):
+        return [{"id": int(node_id), "name": system_storage_label(node_id), "node_type": "system"}]
     current = get_node(conn, node_id)
     guard = 0
     while current is not None and guard < 100:
@@ -129,12 +250,16 @@ def node_path(conn: sqlite3.Connection, node_id: int | None) -> list[dict[str, A
 
 
 def node_full_path(conn: sqlite3.Connection, node_id: int | None) -> str:
+    if is_system_storage_node_id(node_id):
+        return system_storage_label(node_id)
     return " / ".join(node["name"] for node in node_path(conn, node_id))
 
 
 def storage_location_text(conn: sqlite3.Connection, node_id: int, position: str | None = None) -> str:
     if not node_id:
         return ""
+    if is_system_storage_node_id(node_id):
+        return system_storage_label(node_id)
     clean_position = (position or "").strip()
     full_path = node_full_path(conn, node_id)
     return f"{full_path}；{clean_position}" if clean_position else full_path
@@ -143,12 +268,16 @@ def storage_location_text(conn: sqlite3.Connection, node_id: int, position: str 
 def storage_location_from_path(path_cache: dict[int, str], node_id: int, position: str | None = None) -> str:
     if not node_id:
         return ""
+    if is_system_storage_node_id(node_id):
+        return system_storage_label(node_id)
     clean_position = (position or "").strip()
     full_path = path_cache.get(int(node_id), "")
     return f"{full_path}；{clean_position}" if clean_position else full_path
 
 
 def descendant_node_ids(conn: sqlite3.Connection, node_id: int, include_self: bool = True) -> list[int]:
+    if is_system_storage_node_id(node_id):
+        return [int(node_id)] if include_self else []
     ids = [node_id] if include_self else []
     children = conn.execute("SELECT id FROM storage_nodes WHERE parent_id = ?", (node_id,)).fetchall()
     for child in children:
@@ -207,7 +336,7 @@ def computed_storage_location(
 ) -> str:
     node_id = item.get("storage_node_id")
     if not node_id:
-        return "未归位" if occupies_storage(item.get("status")) else ""
+        return system_storage_label(default_storage_node_for_status(item.get("status")))
     if path_cache is not None:
         return storage_location_from_path(path_cache, int(node_id), str(item.get("grid_cell") or "").strip() or None)
     return storage_location_text(conn, int(node_id), str(item.get("grid_cell") or "").strip() or None)
@@ -229,6 +358,7 @@ def normalize_reagent_item(
             "display_name": item.get("name") or "",
             "display_type": item.get("category") or "试剂",
             "source_code": source_code,
+            "validation_status": VALIDATION_UNVERIFIED,
         }
     )
     return item
@@ -306,10 +436,10 @@ def storage_item_counts(conn: sqlite3.Connection) -> dict[int, int]:
         SELECT storage_node_id, COUNT(*) AS n
         FROM (
             SELECT storage_node_id FROM reagents
-            WHERE storage_node_id IS NOT NULL AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
+            WHERE storage_node_id > 0 AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
             UNION ALL
             SELECT storage_node_id FROM clinical_samples
-            WHERE storage_node_id IS NOT NULL AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
+            WHERE storage_node_id > 0 AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
         )
         GROUP BY storage_node_id
         """
@@ -324,12 +454,12 @@ def unplaced_item_count(conn: sqlite3.Connection) -> int:
         FROM (
             SELECT COUNT(*) AS n
             FROM reagents
-            WHERE storage_node_id IS NULL
+            WHERE storage_node_id = {SYSTEM_UNPLACED_NODE_ID}
               AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
             UNION ALL
             SELECT COUNT(*) AS n
             FROM clinical_samples
-            WHERE storage_node_id IS NULL
+            WHERE storage_node_id = {SYSTEM_UNPLACED_NODE_ID}
               AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
         )
         """
@@ -441,6 +571,7 @@ def inventory_items_at_node(conn: sqlite3.Connection, node_id: int, direct_only:
         ).fetchall()
     ]
     items = reagents + samples
+    attach_reagent_validation_statuses(conn, reagents)
     attach_aliquot_totals(conn, items)
     items.sort(key=lambda item: (str(item.get("grid_cell") or ""), str(item.get("updated_at") or ""), str(item.get("code") or "")), reverse=True)
     return items[:limit]
@@ -452,7 +583,7 @@ def unplaced_inventory_items(conn: sqlite3.Connection, limit: int = 500) -> list
         for row in conn.execute(
             f"""
             SELECT * FROM reagents
-            WHERE storage_node_id IS NULL
+            WHERE storage_node_id = {SYSTEM_UNPLACED_NODE_ID}
               AND COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}
             ORDER BY updated_at DESC, id DESC
             LIMIT ?
@@ -465,7 +596,7 @@ def unplaced_inventory_items(conn: sqlite3.Connection, limit: int = 500) -> list
         for row in conn.execute(
             f"""
             SELECT * FROM clinical_samples
-            WHERE storage_node_id IS NULL
+            WHERE storage_node_id = {SYSTEM_UNPLACED_NODE_ID}
               AND status IN {PHYSICAL_INVENTORY_STATUS_SQL}
             ORDER BY updated_at DESC, id DESC
             LIMIT ?
@@ -474,6 +605,7 @@ def unplaced_inventory_items(conn: sqlite3.Connection, limit: int = 500) -> list
         ).fetchall()
     ]
     items = reagents + samples
+    attach_reagent_validation_statuses(conn, reagents)
     attach_aliquot_totals(conn, items)
     items.sort(key=lambda item: (str(item.get("updated_at") or ""), int(item.get("id") or 0)), reverse=True)
     return items[:limit]
@@ -492,6 +624,7 @@ def inventory_item_by_id(conn: sqlite3.Connection, item_type: str, item_id: int)
         return items[0] if items else None
     row = conn.execute("SELECT * FROM reagents WHERE id = ?", (item_id,)).fetchone()
     items = [normalize_reagent_item(row, conn)] if row else []
+    attach_reagent_validation_statuses(conn, items)
     attach_aliquot_totals(conn, items)
     return items[0] if items else None
 
@@ -514,14 +647,17 @@ def assign_inventory_item_to_node(
 ) -> None:
     table = INVENTORY_TABLES[item_type]
     if node_id is None:
+        node_id = SYSTEM_UNPLACED_NODE_ID
+    node_id = int(node_id)
+    if is_system_storage_node_id(node_id):
         conn.execute(
             f"""
             UPDATE {table}
-            SET storage_node_id = NULL, grid_cell = NULL,
+            SET storage_node_id = ?, grid_cell = NULL,
                 updated_by = ?, updated_at = ?
             WHERE id = ?
             """,
-            (user_id, now_text(), item_id),
+            (node_id, user_id, now_text(), item_id),
         )
         return
     node = get_node(conn, node_id)
@@ -598,10 +734,13 @@ def release_reagent_storage(conn: sqlite3.Connection, reagent_id: int, user_id: 
     timestamp = now_text()
     status = str(reagent["status"] or "").strip() or STATUS_DISABLED
     consumed = status == STATUS_CONSUMED
-    target_location = "未放置（已耗尽）" if consumed else "未放置（未到货）"
-    reason = "试剂耗尽" if consumed else "订购状态调整"
+    target_node_id = SYSTEM_CHECKED_OUT_NODE_ID if consumed else SYSTEM_NOT_ARRIVED_NODE_ID
+    if int(from_node_id or 0) == target_node_id and not from_position:
+        return
+    target_location = storage_location_text(conn, target_node_id)
+    reason = MOVEMENT_REASON_STATUS
     note = "实物已从原位置取出，试剂和验证记录保留。" if consumed else "状态为已订购，未形成可占用位置的实物库存。"
-    assign_reagent_to_node(conn, reagent_id, None, user_id)
+    assign_reagent_to_node(conn, reagent_id, target_node_id, user_id)
     if from_location:
         conn.execute(
             """
@@ -609,11 +748,11 @@ def release_reagent_storage(conn: sqlite3.Connection, reagent_id: int, user_id: 
                 (object_type, object_id, item_type, item_id, from_storage_node_id, from_grid_cell,
                  to_storage_node_id, to_grid_cell, from_location_snapshot, to_location_snapshot,
                  moved_by, moved_at, reason, note)
-            VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "试剂", reagent["code"] or str(reagent_id), "reagent", reagent_id,
-                from_node_id, from_position, from_location, target_location, user_id, timestamp,
+                from_node_id, from_position, target_node_id, from_location, target_location, user_id, timestamp,
                 reason, note,
             ),
         )
@@ -623,4 +762,26 @@ def release_sample_storage(conn: sqlite3.Connection, sample_id: int, user_id: in
     sample = conn.execute("SELECT * FROM clinical_samples WHERE id = ?", (sample_id,)).fetchone()
     if sample is None:
         raise ApiError(404, "临床标本不存在")
-    assign_sample_to_node(conn, sample_id, None, user_id)
+    from_node_id = sample["storage_node_id"]
+    from_position = str(sample["grid_cell"] or "").strip() or None
+    if int(from_node_id or 0) == SYSTEM_CHECKED_OUT_NODE_ID and not from_position:
+        return
+    from_location = storage_location_text(conn, int(from_node_id), from_position) if from_node_id else ""
+    assign_sample_to_node(conn, sample_id, SYSTEM_CHECKED_OUT_NODE_ID, user_id)
+    if from_location:
+        timestamp = now_text()
+        conn.execute(
+            """
+            INSERT INTO movements
+                (object_type, object_id, item_type, item_id, from_storage_node_id, from_grid_cell,
+                 to_storage_node_id, to_grid_cell, from_location_snapshot, to_location_snapshot,
+                 moved_by, moved_at, reason, note)
+            VALUES (?, ?, 'sample', ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "临床标本", sample["code"] or str(sample_id), sample_id,
+                from_node_id, from_position, SYSTEM_CHECKED_OUT_NODE_ID,
+                from_location, storage_location_text(conn, SYSTEM_CHECKED_OUT_NODE_ID),
+                user_id, timestamp, MOVEMENT_REASON_STATUS, "状态调整为已耗尽，标本不再占用实物位置。",
+            ),
+        )
