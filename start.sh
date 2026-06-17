@@ -15,8 +15,9 @@ BACKEND="$ROOT/backend/server.py"
 FRONTEND_DIR="$ROOT/frontend"
 DATA_DIR="$ROOT/data"
 PID_DIR="$DATA_DIR/pids"
+ENV_FILE="$ROOT/config/.env"
 
-if [ ! -f "$ROOT/.env" ] && [ -z "${LABKEEPER_ENV:-}" ]; then
+if [ ! -f "$ENV_FILE" ] && [ -z "${LABKEEPER_ENV:-}" ]; then
   export LABKEEPER_ENV=development
 fi
 

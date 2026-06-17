@@ -9,7 +9,7 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Backend = Join-Path $Root "backend\server.py"
 $Frontend = Join-Path $Root "frontend"
-$EnvFile = Join-Path $Root ".env"
+$EnvFile = Join-Path $Root "config\.env"
 $PidDir = Join-Path $Root "data\pids"
 
 function Stop-LabKeeper {
