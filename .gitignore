@@ -8,7 +8,6 @@
 *_deploy_*.zip
 *_deploy_*.sqlite3
 
-.env
 .venv/
 node_modules/
 dist/
@@ -22,6 +21,9 @@ archive/
 data/*
 !data/.gitkeep
 
+outputs/
+/-80js.txt
+
 .claude/
 .qwen/
 AGENTS.md
@@ -30,3 +32,4 @@ DATA_QUALITY_GUARD_PLAN.md
 frontend_server.*
 backend_server.*
 smoke_backend.*
+config/

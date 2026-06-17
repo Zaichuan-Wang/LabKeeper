@@ -108,20 +108,20 @@ http://服务器IP:5173
 正式使用前，复制配置模板：
 
 ```bash
-cp .env.example .env
+cp -r config.example config
 ```
 
 至少修改这些项：
 
 ```env
 LABKEEPER_ENV=production
-LABKEEPER_ENABLE_DEV_TOOLS=0
+LABKEEPER_ENABLE_DEVTOOLS=0
 LABKEEPER_API_SECRET=请换成随机长字符串
-LABKEEPER_INITIAL_ADMIN_PASSWORD=请换成正式管理员密码
+LABKEEPER_INITIAL_PASSWORD=请换成正式初始密码
 LABKEEPER_CORS_ORIGINS=http://服务器IP:5173
 ```
 
-正式环境会关闭“测试管理员登录”和“载入 Demo 数据库”入口。
+开发排查时可在非 `production` 环境启用 `LABKEEPER_ENABLE_DEVTOOLS=1`。开发接口集中在 `dev_tools/api.py`，正式部署不需要这些入口时可以不带 `dev_tools/` 目录。
 
 ### 推荐的服务器方式
 

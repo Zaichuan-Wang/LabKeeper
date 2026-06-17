@@ -14,16 +14,7 @@
     "Sigma-Aldrich",
     "Thermo Fisher",
     "Abcam",
-    "CST",
-    "BioLegend",
-    "BD Biosciences",
-    "Invitrogen",
-    "R&D Systems",
-    "Gibco",
-    "Corning",
-    "碧云天",
-    "索莱宝",
-    "翌圣生物"
+    "CST"
   ],
   "reagent_statuses": [
     "已订购",
@@ -46,6 +37,31 @@
     "qPCR",
     "其他"
   ],
+  "antibody_conjugates": [
+    "PE",
+    "FITC",
+    "APC"
+  ],
+  "antibody_react_species": [
+    "Mouse",
+    "Human",
+    "Rat"
+  ],
+  "antibody_host_species": [
+    "Rabbit",
+    "Mouse",
+    "Goat",
+    "Rat"
+  ],
+  "antibody_isotypes": [
+    "IgG1",
+    "IgG2a",
+    "IgG2b",
+    "IgG2c",
+    "IgG3",
+    "IgM",
+    "IgA"
+  ],
   "sample_prefixes": [
     "SMP"
   ],
@@ -55,7 +71,6 @@
     "全血",
     "细胞悬液",
     "组织",
-    "灌洗液",
     "尿液",
     "其他",
     "细胞",
@@ -81,5 +96,6 @@
     "液氮罐",
     "架子",
     "其他"
-  ]
+  ],
+  "movement_merge_window_minutes": 30
 }
