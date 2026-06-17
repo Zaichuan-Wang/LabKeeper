@@ -28,6 +28,7 @@ class LoginRequest(ApiRequest):
 class PasswordChangeRequest(ApiRequest):
     old_password: str = ""
     new_password: str = ""
+    new_password2: str = ""
 
 
 class OrderCreateRequest(ApiRequest):

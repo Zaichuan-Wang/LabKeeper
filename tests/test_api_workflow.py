@@ -698,6 +698,26 @@ def test_admin_user_initial_password_and_reset(app_client, auth_headers, monkeyp
     assert reset_login["user"]["username"] == "initial-user"
 
 
+def test_change_own_password_accepts_confirmation_field(app_client, auth_headers):
+    api_ok(
+        app_client.patch(
+            "/api/me/password",
+            headers=auth_headers,
+            json={"old_password": "admin123", "new_password": "admin-new-789", "new_password2": "admin-new-789"},
+        )
+    )
+    changed_login = api_ok(app_client.post("/api/login", json={"username": "admin", "password": "admin-new-789"}))
+    assert changed_login["user"]["username"] == "admin"
+
+    mismatch = app_client.patch(
+        "/api/me/password",
+        headers=auth_headers,
+        json={"old_password": "admin-new-789", "new_password": "admin-other-789", "new_password2": "admin-mismatch-789"},
+    )
+    assert mismatch.status_code == 400
+    assert mismatch.json()["error"] == "两次输入的新密码不一致"
+
+
 def test_movement_merge_window_merges_recent_moves_but_not_orders(app_client, auth_headers):
     import db.database as database
 

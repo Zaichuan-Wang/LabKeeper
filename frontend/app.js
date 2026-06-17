@@ -922,7 +922,10 @@ async function submitPassword(e) {
   const form = e.currentTarget;
   const data = formData(form);
   if (data.new_password !== data.new_password2) throw new Error('两次输入的新密码不一致');
-  await api('/api/me/password', { method: 'PATCH', body: JSON.stringify(data) });
+  await api('/api/me/password', {
+    method: 'PATCH',
+    body: JSON.stringify({ old_password: data.old_password, new_password: data.new_password }),
+  });
   resetForm(form);
   toast('密码已更新');
 }

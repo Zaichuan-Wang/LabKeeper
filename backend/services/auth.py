@@ -97,8 +97,11 @@ def login(data: dict[str, Any]) -> dict[str, Any]:
 def change_password(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     old_password = str(data.get("old_password", ""))
     new_password = str(data.get("new_password", ""))
+    new_password2 = str(data.get("new_password2", ""))
     if not old_password or not new_password:
         raise ApiError(400, "旧密码和新密码不能为空")
+    if new_password2 and new_password != new_password2:
+        raise ApiError(400, "两次输入的新密码不一致")
     if len(new_password) < 6:
         raise ApiError(400, "新密码至少 6 位")
     with database.connect() as conn:
