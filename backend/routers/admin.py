@@ -8,6 +8,7 @@ from services import admin
 from services import backup
 from services import data_health
 from models.request_models import (
+    AdminCorrectionRequest,
     AdminDeleteRecordRequest,
     BackupCleanupRequest,
     BackupCreateRequest,
@@ -30,7 +31,6 @@ def dropdown_options(_: dict[str, Any] = Depends(require_user)) -> dict[str, Any
 
 @router.patch("/settings/dropdowns")
 def update_dropdown_options(data: DropdownSettingsRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
-    require_admin(user)
     return json_response(admin.update_dropdown_options(data.payload(patch=True), user))
 
 
@@ -50,6 +50,12 @@ def create_user(data: UserCreateRequest, user: dict[str, Any] = Depends(require_
 def update_user(user_id: int, data: UserUpdateRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
     require_admin(user)
     return json_response(admin.update_user(user_id, data.payload(patch=True), user))
+
+
+@router.post("/users/{user_id}/reset-password")
+def reset_user_password(user_id: int, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
+    require_admin(user)
+    return json_response(admin.reset_user_password(user_id, user))
 
 
 @router.get("/admin/data-health")
@@ -124,3 +130,27 @@ def excel_import(data: ExcelImportRequest, user: dict[str, Any] = Depends(requir
 def delete_admin_records(data: AdminDeleteRecordRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
     require_admin(user)
     return json_response(admin.delete_records(data.payload(), user))
+
+
+@router.post("/admin/corrections/brand/preview")
+def preview_brand_correction(data: AdminCorrectionRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
+    require_admin(user)
+    return json_response(admin.preview_brand_correction(data.payload()))
+
+
+@router.post("/admin/corrections/brand/commit")
+def commit_brand_correction(data: AdminCorrectionRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
+    require_admin(user)
+    return json_response(admin.commit_brand_correction(data.payload(), user))
+
+
+@router.post("/admin/corrections/catalog-no/preview")
+def preview_catalog_no_correction(data: AdminCorrectionRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
+    require_admin(user)
+    return json_response(admin.preview_catalog_no_correction(data.payload()))
+
+
+@router.post("/admin/corrections/catalog-no/commit")
+def commit_catalog_no_correction(data: AdminCorrectionRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
+    require_admin(user)
+    return json_response(admin.commit_catalog_no_correction(data.payload(), user))

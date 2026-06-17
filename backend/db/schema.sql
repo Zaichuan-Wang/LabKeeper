@@ -75,6 +75,8 @@ CREATE TABLE IF NOT EXISTS storage_nodes (
     cols INTEGER,
     grid_row INTEGER,
     grid_col INTEGER,
+    is_favorite INTEGER NOT NULL DEFAULT 0,
+    favorite_sort_order INTEGER NOT NULL DEFAULT 0,
     note TEXT,
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_by INTEGER,
@@ -97,6 +99,24 @@ CREATE TABLE IF NOT EXISTS validations (
     image_path TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY (validator_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS antibody_metadata (
+    catalog_no TEXT PRIMARY KEY NOT NULL CHECK (TRIM(catalog_no) != ''),
+    target TEXT,
+    conjugate TEXT,
+    react_species TEXT,
+    host_species TEXT,
+    clone TEXT,
+    isotype TEXT,
+    aliases TEXT,
+    raw_note TEXT,
+    created_by INTEGER,
+    updated_by INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (created_by) REFERENCES users(id),
+    FOREIGN KEY (updated_by) REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS movements (

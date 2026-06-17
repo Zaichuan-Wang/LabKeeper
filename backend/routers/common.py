@@ -8,10 +8,31 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from core.common import ApiError
+from core.security import AUTH_COOKIE_NAME
+from services import auth
 
 
 def json_response(payload: Any, status_code: int = 200) -> JSONResponse:
     return JSONResponse(content=jsonable_encoder(payload), status_code=status_code)
+
+
+def auth_cookie_response(result: dict[str, Any], status_code: int = 200) -> JSONResponse:
+    response = json_response(result, status_code)
+    response.set_cookie(
+        AUTH_COOKIE_NAME,
+        result["token"],
+        max_age=auth.TOKEN_TTL_SECONDS,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        path="/",
+    )
+    return response
+
+
+def clear_auth_cookie(response: JSONResponse) -> JSONResponse:
+    response.delete_cookie(AUTH_COOKIE_NAME, path="/")
+    return response
 
 
 def download_headers(filename: str, fallback: str = "download.xlsx") -> dict[str, str]:

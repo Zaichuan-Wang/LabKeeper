@@ -34,7 +34,10 @@ class OrderCreateRequest(ApiRequest):
     name: str = ""
     category: str = ""
     brand: str = ""
+    save_brand_option: bool = False
     catalog_no: str = ""
+    antibody_target: str = ""
+    antibody_conjugate: str = ""
     amount: OptionalFloat = None
     amount_unit: str = ""
     quantity: OptionalFloat = 1
@@ -78,6 +81,41 @@ class ValidationUpdateRequest(ApiRequest):
     image_path: str | None = None
 
 
+class AntibodyMetadataCreateRequest(ApiRequest):
+    catalog_no: str = ""
+    target: str = ""
+    conjugate: str = ""
+    react_species: str = ""
+    host_species: str = ""
+    clone: str = ""
+    isotype: str = ""
+    aliases: str = ""
+    raw_note: str = ""
+
+
+class AntibodyMetadataUpdateRequest(ApiRequest):
+    target: str | None = None
+    conjugate: str | None = None
+    react_species: str | None = None
+    host_species: str | None = None
+    clone: str | None = None
+    isotype: str | None = None
+    aliases: str | None = None
+    raw_note: str | None = None
+
+
+class ReagentAiExtractRequest(ApiRequest):
+    text: str = ""
+    form_context: Literal["order", "reagent"] = "reagent"
+    categories: list[str] = Field(default_factory=list)
+    brands: list[str] = Field(default_factory=list)
+    amount_units: list[str] = Field(default_factory=list)
+    antibody_conjugates: list[str] = Field(default_factory=list)
+    antibody_react_species: list[str] = Field(default_factory=list)
+    antibody_host_species: list[str] = Field(default_factory=list)
+    antibody_isotypes: list[str] = Field(default_factory=list)
+
+
 class StorageTargetRequest(ApiRequest):
     storage_node_id: OptionalInt = None
     grid_cell: str = ""
@@ -90,7 +128,10 @@ class InventoryItemCreateRequest(StorageTargetRequest):
     name: str = ""
     category: str = ""
     brand: str = ""
+    save_brand_option: bool = False
     catalog_no: str = ""
+    antibody_target: str = ""
+    antibody_conjugate: str = ""
     amount: OptionalFloat = None
     amount_unit: str = ""
     quantity: OptionalFloat = None
@@ -109,7 +150,10 @@ class InventoryItemUpdateRequest(StorageTargetRequest):
     name: str | None = None
     category: str | None = None
     brand: str | None = None
+    save_brand_option: bool = False
     catalog_no: str | None = None
+    antibody_target: str | None = None
+    antibody_conjugate: str | None = None
     amount: OptionalFloat = None
     amount_unit: str | None = None
     quantity: OptionalFloat = None
@@ -158,6 +202,8 @@ class StorageNodeCreateRequest(ApiRequest):
     cols: OptionalInt = None
     grid_row: OptionalInt = None
     grid_col: OptionalInt = None
+    is_favorite: bool = False
+    favorite_sort_order: OptionalInt = 0
     note: str = ""
     sort_order: OptionalInt = 0
 
@@ -171,6 +217,8 @@ class StorageNodeUpdateRequest(ApiRequest):
     cols: OptionalInt = None
     grid_row: OptionalInt = None
     grid_col: OptionalInt = None
+    is_favorite: bool | None = None
+    favorite_sort_order: OptionalInt = None
     note: str | None = None
     sort_order: OptionalInt = None
 
@@ -181,6 +229,10 @@ class DropdownSettingsRequest(ApiRequest):
     reagent_statuses: list[str] | None = None
     validation_statuses: list[str] | None = None
     validation_methods: list[str] | None = None
+    antibody_conjugates: list[str] | None = None
+    antibody_react_species: list[str] | None = None
+    antibody_host_species: list[str] | None = None
+    antibody_isotypes: list[str] | None = None
     sample_prefixes: list[str] | None = None
     sample_names: list[str] | None = None
     amount_units: list[str] | None = None
@@ -236,10 +288,15 @@ class BulkExcelParseRequest(ApiRequest):
 class BulkOperationRequest(ApiRequest):
     operation: Literal["import", "edit", "move", "checkout", "validation"] = "import"
     item_type: Literal["sample", "reagent"] = "reagent"
-    mode: Literal["insert", "update", "upsert"] = "insert"
     rows: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AdminDeleteRecordRequest(ApiRequest):
     table: Literal["reagents", "clinical_samples", "validations", "movements"] = "validations"
     ids: list[int] = Field(default_factory=list)
+
+
+class AdminCorrectionRequest(ApiRequest):
+    old_value: str = ""
+    new_value: str = ""
+    reason: str = ""

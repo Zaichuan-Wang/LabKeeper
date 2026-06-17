@@ -59,7 +59,6 @@ if ($Stop) {
 
 if (-not (Test-Path $EnvFile) -and -not $env:LABKEEPER_ENV) {
   $env:LABKEEPER_ENV = "development"
-  $env:LABKEEPER_ENABLE_DEV_TOOLS = "1"
 }
 
 # ── 自动查找 Python ──

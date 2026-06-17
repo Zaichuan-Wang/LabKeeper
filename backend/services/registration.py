@@ -19,7 +19,9 @@ from core.constants import (
     SYSTEM_UNPLACED_NODE_ID,
 )
 from db.database import connect
+from services.antibody_naming import apply_antibody_name_rule
 from services.movements import record_reagent_transfer
+from services.options_config import append_dropdown_option
 from services.storage_inventory import (
     assign_reagent_to_node,
     sequential_frame_positions,
@@ -37,6 +39,15 @@ except ImportError:  # pragma: no cover - deployment dependency check
 MAX_VALIDATION_IMAGE_UPLOAD_BYTES = 12 * 1024 * 1024
 TARGET_VALIDATION_IMAGE_BYTES = 1 * 1024 * 1024
 MAX_VALIDATION_IMAGE_SIDE = 1800
+
+
+def _save_brand_option_if_requested(conn: Any, data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any] | None:
+    if not data.get("save_brand_option"):
+        return None
+    old_options, new_options, changed = append_dropdown_option("brands", data.get("brand"))
+    if changed:
+        create_audit(conn, user["id"], "api_save_brand_option", "dropdown_options", None, new_options, old_options)
+    return new_options if changed else None
 
 def list_orders(query: dict[str, list[str]]) -> dict[str, Any]:
     status = query.get("status", [""])[0].strip()
@@ -140,6 +151,7 @@ def _ensure_reagent_code(conn: Any, reagent_id: int) -> str:
 
 
 def create_order(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    apply_antibody_name_rule(data)
     name = str(data.get("name", "")).strip()
     if not name:
         raise ApiError(400, "订购名称不能为空")
@@ -190,6 +202,7 @@ def create_order(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
             note=str(data.get("reason", "")).strip(),
         )
         create_audit(conn, user["id"], "api_create_order", "reagents", reagent_id, data)
+        updated_options = _save_brand_option_if_requested(conn, data, user)
         conn.commit()
         row = conn.execute(
             """
@@ -203,7 +216,10 @@ def create_order(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
             (movement_id,),
         ).fetchone()
         item = _order_ledger_item(conn, row)
-    return {"item": item}
+    result = {"item": item}
+    if updated_options:
+        result["options"] = updated_options
+    return result
 
 
 def clean_arrival_count(value: Any, fallback: Any = 1) -> int:

@@ -449,10 +449,8 @@ def _normalize_edit_row(conn: Any, item_type: str, row: dict[str, Any]) -> dict[
     return updates
 
 
-def _preview_one(conn: Any, operation: str, item_type: str, mode: str, row: dict[str, Any]) -> dict[str, Any]:
+def _preview_one(conn: Any, operation: str, item_type: str, row: dict[str, Any]) -> dict[str, Any]:
     if operation == "import":
-        if mode != "insert":
-            raise ApiError(400, "批量导入只支持新增；如需修改已有编号，请使用批量编辑")
         normalized = _normalize_import_row(conn, item_type, row)
         code_key = "code"
         code = normalized.get(code_key)
@@ -479,7 +477,6 @@ def _preview_one(conn: Any, operation: str, item_type: str, mode: str, row: dict
 def preview(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     operation = str(data.get("operation", "import")).strip() or "import"
     item_type = _item_type(data.get("item_type", "reagent"))
-    mode = str(data.get("mode", "insert" if operation == "import" else "")).strip() or "insert"
     rows = data.get("rows") or []
     if not isinstance(rows, list):
         raise ApiError(400, "批量数据格式不正确")
@@ -488,7 +485,7 @@ def preview(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
         for index, row in enumerate(rows, start=1):
             row_no = row.get("_row_no") or index
             try:
-                result = _preview_one(conn, operation, item_type, mode, row)
+                result = _preview_one(conn, operation, item_type, row)
                 items.append({"row_no": row_no, "status": "ok", "errors": [], "summary": result.get("summary", ""), **result, "source": row})
             except ApiError as exc:
                 items.append({"row_no": row_no, "status": "error", "errors": [exc.message], "action": "", "normalized": {}, "source": row})
@@ -496,7 +493,7 @@ def preview(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     return {"items": items, "total": len(items), "valid": valid, "invalid": len(items) - valid}
 
 
-def _commit_import(item_type: str, mode: str, normalized: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+def _commit_import(item_type: str, normalized: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     payload = dict(normalized)
     payload.pop("_location_requested", None)
     with connect() as conn:
@@ -513,7 +510,6 @@ def _commit_import(item_type: str, mode: str, normalized: dict[str, Any], user: 
 def commit(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     operation = str(data.get("operation", "import")).strip() or "import"
     item_type = _item_type(data.get("item_type", "reagent"))
-    mode = str(data.get("mode", "insert" if operation == "import" else "")).strip() or "insert"
     rows = data.get("rows") or []
     if not isinstance(rows, list):
         raise ApiError(400, "批量数据格式不正确")
@@ -525,10 +521,10 @@ def commit(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
         row_no = row.get("_row_no") or index
         try:
             with connect() as conn:
-                preview_result = _preview_one(conn, operation, item_type, mode, row)
+                preview_result = _preview_one(conn, operation, item_type, row)
             normalized = preview_result["normalized"]
             if operation == "import":
-                item = _commit_import(item_type, mode, normalized, user)
+                item = _commit_import(item_type, normalized, user)
             elif operation == "edit":
                 payload = dict(normalized)
                 payload.pop("_changes", None)
@@ -568,7 +564,7 @@ def commit(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
             results.append({"row_no": row_no, "status": "error", "action": "", "item": None, "errors": [exc.message]})
     with connect() as conn:
         create_audit(conn, user["id"], "api_bulk_operation", operation, None, {
-            "item_type": item_type, "mode": mode, "total": len(rows), "success": success, "failed": failed, "created_at": timestamp,
+            "item_type": item_type, "total": len(rows), "success": success, "failed": failed, "created_at": timestamp,
         })
         conn.commit()
     return {"items": results, "total": len(rows), "success": success, "failed": failed}

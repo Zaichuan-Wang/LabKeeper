@@ -38,6 +38,40 @@ function orderPriceText(value) {
   return Number.isFinite(number) ? number.toFixed(2) : String(value);
 }
 
+function isAntibodyDetailItem(item = {}) {
+  const text = `${item.category || ''} ${item.name || ''}`;
+  return /抗体|antibody|anti-/i.test(text);
+}
+
+function antibodyMetadataHasContent(metadata = {}) {
+  return ['target', 'conjugate', 'react_species', 'host_species', 'clone', 'isotype', 'aliases', 'raw_note']
+    .some(field => String(metadata?.[field] || '').trim());
+}
+
+function antibodyDetailField(label, value, cls = '') {
+  return `<span${cls ? ` class="${cls}"` : ''}>${esc(label)}：${esc(value || '-')}</span>`;
+}
+
+function renderAntibodyMetadataBlock(data = {}) {
+  const item = data.item || {};
+  const metadata = data.antibody_metadata || item.antibody_metadata || null;
+  if (!metadata && !isAntibodyDetailItem(item)) return '';
+  let rows = [antibodyDetailField('抗体信息', '尚未填写', 'detail-full-row')];
+  if (metadata && antibodyMetadataHasContent(metadata)) {
+    rows = [
+      antibodyDetailField('靶标/抗原', metadata.target),
+      antibodyDetailField('荧光/标记', metadata.conjugate),
+      antibodyDetailField('反应种属', metadata.react_species),
+      antibodyDetailField('宿主种属', metadata.host_species),
+      antibodyDetailField('克隆号', metadata.clone),
+      antibodyDetailField('同型/亚型', metadata.isotype),
+    ];
+    if (metadata.aliases) rows.push(antibodyDetailField('别称', metadata.aliases, 'detail-full-row'));
+    if (metadata.raw_note) rows.push(antibodyDetailField('抗体备注', metadata.raw_note, 'detail-full-row'));
+  }
+  return `<h4>抗体信息</h4><div class="detail-grid antibody-detail-grid">${rows.join('')}</div>`;
+}
+
 function syncMultiRegisterFields(form) {
   if (!form) return;
   form.querySelectorAll('[data-multi-register-row]').forEach(row => {
@@ -248,8 +282,11 @@ function nodeById(id) { return state.storageNodes.find(node => Number(node.id) =
 
 const DEFAULT_ROOT_STORAGE_NODE_ID = '1';
 const VIRTUAL_UNPLACED_NODE_ID = '-3';
+const VIRTUAL_FAVORITES_NODE_ID = '-5';
 
 function isVirtualUnplacedId(id) { return String(id || '') === VIRTUAL_UNPLACED_NODE_ID; }
+function isVirtualFavoritesId(id) { return String(id || '') === VIRTUAL_FAVORITES_NODE_ID; }
+function isVirtualOverviewId(id) { return isVirtualUnplacedId(id) || isVirtualFavoritesId(id); }
 
 function isRealStorageNodeId(id) {
   return Number.isFinite(Number(id)) && Number(id) > 0;
@@ -263,6 +300,15 @@ function isSystemStorageNode(nodeOrId) {
 function isVirtualUnplacedNode(nodeOrId) {
   if (typeof nodeOrId === 'object') return Boolean(nodeOrId?.is_virtual_unplaced) || isVirtualUnplacedId(nodeOrId?.id);
   return isVirtualUnplacedId(nodeOrId);
+}
+
+function isVirtualFavoritesNode(nodeOrId) {
+  if (typeof nodeOrId === 'object') return Boolean(nodeOrId?.is_virtual_favorites) || isVirtualFavoritesId(nodeOrId?.id);
+  return isVirtualFavoritesId(nodeOrId);
+}
+
+function isVirtualOverviewNode(nodeOrId) {
+  return isVirtualUnplacedNode(nodeOrId) || isVirtualFavoritesNode(nodeOrId);
 }
 
 function selectableStorageNodes() {
@@ -399,6 +445,10 @@ async function loadOptions() {
   fillDatalist($('brandOptions'), currentOptions('brands'));
   fillDatalist($('samplePrefixOptions'), currentOptions('sample_prefixes'));
   fillDatalist($('amountUnitOptions'), currentOptions('amount_units'));
+  fillDatalist($('antibodyConjugateOptions'), currentOptions('antibody_conjugates'));
+  fillDatalist($('antibodyReactSpeciesOptions'), currentOptions('antibody_react_species'));
+  fillDatalist($('antibodyHostSpeciesOptions'), currentOptions('antibody_host_species'));
+  fillDatalist($('antibodyIsotypeOptions'), currentOptions('antibody_isotypes'));
   document.querySelectorAll('select[name="role"]').forEach(sel => fillSelectObjects(
     sel,
     Object.entries(state.options.roles || {}).map(([value, label]) => ({ value, label })),
@@ -407,6 +457,7 @@ async function loadOptions() {
   setDefaultDropdownValues();
   syncUserPermissionFields?.();
   fillSettingsForms();
+  if (typeof syncAllBrandSaveOptionRows === 'function') syncAllBrandSaveOptionRows();
 }
 
 function setDefaultDropdownValues() {
@@ -415,16 +466,24 @@ function setDefaultDropdownValues() {
     reagentForm.elements.category.value = currentOptions('categories').includes('其他') ? '其他' : currentOptions('categories')[0] || '';
     reagentForm.elements.status.value = currentOptions('reagent_statuses').includes(STATUS_AVAILABLE) ? STATUS_AVAILABLE : currentOptions('reagent_statuses')[0] || '';
     if (reagentForm.elements.separate_items) reagentForm.elements.separate_items.checked = true;
+    if (typeof syncAntibodySection === 'function') syncAntibodySection(reagentForm);
   }
   const reagentEditForm = $('reagentEditForm');
   if (reagentEditForm && !reagentEditForm.elements.id.value) {
     reagentEditForm.elements.category.value ||= currentOptions('categories').includes('其他') ? '其他' : currentOptions('categories')[0] || '';
     reagentEditForm.elements.status.value ||= currentOptions('reagent_statuses').includes(STATUS_AVAILABLE) ? STATUS_AVAILABLE : currentOptions('reagent_statuses')[0] || '';
+    if (typeof syncAntibodySection === 'function') syncAntibodySection(reagentEditForm);
+  }
+  const orderForm = $('orderForm');
+  if (orderForm) {
+    if (!orderForm.elements.quantity.value) orderForm.elements.quantity.value = 1;
+    if (typeof syncAntibodySection === 'function') syncAntibodySection(orderForm);
   }
   const sampleForm = $('sampleForm');
   if (sampleForm) {
     sampleForm.elements.tube_count.value ||= 1;
     if (sampleForm.elements.separate_items) sampleForm.elements.separate_items.checked = true;
+    sampleForm.elements.code_prefix.value ||= currentOptions('sample_prefixes')[0] || '';
     sampleForm.elements.category.value ||= currentOptions('sample_names')[0] || '';
     sampleForm.elements.status.value ||= currentOptions('sample_statuses').includes(STATUS_AVAILABLE) ? STATUS_AVAILABLE : currentOptions('sample_statuses')[0] || '';
   }

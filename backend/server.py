@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 from contextlib import asynccontextmanager
@@ -17,7 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from services import backup
 from core.common import ApiError, get_logger
-from core.config import CORS_ORIGINS, DB_PATH
+from core.config import APP_VERSION, CORS_ORIGINS, DB_PATH
 from core.constants import STATUS_ORDERED, SYSTEM_NOT_ARRIVED_NODE_ID
 from db.database import compact_database, connect, init_db
 from routers.admin import router as admin_router
@@ -42,7 +43,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 logger = get_logger("lab.server")
 
-app = FastAPI(title="LabKeeper API", version="1.0", lifespan=lifespan)
+app = FastAPI(title="LabKeeper API", version=APP_VERSION, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -58,6 +59,23 @@ app.include_router(movement_router)
 app.include_router(storage_router)
 app.include_router(admin_router)
 app.include_router(bulk_router)
+
+
+def include_devtools_router() -> None:
+    api_path = Path(__file__).resolve().parents[1] / "dev_tools" / "api.py"
+    if not api_path.exists():
+        return
+    spec = importlib.util.spec_from_file_location("labkeeper_devtools_api", api_path)
+    if spec is None or spec.loader is None:
+        logger.warning("开发工具接口无法加载：%s", api_path)
+        return
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    app.include_router(module.router)
+
+
+include_devtools_router()
+
 
 @app.exception_handler(ApiError)
 async def api_error_handler(_: Request, exc: ApiError) -> JSONResponse:

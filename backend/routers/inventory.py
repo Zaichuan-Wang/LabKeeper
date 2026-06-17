@@ -5,11 +5,20 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from services import ai_antibody
 from services import clinical_samples
+from services import antibody_metadata
 from services import inventory
 from services import reagents
 from core.common import ApiError, clean_optional_positive_int
-from models.request_models import AliquotCreateRequest, InventoryItemCreateRequest, InventoryItemUpdateRequest
+from models.request_models import (
+    AliquotCreateRequest,
+    AntibodyMetadataCreateRequest,
+    AntibodyMetadataUpdateRequest,
+    InventoryItemCreateRequest,
+    InventoryItemUpdateRequest,
+    ReagentAiExtractRequest,
+)
 from routers.common import json_response, query_params
 from core.security import require_inventory_view, require_permission, require_user, visible_inventory_types
 
@@ -49,6 +58,37 @@ def catalog_conflicts(request: Request, _: dict[str, Any] = Depends(require_user
     name = query.get("name", [""])[0]
     exclude_id = clean_optional_positive_int(query.get("exclude_id", [""])[0])
     return reagents.catalog_name_conflicts(catalog_no, name, exclude_id)
+
+
+@router.get("/inventory/catalog-usage")
+def catalog_usage(request: Request, user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
+    require_inventory_view(user, "reagent")
+    query = query_params(request)
+    catalog_no = query.get("catalog_no", [""])[0]
+    exclude_id = clean_optional_positive_int(query.get("exclude_id", [""])[0])
+    return reagents.catalog_usage(catalog_no, exclude_id)
+
+
+@router.get("/antibody-metadata")
+def get_antibody_metadata(request: Request, user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
+    query = query_params(request)
+    return antibody_metadata.get_metadata(query.get("catalog_no", [""])[0])
+
+
+@router.post("/antibody-metadata")
+def create_antibody_metadata(data: AntibodyMetadataCreateRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
+    return json_response(antibody_metadata.create_metadata(data.payload(), user), 201)
+
+
+@router.patch("/antibody-metadata")
+def update_antibody_metadata(request: Request, data: AntibodyMetadataUpdateRequest, user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
+    query = query_params(request)
+    return json_response(antibody_metadata.update_metadata(query.get("catalog_no", [""])[0], data.payload(patch=True), user))
+
+
+@router.post("/reagents/ai-extract")
+def extract_reagent_metadata(data: ReagentAiExtractRequest, _: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
+    return ai_antibody.extract_reagent_fields(data.payload())
 
 
 @router.post("/inventory/items")

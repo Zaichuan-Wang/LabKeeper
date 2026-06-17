@@ -5,9 +5,8 @@ import sqlite3
 from core.common import get_logger, now_text
 from core.config import (
     INITIAL_ADMIN_DISPLAY_NAME,
-    INITIAL_ADMIN_PASSWORD,
     INITIAL_ADMIN_USERNAME,
-    IS_PRODUCTION,
+    INITIAL_PASSWORD,
     DB_PATH,
     SCHEMA_PATH,
 )
@@ -30,6 +29,8 @@ LIGHTWEIGHT_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_reagents_storage_position_status ON reagents(storage_node_id, grid_cell, status)",
     "CREATE INDEX IF NOT EXISTS idx_reagents_catalog_updated ON reagents(catalog_no, updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_reagents_source_aliquot ON reagents(COALESCE(source_code, code, id), aliquot_no)",
+    "CREATE INDEX IF NOT EXISTS idx_antibody_metadata_target ON antibody_metadata(target)",
+    "CREATE INDEX IF NOT EXISTS idx_antibody_metadata_conjugate ON antibody_metadata(conjugate)",
     "CREATE INDEX IF NOT EXISTS idx_clinical_samples_code ON clinical_samples(code)",
     "CREATE INDEX IF NOT EXISTS idx_clinical_samples_updated ON clinical_samples(updated_at DESC, id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_clinical_samples_status_updated ON clinical_samples(status, updated_at DESC, id DESC)",
@@ -168,12 +169,8 @@ def _ensure_admin_user(conn: sqlite3.Connection) -> None:
     existing = conn.execute("SELECT id FROM users WHERE role = 'admin' LIMIT 1").fetchone()
     if existing is not None:
         return
-    if IS_PRODUCTION:
-        insecure_passwords = {"", "admin123", "change-this-admin-password"}
-        if INITIAL_ADMIN_PASSWORD in insecure_passwords:
-            raise RuntimeError("生产环境首次初始化必须设置安全的 LABKEEPER_INITIAL_ADMIN_PASSWORD")
-    elif not INITIAL_ADMIN_PASSWORD:
-        raise RuntimeError("首次初始化必须设置 LABKEEPER_INITIAL_ADMIN_PASSWORD")
+    if not INITIAL_PASSWORD:
+        raise RuntimeError("首次初始化必须设置 LABKEEPER_INITIAL_PASSWORD")
     from services.auth import hash_password
 
     timestamp = now_text()
@@ -185,7 +182,7 @@ def _ensure_admin_user(conn: sqlite3.Connection) -> None:
         (
             INITIAL_ADMIN_USERNAME.strip() or "admin",
             INITIAL_ADMIN_DISPLAY_NAME.strip() or (INITIAL_ADMIN_USERNAME.strip() or "admin"),
-            hash_password(INITIAL_ADMIN_PASSWORD),
+            hash_password(INITIAL_PASSWORD),
             timestamp,
             timestamp,
         ),
@@ -245,6 +242,7 @@ def _ensure_root_storage_node(conn: sqlite3.Connection) -> None:
 
 
 def _repair_known_inconsistencies(conn: sqlite3.Connection) -> None:
+    _ensure_storage_favorite_columns(conn)
     _ensure_reagent_price_column(conn)
     _repair_storage_references(conn)
 
@@ -259,6 +257,13 @@ def _ensure_reagent_price_column(conn: sqlite3.Connection) -> None:
     price_column_added = not _column_exists(conn, "reagents", "price")
     if price_column_added:
         conn.execute("ALTER TABLE reagents ADD COLUMN price REAL")
+
+
+def _ensure_storage_favorite_columns(conn: sqlite3.Connection) -> None:
+    if not _column_exists(conn, "storage_nodes", "is_favorite"):
+        conn.execute("ALTER TABLE storage_nodes ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0")
+    if not _column_exists(conn, "storage_nodes", "favorite_sort_order"):
+        conn.execute("ALTER TABLE storage_nodes ADD COLUMN favorite_sort_order INTEGER NOT NULL DEFAULT 0")
 
 
 def _repair_storage_references(conn: sqlite3.Connection) -> None:

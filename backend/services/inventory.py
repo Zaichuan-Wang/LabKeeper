@@ -27,12 +27,13 @@ from services.storage_inventory import (
     normalize_sample_item,
     reagent_validation_status_sql,
 )
+from services.antibody_naming import apply_antibody_name_rule
 from services import clinical_samples
 from services import reagents
 
 
 REAGENT_PAYLOAD_KEYS = (
-    "code", "source_code", "name", "category", "brand", "catalog_no", "amount", "amount_unit",
+    "code", "source_code", "name", "category", "brand", "save_brand_option", "catalog_no", "amount", "amount_unit",
     "quantity", "price", "status", "entry_date", "expiration_date",
     "storage_node_id", "grid_cell", "separate_items", "note",
 )
@@ -58,6 +59,7 @@ def _copy_present(data: dict[str, Any], key: str, payload: dict[str, Any]) -> No
 
 
 def reagent_payload(data: dict[str, Any]) -> dict[str, Any]:
+    apply_antibody_name_rule(data)
     payload: dict[str, Any] = {}
     for key in REAGENT_PAYLOAD_KEYS:
         _copy_present(data, key, payload)
@@ -128,7 +130,6 @@ def _pagination(query: dict[str, list[str]]) -> tuple[int, int, int]:
 
 def _append_keyword_clause(
     conn: sqlite3.Connection,
-    item_type: str,
     keyword: str,
     like_fields: list[str],
     path_cache: dict[int, str],
@@ -223,7 +224,6 @@ def _search_reagents(
         clauses.append(f"COALESCE(status, '') IN {PHYSICAL_INVENTORY_STATUS_SQL}")
     _append_keyword_clause(
         conn,
-        "reagent",
         keyword,
         ["name", "code", "source_code", "catalog_no", "brand", "category", "amount", "amount_unit", "note", "grid_cell"],
         path_cache,
@@ -275,7 +275,6 @@ def _search_samples(
         clauses.append(f"status IN {PHYSICAL_INVENTORY_STATUS_SQL}")
     _append_keyword_clause(
         conn,
-        "sample",
         keyword,
         ["code", "name", "category", "amount", "amount_unit", "note", "grid_cell"],
         path_cache,
@@ -295,17 +294,12 @@ def _search_samples(
 
 
 def _search_spaces(conn: sqlite3.Connection, keyword: str, limit: int, offset: int, path_cache: dict[int, str]) -> tuple[list[dict[str, Any]], int]:
-    params: list[Any] = []
-    where = ""
-    if keyword:
-        where = ""
     if not keyword:
         total = int(conn.execute(
             """
             SELECT COUNT(*) AS n FROM storage_nodes
             WHERE id > 0 AND COALESCE(node_type, 'space') != 'system'
-            """,
-            params,
+            """
         ).fetchone()["n"] or 0)
     else:
         total = 0
@@ -315,7 +309,7 @@ def _search_spaces(conn: sqlite3.Connection, keyword: str, limit: int, offset: i
         WHERE id > 0 AND COALESCE(node_type, 'space') != 'system'
         ORDER BY sort_order, id LIMIT ?
         """,
-        [*params, 1000 if keyword else limit + offset],
+        [1000 if keyword else limit + offset],
     ).fetchall()
     lowered = keyword.lower()
     space_labels = load_dropdown_options().get("space_types")
@@ -461,12 +455,6 @@ def _user_actor(conn: Any, user_id: Any) -> str:
         (user_id,),
     ).fetchone()
     return _actor(row) if row else ""
-
-
-def _format_price(value: Any) -> str:
-    if value in (None, ""):
-        return "未填写"
-    return f"{float(value):.2f}"
 
 
 def _timeline_event(

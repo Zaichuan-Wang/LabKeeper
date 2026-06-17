@@ -14,7 +14,6 @@ from core.constants import (
     PHYSICAL_INVENTORY_STATUS_SQL,
     STATUS_AVAILABLE,
     STATUS_CONSUMED,
-    STATUS_DISABLED,
     STATUS_ORDERED,
     SYSTEM_CHECKED_OUT_NODE_ID,
     SYSTEM_NOT_ARRIVED_NODE_ID,
@@ -23,6 +22,7 @@ from core.constants import (
 )
 from db.database import connect
 from services.movements import record_reagent_transfer
+from services.options_config import append_dropdown_option
 from services.storage_inventory import (
     assign_reagent_to_node,
     attach_aliquot_totals,
@@ -34,9 +34,17 @@ from services.storage_inventory import (
     reagent_should_leave_storage,
     release_reagent_storage,
     sequential_frame_positions,
-    storage_location_text,
     storage_target_or_default,
 )
+
+
+def _save_brand_option_if_requested(conn: Any, data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any] | None:
+    if not data.get("save_brand_option"):
+        return None
+    old_options, new_options, changed = append_dropdown_option("brands", data.get("brand"))
+    if changed:
+        create_audit(conn, user["id"], "api_save_brand_option", "dropdown_options", None, new_options, old_options)
+    return new_options if changed else None
 
 
 def dashboard(visible_types: set[str] | None = None) -> dict[str, Any]:
@@ -133,6 +141,12 @@ def reagent_detail(reagent_id: int) -> dict[str, Any]:
         if row is None:
             raise ApiError(404, "试剂不存在")
         catalog_no = str(row["catalog_no"] or "").strip()
+        antibody_row = None
+        if catalog_no:
+            antibody_row = conn.execute(
+                "SELECT * FROM antibody_metadata WHERE catalog_no = ?",
+                (catalog_no,),
+            ).fetchone()
         validations = conn.execute(
             """
             SELECT
@@ -173,7 +187,13 @@ def reagent_detail(reagent_id: int) -> dict[str, Any]:
         ).fetchall()
         items = attach_aliquot_totals(conn, [normalize_reagent_item(row, conn)])
         attach_reagent_validation_statuses(conn, items)
-    return {"item": items[0], "validations": rows_list(validations), "arrivals": rows_list(arrivals), "movements": rows_list(movements)}
+    return {
+        "item": items[0],
+        "antibody_metadata": row_dict(antibody_row),
+        "validations": rows_list(validations),
+        "arrivals": rows_list(arrivals),
+        "movements": rows_list(movements),
+    }
 
 
 def split_count_from_quantity(quantity: Any) -> int:
@@ -304,13 +324,17 @@ def create_reagent(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
             items = [insert_reagent_row(conn, values, user["id"], node_id, start_position)]
             create_reagent_movement(conn, items[0], from_node_id=SYSTEM_NOT_ORDERED_NODE_ID, reason=movement_reason, user_id=user["id"], note=values["note"])
         create_audit(conn, user["id"], "api_create_reagent", "reagents", items[0]["id"], data)
+        updated_options = _save_brand_option_if_requested(conn, data, user)
         conn.commit()
         item_ids = [item["id"] for item in items]
         placeholders = ",".join("?" for _ in item_ids)
         rows = conn.execute(f"SELECT * FROM reagents WHERE id IN ({placeholders}) ORDER BY id", item_ids).fetchall()
         items = attach_aliquot_totals(conn, [normalize_reagent_item(row, conn) for row in rows])
         attach_reagent_validation_statuses(conn, items)
-    return {"item": items[0], "items": items, "count": len(items)}
+    result = {"item": items[0], "items": items, "count": len(items)}
+    if updated_options:
+        result["options"] = updated_options
+    return result
 
 
 def update_reagent(reagent_id: int, data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
@@ -380,11 +404,15 @@ def update_reagent(reagent_id: int, data: dict[str, Any], user: dict[str, Any]) 
                         note="试剂位置已更新" if move_node_requested else "试剂状态调整后自动进入未归位",
                     )
         create_audit(conn, user["id"], "api_update_reagent", "reagents", reagent_id, data, row_dict(old))
+        updated_options = _save_brand_option_if_requested(conn, data, user)
         conn.commit()
         row = conn.execute("SELECT * FROM reagents WHERE id = ?", (reagent_id,)).fetchone()
         items = attach_aliquot_totals(conn, [normalize_reagent_item(row, conn)])
         attach_reagent_validation_statuses(conn, items)
-    return {"item": items[0]}
+    result = {"item": items[0]}
+    if updated_options:
+        result["options"] = updated_options
+    return result
 
 
 def _next_reagent_aliquot_no(conn: Any, source_code: str) -> int:
@@ -560,3 +588,27 @@ def catalog_name_conflicts(catalog_no: str, name: str, exclude_reagent_id: int |
     with connect() as conn:
         rows = rows_list(conn.execute(sql, params).fetchall())
     return {"items": rows, "count": len(rows), "has_conflict": bool(rows)}
+
+
+def catalog_usage(catalog_no: str, exclude_reagent_id: int | None = None) -> dict[str, Any]:
+    catalog = str(catalog_no or "").strip()
+    if not catalog:
+        return {"items": [], "count": 0, "has_existing": False}
+    params: list[Any] = [catalog]
+    where = "TRIM(COALESCE(catalog_no, '')) = ?"
+    if exclude_reagent_id:
+        where += " AND id != ?"
+        params.append(exclude_reagent_id)
+    with connect() as conn:
+        count = int(conn.execute(f"SELECT COUNT(*) AS n FROM reagents WHERE {where}", params).fetchone()["n"] or 0)
+        rows = rows_list(conn.execute(
+            f"""
+            SELECT id, code, name, category, brand, catalog_no, amount, amount_unit, status
+            FROM reagents
+            WHERE {where}
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 20
+            """,
+            params,
+        ).fetchall())
+    return {"items": rows, "count": count, "has_existing": count > 0}

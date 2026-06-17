@@ -5,10 +5,15 @@ import sys
 
 def _fresh_database(monkeypatch, tmp_path):
     monkeypatch.setenv("LABKEEPER_ENV", "test")
-    monkeypatch.setenv("LABKEEPER_ENABLE_DEV_TOOLS", "1")
-    monkeypatch.setenv("LABKEEPER_INITIAL_ADMIN_PASSWORD", "admin123")
-    sys.modules.pop("core.config", None)
-    sys.modules.pop("db.database", None)
+    monkeypatch.setenv("LABKEEPER_INITIAL_PASSWORD", "admin123")
+    core_package = sys.modules.get("core")
+    db_package = sys.modules.get("db")
+    monkeypatch.delitem(sys.modules, "core.config", raising=False)
+    monkeypatch.delitem(sys.modules, "db.database", raising=False)
+    if core_package is not None:
+        monkeypatch.delattr(core_package, "config", raising=False)
+    if db_package is not None:
+        monkeypatch.delattr(db_package, "database", raising=False)
     config = importlib.import_module("core.config")
     config.DB_PATH = tmp_path / "init-test.sqlite3"
     database = importlib.import_module("db.database")

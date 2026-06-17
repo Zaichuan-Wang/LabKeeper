@@ -5,34 +5,46 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from services import backup
+from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
+
+from services import auth, backup
 from core import config
 from core.common import ApiError, now_text
 from core.constants import STATUS_ORDERED, SYSTEM_NOT_ARRIVED_NODE_ID
+from core.security import require_admin, require_user
 from db import database
+from routers.common import auth_cookie_response, json_response
+
+router = APIRouter(prefix="/api/devtools")
+DEMO_DB_PATH = config.ROOT / "dev_tools" / "demo.sqlite3"
 
 
 def runtime_config() -> dict[str, Any]:
+    enabled = config.ENABLE_DEVTOOLS
     return {
-        "dev_tools_enabled": config.ENABLE_DEV_TOOLS,
-        "dev_admin_username": config.DEV_ADMIN_USERNAME if config.ENABLE_DEV_TOOLS else "",
-        "demo_database_available": config.DEMO_DB_PATH.exists() or _demo_builder_path().exists(),
+        "devtools_enabled": enabled,
+        "devtools_admin_username": config.DEVTOOLS_ADMIN_USERNAME if enabled else "",
+        "demo_database_available": DEMO_DB_PATH.exists() or _demo_builder_path().exists(),
     }
 
 
 def require_enabled() -> None:
-    if not config.ENABLE_DEV_TOOLS:
+    if not config.ENABLE_DEVTOOLS:
         raise ApiError(403, "开发工具未启用")
 
 
 def dev_admin_credentials() -> dict[str, str]:
     require_enabled()
-    return {"username": config.DEV_ADMIN_USERNAME, "password": config.DEV_ADMIN_PASSWORD}
+    return {
+        "username": config.DEVTOOLS_ADMIN_USERNAME,
+        "password": config.DEVTOOLS_ADMIN_PASSWORD,
+    }
 
 
 def load_demo_database() -> dict[str, Any]:
     require_enabled()
-    demo_db_path = config.DEMO_DB_PATH
+    demo_db_path = DEMO_DB_PATH
     db_path = config.DB_PATH
     generated = _ensure_demo_database(demo_db_path)
     _assert_sqlite_ok(demo_db_path)
@@ -51,6 +63,22 @@ def load_demo_database() -> dict[str, Any]:
         "backup": str(backup_path) if backup_path else "",
         "stats": stats,
     }
+
+
+@router.get("/runtime-config")
+def runtime_config_route() -> dict[str, Any]:
+    return runtime_config()
+
+
+@router.post("/login")
+def devtools_login() -> JSONResponse:
+    return auth_cookie_response(auth.login(dev_admin_credentials()))
+
+
+@router.post("/load-demo-db")
+def devtools_load_demo_database(user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
+    require_admin(user)
+    return json_response(load_demo_database())
 
 
 def _demo_builder_path() -> Path:
@@ -133,10 +161,12 @@ def _database_stats(path: Path) -> dict[str, int]:
             "storage_nodes": int(conn.execute("SELECT COUNT(*) AS n FROM storage_nodes").fetchone()["n"]),
             "reagents": int(conn.execute("SELECT COUNT(*) AS n FROM reagents").fetchone()["n"]),
             "clinical_samples": int(conn.execute("SELECT COUNT(*) AS n FROM clinical_samples").fetchone()["n"]),
-            "pending_orders": int(conn.execute(
-                "SELECT COUNT(*) AS n FROM reagents WHERE status = ? AND storage_node_id = ?",
-                (STATUS_ORDERED, SYSTEM_NOT_ARRIVED_NODE_ID),
-            ).fetchone()["n"]),
+            "pending_orders": int(
+                conn.execute(
+                    "SELECT COUNT(*) AS n FROM reagents WHERE status = ? AND storage_node_id = ?",
+                    (STATUS_ORDERED, SYSTEM_NOT_ARRIVED_NODE_ID),
+                ).fetchone()["n"]
+            ),
             "movements": int(conn.execute("SELECT COUNT(*) AS n FROM movements").fetchone()["n"]),
             "validations": int(conn.execute("SELECT COUNT(*) AS n FROM validations").fetchone()["n"]),
         }

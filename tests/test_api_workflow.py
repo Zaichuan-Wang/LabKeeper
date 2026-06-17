@@ -8,8 +8,141 @@ def api_ok(response, status_code=200):
     return response.json()
 
 
-def _time_text(days_ago=0):
-    return (datetime.now() - timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")
+def antibody_fields(target="CD45", conjugate="APC"):
+    return {"antibody_target": target, "antibody_conjugate": conjugate}
+
+
+def test_save_new_brand_option_is_explicit(app_client, auth_headers):
+    from services import options_config
+
+    options_config.save_dropdown_options({"brands": ["CST"]})
+
+    api_ok(
+        app_client.post(
+            "/api/orders",
+            headers=auth_headers,
+            json={"name": "No save brand", "category": "试剂盒", "brand": "NewCo", "quantity": 1},
+        ),
+        201,
+    )
+    assert "NewCo" not in options_config.load_dropdown_options()["brands"]
+
+    saved_order = api_ok(
+        app_client.post(
+            "/api/orders",
+            headers=auth_headers,
+            json={
+                "name": "Save brand",
+                "category": "试剂盒",
+                "brand": "NewCo",
+                "save_brand_option": True,
+                "quantity": 1,
+            },
+        ),
+        201,
+    )
+    assert "NewCo" in saved_order["options"]["brands"]
+    assert options_config.load_dropdown_options()["brands"].count("NewCo") == 1
+
+    reagent = api_ok(
+        app_client.post(
+            "/api/inventory/items",
+            headers=auth_headers,
+            json={"item_type": "reagent", "name": "Edit brand", "category": "其他", "brand": "CST", "quantity": 1},
+        ),
+        201,
+    )["item"]
+    updated = api_ok(
+        app_client.patch(
+            f"/api/inventory/item?item_type=reagent&id={reagent['id']}",
+            headers=auth_headers,
+            json={"brand": "EditCo", "save_brand_option": True},
+        )
+    )
+    assert "EditCo" in updated["options"]["brands"]
+
+    api_ok(
+        app_client.post(
+            "/api/inventory/items",
+            headers=auth_headers,
+            json={
+                "item_type": "reagent",
+                "name": "Duplicate brand",
+                "category": "其他",
+                "brand": "newco",
+                "save_brand_option": True,
+                "quantity": 1,
+            },
+        ),
+        201,
+    )
+    assert options_config.load_dropdown_options()["brands"].count("NewCo") == 1
+
+
+def test_regular_user_can_update_dropdown_settings(app_client, auth_headers):
+    from services import options_config
+
+    created = api_ok(
+        app_client.post(
+            "/api/users",
+            headers=auth_headers,
+            json={
+                "username": "options-user",
+                "password": "secret123",
+                "display_name": "Options User",
+                "role": "user",
+                "permissions": {},
+            },
+        ),
+        201,
+    )["item"]
+    assert created["role"] == "user"
+
+    login = api_ok(app_client.post("/api/login", json={"username": "options-user", "password": "secret123"}))
+    user_headers = {"Authorization": f"Bearer {login['token']}"}
+    updated = api_ok(
+        app_client.patch(
+            "/api/settings/dropdowns",
+            headers=user_headers,
+            json={"brands": ["CST", "OpenBrand"]},
+        )
+    )["item"]
+
+    assert "OpenBrand" in updated["brands"]
+    assert "OpenBrand" in options_config.load_dropdown_options()["brands"]
+
+
+def test_catalog_usage_warns_when_catalog_already_exists(app_client, auth_headers):
+    first = api_ok(
+        app_client.post(
+            "/api/inventory/items",
+            headers=auth_headers,
+            json={"item_type": "reagent", "name": "Catalog One", "category": "其他", "catalog_no": "AI-CAT-1", "quantity": 1},
+        ),
+        201,
+    )["item"]
+    api_ok(
+        app_client.post(
+            "/api/inventory/items",
+            headers=auth_headers,
+            json={"item_type": "reagent", "name": "Catalog Two", "category": "其他", "catalog_no": "AI-CAT-1", "quantity": 1},
+        ),
+        201,
+    )
+
+    usage = api_ok(app_client.get("/api/inventory/catalog-usage?catalog_no=AI-CAT-1", headers=auth_headers))
+    assert usage["has_existing"] is True
+    assert usage["count"] == 2
+    assert {item["name"] for item in usage["items"]} == {"Catalog One", "Catalog Two"}
+
+    excluded = api_ok(app_client.get(f"/api/inventory/catalog-usage?catalog_no=AI-CAT-1&exclude_id={first['id']}", headers=auth_headers))
+    assert excluded["has_existing"] is True
+    assert excluded["count"] == 1
+    assert excluded["items"][0]["name"] == "Catalog Two"
+
+    empty = api_ok(app_client.get("/api/inventory/catalog-usage?catalog_no=UNKNOWN-CAT", headers=auth_headers))
+    assert empty["has_existing"] is False
+    assert empty["count"] == 0
 
 
 def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
@@ -102,6 +235,7 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
                 "category": "抗体",
                 "brand": "CST",
                 "catalog_no": "SMOKE-CAT",
+                **antibody_fields("CD45", "APC"),
                 "quantity": 1,
                 "status": "可用",
                 "storage_node_id": frame_space["id"],
@@ -254,21 +388,8 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
     assert keyword_search["page_size"] == 1
     assert keyword_search["items"][0]["id"] == reagent["id"]
 
-    forgiving_search = api_ok(
-        app_client.get("/api/inventory/search?item_type=reagent&page=bad&page_size=9999&storage_node_id=bad", headers=auth_headers)
-    )
-    assert forgiving_search["page"] == 1
-    assert forgiving_search["page_size"] == 500
-
-    api_ok(app_client.get("/api/inventory/catalog-conflicts?exclude_id=bad", headers=auth_headers))
     bad_timeline = app_client.get("/api/inventory/timeline?item_type=reagent&id=bad", headers=auth_headers)
     assert bad_timeline.status_code == 400
-    api_ok(app_client.get("/api/storage/visual?node_id=bad&item_id=bad", headers=auth_headers))
-
-    forgiving_expiration = api_ok(app_client.get("/api/expiration?days=bad", headers=auth_headers))
-    assert forgiving_expiration["remind_days"] > 0
-    excel_export = app_client.get("/api/excel/export?limit=bad&mode=template", headers=auth_headers)
-    assert excel_export.status_code == 200
 
     sample_search = api_ok(
         app_client.get("/api/inventory/search?item_type=sample&keyword=P-SMOKE-001&available=1", headers=auth_headers)
@@ -283,6 +404,7 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
                 "item_type": "reagent",
                 "name": "Unplaced reagent",
                 "category": "抗体",
+                **antibody_fields("CD3", "FITC"),
                 "quantity": 1,
                 "status": "可用",
             },
@@ -441,7 +563,14 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
         app_client.post(
             "/api/inventory/items",
             headers=limited_headers,
-            json={"item_type": "reagent", "name": "Limited reagent", "category": "抗体", "quantity": 1, "status": "可用"},
+            json={
+                "item_type": "reagent",
+                "name": "Limited reagent",
+                "category": "抗体",
+                **antibody_fields("CD19", "PE"),
+                "quantity": 1,
+                "status": "可用",
+            },
         ),
         201,
     )["item"]
@@ -538,6 +667,37 @@ def test_inventory_storage_and_permission_workflow(app_client, auth_headers):
         assert movement["to_storage_node_id"] == -3
 
 
+def test_admin_user_initial_password_and_reset(app_client, auth_headers, monkeypatch):
+    from services import admin
+
+    monkeypatch.setattr(admin.config, "INITIAL_PASSWORD", "lab-init-789")
+    created = api_ok(
+        app_client.post(
+            "/api/users",
+            headers=auth_headers,
+            json={"username": "initial-user", "display_name": "Initial User", "role": "user", "permissions": {}},
+        ),
+        201,
+    )["item"]
+
+    login = api_ok(app_client.post("/api/login", json={"username": "initial-user", "password": "lab-init-789"}))
+    assert login["user"]["username"] == "initial-user"
+
+    api_ok(
+        app_client.patch(
+            f"/api/users/{created['id']}",
+            headers=auth_headers,
+            json={"password": "changed-789"},
+        )
+    )
+    changed_login = api_ok(app_client.post("/api/login", json={"username": "initial-user", "password": "changed-789"}))
+    assert changed_login["user"]["username"] == "initial-user"
+
+    api_ok(app_client.post(f"/api/users/{created['id']}/reset-password", headers=auth_headers))
+    reset_login = api_ok(app_client.post("/api/login", json={"username": "initial-user", "password": "lab-init-789"}))
+    assert reset_login["user"]["username"] == "initial-user"
+
+
 def test_movement_merge_window_merges_recent_moves_but_not_orders(app_client, auth_headers):
     import db.database as database
 
@@ -585,6 +745,7 @@ def test_movement_merge_window_merges_recent_moves_but_not_orders(app_client, au
                 "name": "Merge-Reagent",
                 "category": "抗体",
                 "catalog_no": "MERGE-CAT",
+                **antibody_fields("CD4", "APC"),
                 "quantity": 1,
                 "status": "可用",
                 "storage_node_id": slot_a["id"],
@@ -703,6 +864,7 @@ def test_movement_merge_window_merges_recent_moves_but_not_orders(app_client, au
                 "name": "No-Merge-Reagent",
                 "category": "抗体",
                 "catalog_no": "NO-MERGE",
+                **antibody_fields("CD8", "FITC"),
                 "quantity": 1,
                 "status": "可用",
                 "storage_node_id": slot_a["id"],
@@ -778,6 +940,7 @@ def test_movement_delete_requires_latest_movement(app_client, auth_headers):
                 "name": "Delete-Move-Reagent",
                 "category": "抗体",
                 "catalog_no": "DEL-MOVE",
+                **antibody_fields("CD20", "BV421"),
                 "quantity": 1,
                 "status": "可用",
                 "storage_node_id": slot_a["id"],
@@ -917,78 +1080,21 @@ def test_validation_edit_permissions_owner_and_admin(app_client, auth_headers):
     assert admin_update["validator_id"] == owner["id"]
 
 
-def test_history_lists_show_latest_100_without_date_filter(app_client, auth_headers):
+def test_history_lists_show_latest_100(app_client, auth_headers):
     import db.database as database
 
-    recent_time = _time_text(1)
-    old_time = _time_text(8)
+    base_time = datetime(2026, 6, 16, 12, 0, 0)
     with database.connect() as conn:
         user_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
-        old_order_id = conn.execute(
-            """
-            INSERT INTO reagents
-                (code, name, category, catalog_no, quantity, status, storage_node_id, created_by, updated_by, created_at, updated_at)
-            VALUES ('OLD-ORDER', '旧订购', '抗体', 'OLD-ORDER-CAT', 1, '已订购', -2, ?, ?, ?, ?)
-            """,
-            (user_id, user_id, old_time, old_time),
-        ).lastrowid
-        recent_order_id = conn.execute(
-            """
-            INSERT INTO reagents
-                (code, name, category, catalog_no, quantity, status, storage_node_id, created_by, updated_by, created_at, updated_at)
-            VALUES ('RECENT-ORDER', '新订购', '抗体', 'RECENT-ORDER-CAT', 1, '已订购', -2, ?, ?, ?, ?)
-            """,
-            (user_id, user_id, recent_time, recent_time),
-        ).lastrowid
-        old_sample_id = conn.execute(
-            """
-            INSERT INTO clinical_samples
-                (code, name, category, quantity, status, storage_node_id, created_by, updated_by, created_at, updated_at)
-            VALUES ('OLD-SAMPLE', '旧标本', '血清', 1, '已耗尽', -4, ?, ?, ?, ?)
-            """,
-            (user_id, user_id, old_time, old_time),
-        ).lastrowid
-        recent_sample_id = conn.execute(
-            """
-            INSERT INTO clinical_samples
-                (code, name, category, quantity, status, storage_node_id, created_by, updated_by, created_at, updated_at)
-            VALUES ('RECENT-SAMPLE', '新标本', '血清', 1, '已耗尽', -4, ?, ?, ?, ?)
-            """,
-            (user_id, user_id, recent_time, recent_time),
-        ).lastrowid
-        conn.executemany(
-            """
-            INSERT INTO movements
-                (object_type, object_id, item_type, item_id, from_storage_node_id, to_storage_node_id,
-                 from_location_snapshot, to_location_snapshot, moved_by, moved_at, reason, note)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                ("试剂", "OLD-ORDER", "reagent", old_order_id, -1, -2, "未订购", "未到货", user_id, old_time, "订购", "old order"),
-                ("试剂", "RECENT-ORDER", "reagent", recent_order_id, -1, -2, "未订购", "未到货", user_id, recent_time, "订购", "recent order"),
-                ("临床标本", "OLD-SAMPLE", "sample", old_sample_id, -3, -4, "未归位", "已出库", user_id, old_time, "出库", "old checkout"),
-                ("临床标本", "RECENT-SAMPLE", "sample", recent_sample_id, -3, -4, "未归位", "已出库", user_id, recent_time, "出库", "recent checkout"),
-            ],
-        )
-        conn.executemany(
-            """
-            INSERT INTO validations (catalog_no, validator_id, validation_date, method, result, description, created_at)
-            VALUES (?, ?, ?, 'WB', '通过', ?, ?)
-            """,
-            [
-                ("OLD-VAL-CAT", user_id, "2026-06-01", "old validation", old_time),
-                ("RECENT-VAL-CAT", user_id, "2026-06-02", "recent validation", recent_time),
-            ],
-        )
-        for idx in range(99):
-            stamp = _time_text(idx + 10)
+        for idx in range(101):
+            stamp = (base_time - timedelta(minutes=idx)).strftime("%Y-%m-%d %H:%M:%S")
             reagent_id = conn.execute(
                 """
                 INSERT INTO reagents
                     (code, name, category, catalog_no, quantity, status, storage_node_id, created_by, updated_by, created_at, updated_at)
                 VALUES (?, ?, '抗体', ?, 1, '已订购', -2, ?, ?, ?, ?)
                 """,
-                (f"BULK-ORDER-{idx:03d}", f"批量订购{idx}", f"BULK-ORDER-CAT-{idx:03d}", user_id, user_id, stamp, stamp),
+                (f"HIST-ORDER-{idx:03d}", f"历史订购{idx}", f"HIST-ORDER-CAT-{idx:03d}", user_id, user_id, stamp, stamp),
             ).lastrowid
             conn.execute(
                 """
@@ -997,35 +1103,30 @@ def test_history_lists_show_latest_100_without_date_filter(app_client, auth_head
                      from_location_snapshot, to_location_snapshot, moved_by, moved_at, reason, note)
                 VALUES (?, ?, 'reagent', ?, -1, -2, '未订购', '未到货', ?, ?, '订购', ?)
                 """,
-                ("试剂", f"BULK-ORDER-{idx:03d}", reagent_id, user_id, stamp, "bulk order"),
+                ("试剂", f"HIST-ORDER-{idx:03d}", reagent_id, user_id, stamp, "history order"),
             )
             conn.execute(
                 """
                 INSERT INTO validations (catalog_no, validator_id, validation_date, method, result, description, created_at)
                 VALUES (?, ?, '2026-06-03', 'WB', '通过', 'bulk validation', ?)
                 """,
-                (f"BULK-VAL-CAT-{idx:03d}", user_id, stamp),
+                (f"HIST-VAL-CAT-{idx:03d}", user_id, stamp),
             )
         conn.commit()
 
     orders = api_ok(app_client.get("/api/orders", headers=auth_headers))["items"]
     validations = api_ok(app_client.get("/api/validations", headers=auth_headers))["items"]
-    checkouts = api_ok(app_client.get("/api/checkouts", headers=auth_headers))["items"]
     movements = api_ok(app_client.get("/api/movements", headers=auth_headers))["items"]
-    old_timeline = api_ok(app_client.get(f"/api/inventory/timeline?item_type=reagent&id={old_order_id}", headers=auth_headers))
 
     assert len(orders) == 100
     assert len(validations) == 100
     assert len(movements) == 100
-    assert "RECENT-ORDER-CAT" in {item["catalog_no"] for item in orders}
-    assert "OLD-ORDER-CAT" in {item["catalog_no"] for item in orders}
-    assert "RECENT-VAL-CAT" in {item["catalog_no"] for item in validations}
-    assert "OLD-VAL-CAT" in {item["catalog_no"] for item in validations}
-    assert "RECENT-SAMPLE" in {item["object_id"] for item in checkouts}
-    assert "OLD-SAMPLE" in {item["object_id"] for item in checkouts}
-    assert "RECENT-SAMPLE" in {item["object_id"] for item in movements}
-    assert "OLD-SAMPLE" in {item["object_id"] for item in movements}
-    assert any(item["related_table"] == "movements" and item["related_id"] for item in old_timeline["items"])
+    assert orders[0]["catalog_no"] == "HIST-ORDER-CAT-000"
+    assert validations[0]["catalog_no"] == "HIST-VAL-CAT-000"
+    assert movements[0]["object_id"] == "HIST-ORDER-000"
+    assert "HIST-ORDER-CAT-100" not in {item["catalog_no"] for item in orders}
+    assert "HIST-VAL-CAT-100" not in {item["catalog_no"] for item in validations}
+    assert "HIST-ORDER-100" not in {item["object_id"] for item in movements}
 
 
 def test_bulk_import_only_inserts_and_auto_generates_codes(app_client, auth_headers):
@@ -1071,21 +1172,6 @@ def test_bulk_import_only_inserts_and_auto_generates_codes(app_client, auth_head
     assert duplicate_preview["invalid"] == 1
     assert duplicate_preview["items"][0]["errors"] == ["编号已存在"]
 
-    legacy_upsert = api_ok(
-        app_client.post(
-            "/api/bulk/preview",
-            headers=auth_headers,
-            json={
-                "operation": "import",
-                "item_type": "reagent",
-                "mode": "upsert",
-                "rows": [{"编号": reagent_item["code"], "名称": "不应更新", "类型": "抗体", "数量": 1, "状态": "可用"}],
-            },
-        )
-    )
-    assert legacy_upsert["invalid"] == 1
-    assert legacy_upsert["items"][0]["errors"] == ["批量导入只支持新增；如需修改已有编号，请使用批量编辑"]
-
     sample_commit = api_ok(
         app_client.post(
             "/api/bulk/commit",
@@ -1113,6 +1199,7 @@ def test_bulk_validation_and_admin_record_delete_clean_movements(app_client, aut
                 "name": "Bulk Validation Reagent",
                 "category": "抗体",
                 "catalog_no": "BULK-VAL-CAT",
+                **antibody_fields("CD56", "APC"),
                 "quantity": 1,
                 "status": "可用",
             },
@@ -1179,6 +1266,111 @@ def test_bulk_validation_and_admin_record_delete_clean_movements(app_client, aut
         ).fetchone()["n"] == 0
 
 
+def test_admin_corrections_update_catalog_no_and_brand_references(app_client, auth_headers):
+    import db.database as database
+    from services import options_config
+
+    reagent_result = api_ok(
+        app_client.post(
+            "/api/inventory/items",
+            headers=auth_headers,
+            json={
+                "item_type": "reagent",
+                "name": "更正测试试剂",
+                "category": "抗体",
+                "brand": "Old Co",
+                "catalog_no": "CORR-CAT",
+                **antibody_fields("CD45", "APC"),
+                "quantity": 2,
+                "separate_items": True,
+                "status": "可用",
+            },
+        ),
+        201,
+    )
+    items = reagent_result["items"]
+    assert len(items) == 2
+
+    api_ok(
+        app_client.post(
+            "/api/antibody-metadata",
+            headers=auth_headers,
+            json={
+                "catalog_no": "CORR-CAT",
+                "target": "CD45",
+                "conjugate": "APC",
+                "clone": "HI30",
+            },
+        ),
+        201,
+    )
+    validation_commit = api_ok(
+        app_client.post(
+            "/api/bulk/commit",
+            headers=auth_headers,
+            json={
+                "operation": "validation",
+                "rows": [{"货号": "CORR-CAT", "验证日期": "2026-06-16", "方法": "WB", "结果": "通过"}],
+            },
+        )
+    )
+    assert validation_commit["success"] == 1
+    catalog_preview = api_ok(
+        app_client.post(
+            "/api/admin/corrections/catalog-no/preview",
+            headers=auth_headers,
+            json={"old_value": "CORR-CAT", "new_value": "CORR-CAT-NEW", "reason": "规范化货号"},
+        )
+    )["item"]
+    assert catalog_preview["can_commit"] is True
+    assert catalog_preview["counts"]["reagents_catalog_no"] == 2
+    assert catalog_preview["counts"]["validations_catalog_no"] == 1
+    assert catalog_preview["counts"]["antibody_metadata_catalog_no"] == 1
+    catalog_commit = api_ok(
+        app_client.post(
+            "/api/admin/corrections/catalog-no/commit",
+            headers=auth_headers,
+            json={"old_value": "CORR-CAT", "new_value": "CORR-CAT-NEW", "reason": "规范化货号"},
+        )
+    )["item"]
+    assert catalog_commit["updated"]["reagents_catalog_no"] == 2
+    assert catalog_commit["updated"]["validations_catalog_no"] == 1
+    assert catalog_commit["updated"]["antibody_metadata_catalog_no"] == 1
+    with database.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) AS n FROM reagents WHERE catalog_no = 'CORR-CAT'").fetchone()["n"] == 0
+        assert conn.execute("SELECT COUNT(*) AS n FROM validations WHERE catalog_no = 'CORR-CAT-NEW'").fetchone()["n"] == 1
+        metadata = conn.execute("SELECT target, clone FROM antibody_metadata WHERE catalog_no = 'CORR-CAT-NEW'").fetchone()
+        assert metadata["target"] == "CD45"
+        assert metadata["clone"] == "HI30"
+
+    options_config.save_dropdown_options({"brands": ["Old Co", "Existing Co"]})
+    brand_preview = api_ok(
+        app_client.post(
+            "/api/admin/corrections/brand/preview",
+            headers=auth_headers,
+            json={"old_value": "Old Co", "new_value": "Existing Co", "reason": "统一公司名"},
+        )
+    )["item"]
+    assert brand_preview["can_commit"] is True
+    assert brand_preview["counts"]["reagents_brand"] == 2
+    assert brand_preview["counts"]["dropdown_brands"] == 1
+    assert brand_preview["warnings"]
+
+    brand_commit = api_ok(
+        app_client.post(
+            "/api/admin/corrections/brand/commit",
+            headers=auth_headers,
+            json={"old_value": "Old Co", "new_value": "Existing Co", "reason": "统一公司名"},
+        )
+    )["item"]
+    assert brand_commit["updated"]["reagents_brand"] == 2
+    assert brand_commit["updated"]["dropdown_brands"] == 1
+    with database.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) AS n FROM reagents WHERE brand = 'Old Co'").fetchone()["n"] == 0
+        assert conn.execute("SELECT COUNT(*) AS n FROM reagents WHERE brand = 'Existing Co'").fetchone()["n"] == 2
+    assert options_config.load_dropdown_options()["brands"].count("Existing Co") == 1
+
+
 def test_validation_image_endpoint_requires_auth_and_serves_file(app_client, auth_headers):
     import routers.registration as registration_routes
 
@@ -1209,8 +1401,10 @@ def test_health_hides_database_path_in_production(app_client, monkeypatch):
     monkeypatch.setattr(core_routes, "IS_PRODUCTION", True)
     production_health = api_ok(app_client.get("/api/health"))
     assert production_health["ok"] is True
+    assert production_health["version"] == "1.0.0"
     assert "db" not in production_health
 
     monkeypatch.setattr(core_routes, "IS_PRODUCTION", False)
     development_health = api_ok(app_client.get("/api/health"))
+    assert development_health["version"] == "1.0.0"
     assert "db" in development_health

@@ -179,15 +179,26 @@ function syncUserPermissionFields() {
 }
 
 const SETTINGS_GROUPS = [
-  { key: 'categories', title: '试剂类型', scope: '试剂登记', note: '用于订购、入库和筛选。' },
-  { key: 'brands', title: '品牌/厂家', scope: '试剂登记', note: '用于订购和新建试剂时快速选择常用品牌，也可以临时手动输入。' },
-  { key: 'validation_methods', title: '验证方法', scope: '验证登记', note: '用于记录实验验证方式。' },
-  { key: 'sample_prefixes', title: '样本号前缀', scope: '临床标本', note: '用于登记时快速拼接样本号，例如 SMP；表单里可选择建议项，也可以临时手动输入。' },
-  { key: 'sample_names', title: '样本类型', scope: '临床标本', note: '用于临床标本入库和筛选，例如血清、组织、灌洗液。' },
-  { key: 'amount_units', title: '规格单位', scope: '试剂/标本', note: '用于规格量的常用单位，也可以在表单里临时手动输入。' },
-  { key: 'space_types', title: '空间类型', scope: '库存空间', fixed: true, kind: 'space-types', note: '固定 5 类；前四个名称可以改，第五个固定为其他。' },
-  { key: 'movement_merge_window_minutes', title: '移动记录合并窗口', scope: '流转记录', kind: 'number', unit: '分钟', min: 0, max: 1440, note: '同一对象在窗口内连续移动会合并；0 表示不合并。订购和到货仍保持独立记录。' },
+  { key: 'categories', title: '试剂类型', scope: '试剂登记', page: 'common', note: '用于订购、入库和筛选。' },
+  { key: 'brands', title: '品牌/厂家', scope: '试剂登记', page: 'common', note: '用于订购和新建试剂时快速选择常用品牌，也可以临时手动输入。' },
+  { key: 'validation_methods', title: '验证方法', scope: '验证登记', page: 'common', note: '用于记录实验验证方式。' },
+  { key: 'antibody_conjugates', title: '抗体荧光/标记', scope: '抗体信息', page: 'antibody', note: '用于记录抗体本身的实际偶联标记；间接法未偶联一抗可选 Unlabeled，二抗填 HRP、AF488 等实际标记。' },
+  { key: 'antibody_react_species', title: '抗体反应种属', scope: '抗体信息', page: 'antibody', note: '用于记录抗体识别的对象种属，可按实验室习惯维护。' },
+  { key: 'antibody_host_species', title: '抗体宿主种属', scope: '抗体信息', page: 'antibody', note: '用于记录抗体来源动物，和同型/亚型分开填写。' },
+  { key: 'antibody_isotypes', title: '抗体同型/亚型', scope: '抗体信息', page: 'antibody', note: '只记录 IgG1、IgG2a、IgM 等同型/亚型，不必重复动物名。' },
+  { key: 'sample_prefixes', title: '样本号前缀', scope: '临床标本', page: 'common', note: '用于登记时快速拼接样本号，例如 SMP；表单里可选择建议项，也可以临时手动输入。' },
+  { key: 'sample_names', title: '样本类型', scope: '临床标本', page: 'common', note: '用于临床标本入库和筛选，例如血清、组织、灌洗液。' },
+  { key: 'amount_units', title: '规格单位', scope: '试剂/标本', page: 'common', note: '用于规格量的常用单位，也可以在表单里临时手动输入。' },
+  { key: 'space_types', title: '空间类型', scope: '库存空间', page: 'common', fixed: true, kind: 'space-types', note: '固定 5 类；前四个名称可以改，第五个固定为其他。' },
+  { key: 'movement_merge_window_minutes', title: '移动记录合并窗口', scope: '流转记录', page: 'common', kind: 'number', unit: '分钟', min: 0, max: 1440, note: '同一对象在窗口内连续移动会合并；0 表示不合并。订购和到货仍保持独立记录。' },
 ];
+
+const SETTINGS_PAGES = [
+  { key: 'common', title: '普通选项' },
+  { key: 'antibody', title: '抗体选项' },
+];
+
+let activeSettingsPage = 'common';
 
 const FIXED_OPTION_VALUES = {
   space_types: ['其他'],
@@ -197,7 +208,7 @@ function fillSettingsForms() {
   if (!state.options) return;
   const container = $('settingsCards');
   if (!container) return;
-  $('settingsGroupCount').textContent = `${SETTINGS_GROUPS.length} 组`;
+  renderSettingsPageTabs();
   container.innerHTML = SETTINGS_GROUPS.map(group => {
     const isNumber = group.kind === 'number';
     const values = group.kind === 'space-types' ? currentSpaceTypes() : (isNumber ? Number(state.options[group.key] ?? 0) : (state.options[group.key] || []));
@@ -209,7 +220,7 @@ function fillSettingsForms() {
     const fixed = Boolean(group.fixed);
     const isSpaceTypes = group.kind === 'space-types';
     return `
-      <article class="settings-card${fixed ? ' fixed-settings-card' : ''}${isSpaceTypes ? ' space-type-settings-card' : ''}${isNumber ? ' numeric-settings-card' : ''}" data-settings-key="${esc(group.key)}" data-settings-kind="${esc(group.kind || 'options')}" data-settings-fixed="${fixed ? '1' : '0'}">
+      <article class="settings-card${fixed ? ' fixed-settings-card' : ''}${isSpaceTypes ? ' space-type-settings-card' : ''}${isNumber ? ' numeric-settings-card' : ''}" data-settings-key="${esc(group.key)}" data-settings-page="${esc(group.page || 'common')}" data-settings-kind="${esc(group.kind || 'options')}" data-settings-fixed="${fixed ? '1' : '0'}">
         <div class="settings-card-head">
           <div><h4>${esc(group.title)}</h4><span>${esc(group.scope)} · <b data-settings-count>${esc(itemCount)}</b>${isNumber ? '' : ' 项'}${fixed ? ' · 含内置项' : ''}</span></div>
         </div>
@@ -226,6 +237,35 @@ function fillSettingsForms() {
       </article>
     `;
   }).join('');
+  applySettingsPage();
+}
+
+function renderSettingsPageTabs() {
+  const tabs = $('settingsPageTabs');
+  if (!tabs) return;
+  tabs.innerHTML = SETTINGS_PAGES.map(page => {
+    const count = SETTINGS_GROUPS.filter(group => (group.page || 'common') === page.key).length;
+    return `<button class="tab-btn" type="button" data-action="settings-page" data-id="${esc(page.key)}">${esc(page.title)} <span>${count}</span></button>`;
+  }).join('');
+}
+
+function setSettingsPage(page) {
+  activeSettingsPage = SETTINGS_PAGES.some(item => item.key === page) ? page : 'common';
+  applySettingsPage();
+}
+
+function applySettingsPage() {
+  const page = SETTINGS_PAGES.some(item => item.key === activeSettingsPage) ? activeSettingsPage : 'common';
+  activeSettingsPage = page;
+  document.querySelectorAll('[data-action="settings-page"]').forEach(button => {
+    button.classList.toggle('active', button.dataset.id === page);
+  });
+  document.querySelectorAll('.settings-card[data-settings-page]').forEach(card => {
+    card.classList.toggle('hidden', card.dataset.settingsPage !== page);
+  });
+  const pageConfig = SETTINGS_PAGES.find(item => item.key === page);
+  const visibleCount = SETTINGS_GROUPS.filter(group => (group.page || 'common') === page).length;
+  $('settingsGroupCount').textContent = `${pageConfig?.title || '选项'} · ${visibleCount} 组 / 全部 ${SETTINGS_GROUPS.length} 组`;
 }
 
 function renderNumberSetting(group, value) {
@@ -371,6 +411,110 @@ async function submitExcelImport(e) {
   await loadExcel();
 }
 
+const CORRECTION_CONFIGS = {
+  brand: {
+    formId: 'brandCorrectionForm',
+    resultId: 'brandCorrectionResult',
+    commitId: 'brandCorrectionCommitBtn',
+    previewUrl: '/api/admin/corrections/brand/preview',
+    commitUrl: '/api/admin/corrections/brand/commit',
+    label: '公司名',
+    countLabels: {
+      reagents_brand: '试剂记录厂家',
+      dropdown_brands: '常用品牌选项',
+      target_reagents_brand: '新名称现有记录',
+      target_dropdown_brands: '新名称现有选项',
+      total: '合计引用',
+    },
+    exampleKeys: ['source_table', 'id', 'code', 'source_code', 'name', 'brand', 'catalog_no', 'status'],
+  },
+  catalogNo: {
+    formId: 'catalogNoCorrectionForm',
+    resultId: 'catalogNoCorrectionResult',
+    commitId: 'catalogNoCorrectionCommitBtn',
+    previewUrl: '/api/admin/corrections/catalog-no/preview',
+    commitUrl: '/api/admin/corrections/catalog-no/commit',
+    label: '货号',
+    countLabels: {
+      reagents_catalog_no: '试剂记录货号',
+      validations_catalog_no: '验证记录货号',
+      antibody_metadata_catalog_no: '抗体元信息货号',
+      target_antibody_metadata_catalog_no: '新货号元信息占用',
+      total: '合计引用',
+    },
+    exampleKeys: ['source_table', 'id', 'code', 'source_code', 'name', 'brand', 'catalog_no', 'status', 'target', 'conjugate', 'clone', 'validation_date', 'method', 'result'],
+  },
+};
+
+function correctionPayload(form) {
+  const data = formData(form);
+  return {
+    old_value: String(data.old_value || '').trim(),
+    new_value: String(data.new_value || '').trim(),
+    reason: String(data.reason || '').trim(),
+  };
+}
+
+function renderCorrectionResult(config, item, { committed = false } = {}) {
+  const counts = item.counts || {};
+  const countRows = Object.entries(config.countLabels)
+    .filter(([key]) => counts[key] !== undefined)
+    .map(([key, label]) => ({ label, value: counts[key] }));
+  const updated = item.updated || {};
+  const updateRows = Object.entries(updated).map(([key, value]) => ({ label: config.countLabels[key] || key, value }));
+  const notes = [
+    ...(item.blocking || []).map(text => `<p class="danger-note">${esc(text)}</p>`),
+    ...(item.warnings || []).map(text => `<p class="form-note">${esc(text)}</p>`),
+  ].join('');
+  const backupText = item.backup
+    ? `<p class="form-note">提交前已自动备份：${esc(item.backup.filename)}，完整性：${esc(item.backup.integrity_check)}</p>`
+    : '';
+  const examples = item.examples || [];
+  const exampleTable = examples.length
+    ? `<div class="table-wrap compact"><table>${renderTableHead(config.exampleKeys.map(key => ({ key, label: healthKeyLabel(key) })))}<tbody>${examples.map(row => `<tr>${config.exampleKeys.map(key => `<td>${esc(row[key])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`
+    : '<p class="muted">暂无示例记录</p>';
+  return `
+    <div class="section-head"><h4>${committed ? '更正结果' : '预检查结果'}</h4><span>${badge(item.can_commit ? '可提交' : '需处理')}</span></div>
+    ${miniRows([{ label: `原${config.label}`, value: item.old_value }, { label: `新${config.label}`, value: item.new_value }], ['label', 'value'])}
+    ${countRows.length ? miniRows(countRows, ['label', 'value']) : ''}
+    ${updateRows.length ? `<p class="form-note">实际更新</p>${miniRows(updateRows, ['label', 'value'])}` : ''}
+    ${notes}
+    ${backupText}
+    ${exampleTable}
+  `;
+}
+
+async function submitCorrectionPreview(kind, e) {
+  e.preventDefault();
+  const config = CORRECTION_CONFIGS[kind];
+  const form = e.currentTarget;
+  const result = await api(config.previewUrl, { method: 'POST', body: JSON.stringify(correctionPayload(form)) });
+  state[`${kind}CorrectionPreview`] = result.item;
+  $(config.resultId).innerHTML = renderCorrectionResult(config, result.item);
+  $(config.commitId).disabled = !result.item.can_commit;
+  toast('预检查完成');
+}
+
+async function commitCorrection(kind) {
+  const config = CORRECTION_CONFIGS[kind];
+  const form = $(config.formId);
+  const preview = state[`${kind}CorrectionPreview`];
+  const data = correctionPayload(form);
+  if (!preview || preview.old_value !== data.old_value || preview.new_value !== data.new_value || preview.reason !== data.reason) {
+    throw new Error('表单内容已变化，请重新预检查');
+  }
+  if (!preview.can_commit) throw new Error('预检查未通过，不能提交');
+  if (!confirm(`确认把${config.label}“${data.old_value}”更正为“${data.new_value}”？\n提交前会自动备份数据库，并写入审计日志。`)) return;
+  const result = await api(config.commitUrl, { method: 'POST', body: JSON.stringify(data) });
+  state[`${kind}CorrectionPreview`] = null;
+  $(config.resultId).innerHTML = renderCorrectionResult(config, result.item, { committed: true });
+  $(config.commitId).disabled = true;
+  toast('更正完成');
+  await loadBackups();
+  if (kind === 'brand') await loadOptions();
+  if (state.view === 'inventory') await loadInventory();
+}
+
 async function submitRecordDelete(e) {
   e.preventDefault();
   const form = e.currentTarget;
@@ -463,7 +607,6 @@ async function submitUser(e) {
     await api(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
   } else {
     if (!data.username) throw new Error('新增用户需要用户名');
-    data.password = '123456';
     delete data.is_active;
     await api('/api/users', { method: 'POST', body: JSON.stringify(data) });
   }
@@ -475,8 +618,8 @@ async function submitUser(e) {
 async function resetUserPassword(id) {
   const user = state.users.find(item => Number(item.id) === Number(id));
   const name = user ? `${user.display_name || user.username}（${user.username}）` : '该用户';
-  if (!confirm(`确认重置 ${name} 的密码？\n重置后默认密码为 123456。`)) return;
-  await api(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify({ password: '123456' }) });
-  toast('密码已重置为 123456');
+  if (!confirm(`确认重置 ${name} 的密码？\n重置后将使用系统初始密码。`)) return;
+  await api(`/api/users/${id}/reset-password`, { method: 'POST' });
+  toast('密码已重置为系统初始密码');
   await loadUsers();
 }

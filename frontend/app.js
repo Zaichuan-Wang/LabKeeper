@@ -56,19 +56,42 @@ async function loginWithCredentials(credentials) {
 
 async function loadRuntimeConfig() {
   try {
-    const res = await fetch(`${state.apiBase}/api/runtime-config`, { credentials: 'include' });
+    const res = await fetch(`${state.apiBase}/api/devtools/runtime-config`, { credentials: 'include' });
     if (!res.ok) throw new Error(`runtime config ${res.status}`);
-    state.runtime = await res.json();
+    const data = await res.json();
+    state.runtime = {
+      devtools_enabled: Boolean(data.devtools_enabled ?? data.dev_tools_enabled),
+      devtools_admin_username: data.devtools_admin_username || data.dev_admin_username || '',
+      demo_database_available: Boolean(data.demo_database_available),
+    };
   } catch (err) {
-    state.runtime = { dev_tools_enabled: false, dev_admin_username: '', demo_database_available: false };
+    state.runtime = { devtools_enabled: false, devtools_admin_username: '', demo_database_available: false };
   }
   renderDevToolsPanel();
+}
+
+async function loadAppVersion() {
+  try {
+    const res = await fetch(`${state.apiBase}/api/health`, { credentials: 'include' });
+    if (!res.ok) throw new Error(`health ${res.status}`);
+    const data = await res.json();
+    state.appVersion = data.version || DEFAULT_APP_VERSION;
+  } catch {
+    state.appVersion = DEFAULT_APP_VERSION;
+  }
+  renderAppVersion();
+}
+
+function renderAppVersion() {
+  const version = String(state.appVersion || DEFAULT_APP_VERSION).trim();
+  const text = version.toLowerCase().startsWith('v') ? version : `v${version}`;
+  document.querySelectorAll('[data-app-version]').forEach(el => { el.textContent = text; });
 }
 
 function renderDevToolsPanel() {
   const panel = $('devToolsPanel');
   if (!panel) return;
-  const enabled = Boolean(state.runtime?.dev_tools_enabled);
+  const enabled = Boolean(state.runtime?.devtools_enabled);
   panel.classList.toggle('hidden', !enabled);
   if (!enabled) {
     panel.innerHTML = '';
@@ -78,7 +101,7 @@ function renderDevToolsPanel() {
     <p class="form-note">开发工具已启用，仅用于本机测试。</p>
     <div class="dev-tools-actions">
       <button id="testAdminLoginBtn" class="ghost dev-login-shortcut" type="button">测试管理员登录</button>
-      <button id="loadDemoDbBtn" class="ghost" type="button" >载入 Demo 数据库</button>
+      <button id="loadDemoDbBtn" class="ghost" type="button">载入 Demo 数据库</button>
     </div>
   `;
   $('testAdminLoginBtn')?.addEventListener('click', guard(loginAsDevAdmin));
@@ -87,14 +110,14 @@ function renderDevToolsPanel() {
 
 async function loginAsDevAdmin() {
   $('loginError').textContent = '';
-  const data = await api('/api/dev/login', { method: 'POST', body: JSON.stringify({}) });
+  const data = await api('/api/devtools/login', { method: 'POST', body: JSON.stringify({}) });
   await acceptLogin(data, '已用测试管理员登录');
 }
 
 async function loadDemoDatabase() {
   if (!confirm('载入 Demo 数据库会替换当前运行数据库，并先自动备份现有数据库。确定继续？')) return;
   if (!state.token || !state.user || !isAdmin()) await loginAsDevAdmin();
-  const result = await api('/api/dev/load-demo-db', { method: 'POST', body: JSON.stringify({}) });
+  const result = await api('/api/devtools/load-demo-db', { method: 'POST', body: JSON.stringify({}) });
   toast(result.message || 'Demo 数据库已载入');
   await loginAsDevAdmin();
 }
@@ -159,12 +182,16 @@ async function loadAdminTab(tab = state.adminTab) {
   setLoggedIn(Boolean(state.token && state.user));
   if (!isAdmin()) return;
   if (tab === 'users') await loadUsers();
-  if (tab === 'settings') fillSettingsForms();
   if (tab === 'maintenance') {
     await loadDataHealth();
     await loadBackups();
     await loadExcel();
   }
+}
+
+async function loadOptionsPage() {
+  if (!state.options) await loadOptions();
+  fillSettingsForms();
 }
 
 async function loadDashboard() {
@@ -242,7 +269,7 @@ async function loadCurrentView() {
     if (!state.options) await loadOptions();
     const needsStorage = ['registration', 'inventory'].includes(state.view);
     if (needsStorage) await loadStorageTree();
-    const loaders = { dashboard: loadDashboard, registration: loadRegistration, history: loadHistory, admin: loadAdmin, password: async () => {}, inventory: loadInventory };
+    const loaders = { dashboard: loadDashboard, registration: loadRegistration, history: loadHistory, admin: loadAdmin, options: loadOptionsPage, password: async () => {}, inventory: loadInventory };
     await loaders[state.view]?.();
     setLoggedIn(true);
   } catch (err) { toast(err.message); }
@@ -315,6 +342,7 @@ function wireLocationFields(kind, options = {}) {
 }
 
 function wireEvents() {
+  ensureBrandSaveOptionRows();
   $('loginForm').addEventListener('submit', async e => { e.preventDefault(); try { await loginWithCredentials(formData(e.currentTarget)); } catch (err) { $('loginError').textContent = err.message; } });
   $('logoutBtn').addEventListener('click', () => logout(true));
   $('refreshBtn').addEventListener('click', loadCurrentView);
@@ -332,20 +360,21 @@ function wireEvents() {
   $('locationPickerDialog')?.addEventListener('click', e => {
     if (e.target.id === 'locationPickerDialog') void closeLocationPicker();
   });
+  $('aiExtractDialog')?.addEventListener('click', e => {
+    if (e.target.id === 'aiExtractDialog') closeAiExtractDialog();
+  });
   document.body.addEventListener('toggle', e => {
     if (e.target.matches?.('.overview-quick-actions[open]')) requestAnimationFrame(clampOpenOverviewMenus);
   }, true);
   window.addEventListener('resize', clampOpenOverviewMenus);
-  $('orderForm').addEventListener('submit', guard(async e => {
-    e.preventDefault();
-    const form = e.currentTarget;
-    const data = formData(form);
-    if (!(await confirmCatalogNameConflict({ catalogNo: data.catalog_no, name: data.name }))) return;
-    await api('/api/orders', { method: 'POST', body: JSON.stringify(data) });
-    resetForm(form);
-    toast('订购登记已保存');
-    await loadRegistrationTab('orders');
-  }));
+  $('orderForm').addEventListener('submit', guard(submitOrder));
+  $('orderForm').addEventListener('change', e => {
+    if (e.target.name === 'category' || e.target.name === 'catalog_no') void syncAntibodyCategoryOrCatalog(e.currentTarget);
+    if (['antibody_target', 'antibody_conjugate'].includes(e.target.name)) syncAntibodyNameField(e.currentTarget);
+  });
+  $('orderForm').addEventListener('input', e => {
+    if (['antibody_target', 'antibody_conjugate'].includes(e.target.name)) syncAntibodyNameField(e.currentTarget);
+  });
   $('repeatOrderSearch').addEventListener('input', () => {
     clearTimeout(window.__repeatOrderSearchTimer);
     window.__repeatOrderSearchTimer = setTimeout(() => { void loadRepeatOrderCandidates(); }, 250);
@@ -383,23 +412,41 @@ function wireEvents() {
   $('cancelValidationEditBtn').addEventListener('click', resetValidationForm);
   wireLocationFields('reagent', {
     extraFields: ['status', 'quantity'],
+    onChange: e => {
+      if (e.target.name === 'category') {
+        void syncAntibodyCategoryOrCatalog(e.currentTarget);
+      } else if (e.target.name === 'catalog_no') void loadAntibodyMetadataIntoForm(e.currentTarget);
+      if (['antibody_target', 'antibody_conjugate'].includes(e.target.name)) syncAntibodyNameField(e.currentTarget);
+    },
     onBeforeLoad: e => {
       if (['status', 'quantity', 'storage_node_id', 'grid_cell'].includes(e.target.name)) syncReagentStorageFields(e.currentTarget);
       if (e.target.name === 'quantity') syncMultiRegisterFields(e.currentTarget);
     },
   });
   $('reagentForm').addEventListener('submit', guard(submitReagent));
+  $('reagentForm').addEventListener('input', e => {
+    if (['antibody_target', 'antibody_conjugate'].includes(e.target.name)) syncAntibodyNameField(e.currentTarget);
+  });
   $('reagentForm').elements.quantity.addEventListener('input', e => {
     syncReagentStorageFields(e.currentTarget.form);
     syncMultiRegisterFields(e.currentTarget.form);
   });
   wireLocationFields('reagentEdit', {
     extraFields: ['status', 'quantity'],
+    onChange: e => {
+      if (e.target.name === 'category') {
+        void syncAntibodyCategoryOrCatalog(e.currentTarget);
+      } else if (e.target.name === 'catalog_no') void loadAntibodyMetadataIntoForm(e.currentTarget);
+      if (['antibody_target', 'antibody_conjugate'].includes(e.target.name)) syncAntibodyNameField(e.currentTarget);
+    },
     onBeforeLoad: e => {
       if (['status', 'quantity', 'storage_node_id', 'grid_cell'].includes(e.target.name)) syncReagentStorageFields(e.currentTarget);
     },
   });
   $('reagentEditForm').addEventListener('submit', guard(submitReagent));
+  $('reagentEditForm').addEventListener('input', e => {
+    if (['antibody_target', 'antibody_conjugate'].includes(e.target.name)) syncAntibodyNameField(e.currentTarget);
+  });
   $('reagentEditForm').elements.quantity.addEventListener('input', e => {
     syncReagentStorageFields(e.currentTarget.form);
   });
@@ -423,6 +470,18 @@ function wireEvents() {
   $('aliquotForm').addEventListener('submit', guard(submitAliquot));
   $('excelExportForm').addEventListener('submit', guard(submitExcelExport));
   $('excelImportForm').addEventListener('submit', guard(submitExcelImport));
+  $('catalogNoCorrectionForm')?.addEventListener('submit', guard(e => submitCorrectionPreview('catalogNo', e)));
+  $('catalogNoCorrectionForm')?.addEventListener('input', () => {
+    state.catalogNoCorrectionPreview = null;
+    $('catalogNoCorrectionCommitBtn').disabled = true;
+  });
+  $('catalogNoCorrectionCommitBtn')?.addEventListener('click', guard(() => commitCorrection('catalogNo')));
+  $('brandCorrectionForm')?.addEventListener('submit', guard(e => submitCorrectionPreview('brand', e)));
+  $('brandCorrectionForm')?.addEventListener('input', () => {
+    state.brandCorrectionPreview = null;
+    $('brandCorrectionCommitBtn').disabled = true;
+  });
+  $('brandCorrectionCommitBtn')?.addEventListener('click', guard(() => commitCorrection('brand')));
   $('recordDeleteForm')?.addEventListener('submit', guard(submitRecordDelete));
   $('backupForm')?.addEventListener('submit', guard(submitBackup));
   $('backupSettingsForm')?.addEventListener('submit', guard(submitBackupSettings));
@@ -452,7 +511,7 @@ function wireEvents() {
   });
   $('movementForm').addEventListener('submit', guard(submitMovement));
   $('bulkForm')?.addEventListener('change', e => {
-    if (['operation', 'item_type', 'mode'].includes(e.target.name)) {
+    if (['operation', 'item_type'].includes(e.target.name)) {
       state.bulkPreview = [];
       $('bulkCommitBtn').disabled = true;
       syncBulkFields();
@@ -570,6 +629,19 @@ async function moveStorageNodeByDrop(payload, target) {
     toast('当前账号没有位置维护权限');
     return;
   }
+  if (target.dataset.dropFavorites === '1') {
+    await api(`/api/storage/nodes/${payload.item_id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ is_favorite: true }),
+    });
+    state.selectedNodeId = VIRTUAL_FAVORITES_NODE_ID;
+    state.selectedWell = '';
+    state.selectedItemType = '';
+    state.selectedItemId = null;
+    toast('已加入常用位置');
+    await loadInventory();
+    return;
+  }
   const targetNode = nodeById(target.dataset.dropNode);
   const toUnplaced = target.dataset.dropUnplaced === '1' || isVirtualUnplacedId(target.dataset.dropNode);
   const parentId = toUnplaced ? '' : (target.dataset.dropStorageParent || (targetNode ? target.dataset.dropNode : ''));
@@ -601,6 +673,10 @@ async function moveStorageNodeByDrop(payload, target) {
 async function moveInventoryByDrop(payload, target) {
   if (!canManageLocation()) {
     toast('当前账号没有位置维护权限');
+    return;
+  }
+  if (target.dataset.dropFavorites === '1') {
+    toast('常用位置只收纳空间，请把库存拖到具体空间或未归位');
     return;
   }
   const toUnplaced = target.dataset.dropUnplaced === '1' || isVirtualUnplacedId(target.dataset.dropNode);
@@ -659,7 +735,7 @@ async function handleActions(e) {
   if (await handleSpaceActions(action, id, btn)) return;
   if (await handlePickerActions(action, id, btn)) return;
   if (await handleAdminActions(action, id, btn)) return;
-  await handleRegistrationActions(action, id);
+  await handleRegistrationActions(action, id, btn);
 }
 
 async function handleDetailActions(action, id, btn) {
@@ -722,6 +798,10 @@ async function handleInventoryActions(action, id, btn) {
     state.selectedItemType = '';
     state.selectedItemId = null;
     await loadInventory();
+    return true;
+  }
+  if (action === 'remove-favorite-space') {
+    await removeFavoriteSpace(id);
     return true;
   }
   if (action === 'inventory-reagent') {
@@ -809,6 +889,7 @@ async function handleAdminActions(action, id, btn) {
   const actions = {
     'edit-user': () => editUser(id),
     'reset-user-password': () => resetUserPassword(id),
+    'settings-page': () => setSettingsPage(id),
     'settings-add': () => addSettingsOption(id),
     'settings-remove': () => removeSettingsOption(btn),
     'download-backup': () => downloadBackup(id),
@@ -820,11 +901,15 @@ async function handleAdminActions(action, id, btn) {
   return true;
 }
 
-async function handleRegistrationActions(action, id) {
+async function handleRegistrationActions(action, id, btn) {
   const actions = {
     'repeat-order-fill': () => fillOrderFromRepeatItem(),
     'aliquot-use-source-location': () => useAliquotSourceLocation(),
     'edit-validation': () => editValidation(id),
+    'ai-extract-reagent': () => openAiExtractDialog($(btn.dataset.formId || '')),
+    'submit-ai-extract': () => extractReagentInfoForForm($(document.getElementById('aiExtractDialog')?.dataset.formId || '')),
+    'close-ai-extract': () => closeAiExtractDialog(),
+    'generate-antibody-name': () => generateAntibodyName($(btn.dataset.formId || '')),
   };
   const handler = actions[action];
   if (!handler) return false;
@@ -844,6 +929,8 @@ async function submitPassword(e) {
 
 async function boot() {
   initSidebarToggle();
+  renderAppVersion();
+  await loadAppVersion();
   await loadRuntimeConfig();
   wireEvents();
   setDefaultDates();

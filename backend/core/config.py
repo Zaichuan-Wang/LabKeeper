@@ -40,6 +40,7 @@ def env_path(name: str, default: Path) -> Path:
 
 
 APP_ENV = env_value("ENV", "production").strip().lower() or "production"
+APP_VERSION = env_value("VERSION", "1.0.0").strip() or "1.0.0"
 IS_PRODUCTION = APP_ENV in {"production", "prod"}
 INITIAL_ADMIN_USERNAME = env_value("INITIAL_ADMIN_USERNAME", "admin")
 INITIAL_PASSWORD = env_value("INITIAL_PASSWORD", "" if IS_PRODUCTION else "admin123")

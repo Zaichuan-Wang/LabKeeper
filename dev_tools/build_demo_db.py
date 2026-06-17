@@ -73,6 +73,7 @@ def seed(conn: sqlite3.Connection) -> None:
     pending_order_ids = seed_pending_order_reagents(conn, now)
     seed_arrival_movements(conn, pending_order_ids, reagent_ids, positions)
     seed_validations(conn, now)
+    seed_antibody_metadata(conn, now)
     seed_movements(conn, now, reagent_ids, sample_ids)
     seed_audit_logs(conn, now)
     conn.commit()
@@ -112,13 +113,6 @@ def seed_system_storage_nodes(conn: sqlite3.Connection, now: str) -> None:
         """,
         [(node_id, label, label, sort_order, now, now) for node_id, label, sort_order in rows],
     )
-
-
-def require_position(positions: "PositionAllocator", node_id: int) -> str:
-    position = positions.next(node_id)
-    if position is None:
-        raise RuntimeError(f"Demo storage node {node_id} has no free grid position")
-    return position
 
 
 def movement_object_type(item_type: str) -> str:
@@ -817,6 +811,29 @@ def seed_validations(conn: sqlite3.Connection, now: str) -> None:
             """,
             (catalog_no, validator_id, validation_date, method, result, description, now),
         )
+
+
+def seed_antibody_metadata(conn: sqlite3.Connection, now: str) -> None:
+    rows = [
+        ("103101", "CD45", "FITC", "Mouse", "Rat", "30-F11", "IgG2b κ", "Ptprc", "Demo 元信息：库存和订购共用同一货号。"),
+        ("100201", "CD3e", "PE", "Mouse", "Hamster", "145-2C11", "IgG", "CD3 epsilon", "Demo 元信息：到货订单自动带入。"),
+        ("100401", "CD4", "APC", "Mouse", "Rat", "GK1.5", "IgG2b κ", "L3T4", "Demo 元信息：未验证抗体。"),
+        ("100701", "CD8a", "APC-Cy7", "Mouse", "Rat", "53-6.7", "IgG2a κ", "Ly-2", "Demo 元信息：常用流式面板。"),
+        ("557396", "CD11b", "PerCP-Cy5.5", "Mouse", "Rat", "M1/70", "IgG2b κ", "Itgam", "Demo 元信息：过期复核示例。"),
+        ("127601", "Ly6G", "FITC", "Mouse", "Rat", "1A8", "IgG2a κ", "Gr-1", "Demo 元信息：粒细胞面板。"),
+        ("123107", "F4/80", "PE", "Mouse", "Rat", "BM8", "IgG2a κ", "Adgre1", "Demo 元信息：巨噬细胞面板。"),
+        ("115507", "CD19", "APC", "Mouse", "Rat", "6D5", "IgG2a κ", "B4", "Demo 元信息：B 细胞面板。"),
+        ("102005", "CD25", "PE", "Mouse", "Rat", "PC61", "IgG1 κ", "IL-2R alpha", "Demo 元信息：未到货订购也可带入。"),
+    ]
+    conn.executemany(
+        """
+        INSERT INTO antibody_metadata
+            (catalog_no, target, conjugate, react_species, host_species, clone, isotype, aliases, raw_note,
+             created_by, updated_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
+        """,
+        [(*row, now, now) for row in rows],
+    )
 
 
 def seed_movements(

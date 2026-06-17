@@ -17,7 +17,6 @@ from services.storage_inventory import (
     inventory_item_by_id,
     inventory_items_at_node,
     node_full_path,
-    occupied_positions,
     position_options_for_node,
     refresh_inventory_locations_at_node,
     storage_item_counts,
@@ -30,12 +29,20 @@ from services.options_config import clean_space_type_code
 
 
 VIRTUAL_UNPLACED_NODE_ID = SYSTEM_UNPLACED_NODE_ID
+VIRTUAL_FAVORITES_NODE_ID = -5
 DEFAULT_ROOT_STORAGE_NODE_ID = 1
 
 
 def is_virtual_unplaced_id(node_id: Any) -> bool:
     try:
         return int(node_id) == VIRTUAL_UNPLACED_NODE_ID
+    except (TypeError, ValueError):
+        return False
+
+
+def is_virtual_favorites_id(node_id: Any) -> bool:
+    try:
+        return int(node_id) == VIRTUAL_FAVORITES_NODE_ID
     except (TypeError, ValueError):
         return False
 
@@ -129,6 +136,27 @@ def storage_child_items(conn: Any, rows: list[Any], direct_counts: dict[int, int
     return child_items
 
 
+def _validation_rows_for_item(conn: Any, item: dict[str, Any] | None) -> list[Any]:
+    if not item or item.get("item_type") != "reagent":
+        return []
+    catalog_no = str(item.get("catalog_no") or "").strip()
+    if not catalog_no:
+        return []
+    return conn.execute(
+        """
+        SELECT
+            v.id, NULL AS item_id, v.catalog_no,
+            v.validator_id, v.validation_date, v.method, v.result, v.description, v.image_path, v.created_at,
+            u.display_name AS validator_name
+        FROM validations v
+        LEFT JOIN users u ON u.id = v.validator_id
+        WHERE v.catalog_no = ?
+        ORDER BY v.validation_date DESC, v.created_at DESC
+        """,
+        (catalog_no,),
+    ).fetchall()
+
+
 def storage_visual(
     node_id: int | None = None,
     selected_well: str = "",
@@ -159,7 +187,8 @@ def storage_visual(
                 guard += 1
             return depth
 
-        selected_virtual = is_virtual_unplaced_id(node_id)
+        selected_unplaced = is_virtual_unplaced_id(node_id)
+        selected_favorites = is_virtual_favorites_id(node_id)
         virtual_count = unplaced_item_count(conn, visible_types)
         tree = [{
             "id": VIRTUAL_UNPLACED_NODE_ID,
@@ -167,43 +196,41 @@ def storage_visual(
             "name": "未归位",
             "path": "未归位",
             "depth": 0,
-            "selected": selected_virtual,
+            "selected": selected_unplaced,
             "direct_items": virtual_count,
             "total_items": virtual_count,
             "is_virtual_unplaced": True,
+        }, {
+            "id": VIRTUAL_FAVORITES_NODE_ID,
+            "parent_id": None,
+            "name": "常用位置",
+            "path": "常用位置",
+            "depth": 0,
+            "selected": selected_favorites,
+            "direct_items": 0,
+            "total_items": 0,
+            "is_virtual_favorites": True,
         }]
         for row in rows:
             item = row_dict(row) or {}
             nid = int(item["id"])
             item["depth"] = depth_for(nid)
-            item["selected"] = not selected_virtual and nid == int(node_id or 0)
+            item["selected"] = not selected_unplaced and not selected_favorites and nid == int(node_id or 0)
             item["path"] = path_cache.get(nid, "")
             item["direct_items"] = direct_counts.get(nid, 0)
             item["total_items"] = sum(direct_counts.get(i, 0) for i in desc_cache.get(nid, [nid]))
             tree.append(item)
+        favorite_space_count = sum(1 for row in rows if int(row["is_favorite"] or 0))
+        tree[1]["direct_items"] = favorite_space_count
+        tree[1]["total_items"] = favorite_space_count
 
         selected_item_data = None
         if selected_item_type and selected_item_id and selected_item_type in visible:
             selected_item_data = inventory_item_by_id(conn, selected_item_type, selected_item_id)
 
-        selected_validations = []
-        if selected_item_data and selected_item_data.get("item_type") == "reagent":
-            catalog_no = str(selected_item_data.get("catalog_no") or "").strip()
-            selected_validations = conn.execute(
-                """
-                SELECT
-                    v.id, NULL AS item_id, v.catalog_no,
-                    v.validator_id, v.validation_date, v.method, v.result, v.description, v.image_path, v.created_at,
-                    u.display_name AS validator_name
-                FROM validations v
-                LEFT JOIN users u ON u.id = v.validator_id
-                WHERE v.catalog_no = ?
-                ORDER BY v.validation_date DESC, v.created_at DESC
-                """,
-                (catalog_no,),
-            ).fetchall()
+        selected_validations = _validation_rows_for_item(conn, selected_item_data)
 
-        if selected_virtual:
+        if selected_unplaced:
             direct_items = unplaced_inventory_items(conn, visible_types=visible_types)
             unplaced_spaces = storage_child_items(conn, rows, direct_counts, 0, path_cache, desc_cache)
             unplaced_spaces = [item for item in unplaced_spaces if int(item["id"]) != DEFAULT_ROOT_STORAGE_NODE_ID]
@@ -230,6 +257,53 @@ def storage_visual(
                 "selected_item": selected_item_data,
                 "selected_validations": rows_list(selected_validations),
                 "stats": {"nodes": len(rows), "children": len(unplaced_spaces), "direct": virtual_count, "total": virtual_count, "occupied": virtual_count + len(unplaced_spaces), "capacity": 1},
+            }
+
+        if selected_favorites:
+            favorite_spaces = []
+            for row in rows:
+                if not int(row["is_favorite"] or 0):
+                    continue
+                item = row_dict(row) or {}
+                nid = int(item["id"])
+                item["path"] = path_cache.get(nid, "")
+                item["children"] = len(conn.execute("SELECT id FROM storage_nodes WHERE parent_id = ?", (nid,)).fetchall())
+                ids = desc_cache.get(nid, [nid])
+                item["direct"] = direct_counts.get(nid, 0)
+                item["total"] = sum(direct_counts.get(i, 0) for i in ids)
+                item["direct_items"] = item["direct"]
+                item["total_items"] = item["total"]
+                item["is_unplaced"] = False
+                item["grid_position"] = None
+                item["grid_label"] = ""
+                favorite_spaces.append(item)
+            favorite_spaces.sort(key=lambda item: (int(item.get("favorite_sort_order") or 0), int(item.get("sort_order") or 0), str(item.get("name") or ""), int(item.get("id") or 0)))
+            favorite_total = sum(int(item.get("total_items") or 0) for item in favorite_spaces)
+            current_item = {
+                "id": VIRTUAL_FAVORITES_NODE_ID,
+                "parent_id": None,
+                "name": "常用位置",
+                "path": "常用位置",
+                "rows": 1,
+                "cols": 1,
+                "grid_row": None,
+                "grid_col": None,
+                "is_virtual_favorites": True,
+            }
+            for item in tree:
+                item["selected"] = is_virtual_favorites_id(item["id"])
+            return {
+                "current": current_item,
+                "grid": {"rows": 1, "cols": 1, "capacity": 1, "is_framed": False},
+                "tree": tree,
+                "children": favorite_spaces,
+                "frame_items": [],
+                "direct_items": [],
+                "items": favorite_spaces[:80],
+                "selected_well": "",
+                "selected_item": selected_item_data,
+                "selected_validations": rows_list(selected_validations),
+                "stats": {"nodes": len(rows), "children": len(favorite_spaces), "direct": 0, "total": favorite_total, "occupied": len(favorite_spaces), "capacity": max(1, len(favorite_spaces))},
             }
 
         if node_id is None:
@@ -270,21 +344,8 @@ def storage_visual(
         if selected_item_data is None and selected_item:
             selected_item_data = inventory_item_by_id(conn, selected_item.get("item_type", "reagent"), int(selected_item["id"]))
 
-        if not selected_validations and selected_item_data and selected_item_data.get("item_type") == "reagent":
-            catalog_no = str(selected_item_data.get("catalog_no") or "").strip()
-            selected_validations = conn.execute(
-                """
-                SELECT
-                    v.id, NULL AS item_id, v.catalog_no,
-                    v.validator_id, v.validation_date, v.method, v.result, v.description, v.image_path, v.created_at,
-                    u.display_name AS validator_name
-                FROM validations v
-                LEFT JOIN users u ON u.id = v.validator_id
-                WHERE v.catalog_no = ?
-                ORDER BY v.validation_date DESC, v.created_at DESC
-                """,
-                (catalog_no,),
-            ).fetchall()
+        if not selected_validations:
+            selected_validations = _validation_rows_for_item(conn, selected_item_data)
 
         grid_capacity = max(current_grid_rows * current_grid_cols, max_child_position)
         occupied_slots = len(child_items) + len(frame_items)
@@ -305,6 +366,10 @@ def storage_visual(
         }
 
 
+def _favorite_value(value: Any) -> int:
+    return 1 if value is True or str(value).strip().lower() in {"1", "true", "yes", "on"} else 0
+
+
 def create_storage_node(data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     name = str(data.get("name", "")).strip()
     if not name:
@@ -318,8 +383,9 @@ def create_storage_node(data: dict[str, Any], user: dict[str, Any]) -> dict[str,
         cur = conn.execute(
             """
             INSERT INTO storage_nodes
-                (parent_id, name, node_type, space_type, location_code, rows, cols, grid_row, grid_col, note, sort_order, created_by, updated_by, created_at, updated_at)
-            VALUES (?, ?, 'space', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (parent_id, name, node_type, space_type, location_code, rows, cols, grid_row, grid_col,
+                 is_favorite, favorite_sort_order, note, sort_order, created_by, updated_by, created_at, updated_at)
+            VALUES (?, ?, 'space', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 parent_id,
@@ -330,6 +396,8 @@ def create_storage_node(data: dict[str, Any], user: dict[str, Any]) -> dict[str,
                 cols_value,
                 clean_positive_int(data.get("grid_row")),
                 clean_positive_int(data.get("grid_col")),
+                _favorite_value(data.get("is_favorite")),
+                clean_int_range(data.get("favorite_sort_order"), 0, 0, 100_000),
                 str(data.get("note", "")).strip() or None,
                 clean_int_range(data.get("sort_order"), 0, 0, 100_000),
                 user["id"], user["id"], timestamp, timestamp,
@@ -407,7 +475,7 @@ def _clear_out_of_bounds_grid_assignments(conn: Any, node: Any, user_id: int | N
 
 
 def update_storage_node(node_id: int, data: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
-    allowed = ["parent_id", "name", "space_type", "location_code", "rows", "cols", "grid_row", "grid_col", "note", "sort_order"]
+    allowed = ["parent_id", "name", "space_type", "location_code", "rows", "cols", "grid_row", "grid_col", "is_favorite", "favorite_sort_order", "note", "sort_order"]
     updates = {key: data[key] for key in allowed if key in data}
     if not updates:
         raise ApiError(400, "没有可更新字段")
@@ -419,6 +487,10 @@ def update_storage_node(node_id: int, data: dict[str, Any], user: dict[str, Any]
         updates["space_type"] = clean_space_type(updates["space_type"])
     if "sort_order" in updates:
         updates["sort_order"] = clean_int_range(updates["sort_order"], 0, 0, 100_000)
+    if "favorite_sort_order" in updates:
+        updates["favorite_sort_order"] = clean_int_range(updates["favorite_sort_order"], 0, 0, 100_000)
+    if "is_favorite" in updates:
+        updates["is_favorite"] = _favorite_value(updates["is_favorite"])
     updates["updated_by"] = user["id"]
     updates["updated_at"] = now_text()
     with connect() as conn:

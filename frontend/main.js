@@ -1,4 +1,4 @@
-const ASSET_VERSION = '20260616-inventory-available-filter';
+const ASSET_VERSION = '20260617-v1.0.0';
 const APP_SCRIPTS = [
   'core.js',
   'ui-common.js',

@@ -40,7 +40,8 @@
   "antibody_conjugates": [
     "PE",
     "FITC",
-    "APC"
+    "APC",
+    "Unlabeled"
   ],
   "antibody_react_species": [
     "Mouse",

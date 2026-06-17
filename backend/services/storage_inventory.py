@@ -113,13 +113,6 @@ def is_system_storage_node_id(node_id: Any) -> bool:
         return False
 
 
-def is_real_storage_node_id(node_id: Any) -> bool:
-    try:
-        return int(node_id) > 0
-    except (TypeError, ValueError):
-        return False
-
-
 def system_storage_label(node_id: Any) -> str:
     try:
         return SYSTEM_STORAGE_NODE_LABELS.get(int(node_id), "")
@@ -188,15 +181,6 @@ def clean_positive_int(value: Any, maximum: int = 50) -> int | None:
     if number <= 0:
         return None
     return min(number, maximum)
-
-
-def coord_list(rows: int, cols: int) -> list[str]:
-    coords = []
-    for row in range(rows):
-        label = chr(ord("A") + row)
-        for col in range(1, cols + 1):
-            coords.append(f"{label}{col}")
-    return coords
 
 
 def position_options_for_node(node: sqlite3.Row | dict[str, Any] | None) -> list[str]:

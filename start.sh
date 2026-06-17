@@ -18,7 +18,6 @@ PID_DIR="$DATA_DIR/pids"
 
 if [ ! -f "$ROOT/.env" ] && [ -z "${LABKEEPER_ENV:-}" ]; then
   export LABKEEPER_ENV=development
-  export LABKEEPER_ENABLE_DEV_TOOLS=1
 fi
 
 API_PORT=8000

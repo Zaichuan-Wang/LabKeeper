@@ -8,12 +8,11 @@ from fastapi.responses import JSONResponse
 
 from services import admin
 from services import auth
-from services import dev_tools
 from core.common import ApiError, get_logger, now_text
-from core.config import DB_PATH, IS_PRODUCTION
+from core.config import APP_VERSION, DB_PATH, IS_PRODUCTION
 from models.request_models import LoginRequest, PasswordChangeRequest
-from core.security import AUTH_COOKIE_NAME, require_admin, require_user
-from routers.common import json_response
+from core.security import require_user
+from routers.common import auth_cookie_response, clear_auth_cookie, json_response
 
 router = APIRouter()
 logger = get_logger("lab.server")
@@ -39,36 +38,12 @@ def _clear_login_failures(client_ip: str) -> None:
     _login_failures.pop(client_ip, None)
 
 
-def auth_response(result: dict[str, Any], status_code: int = 200) -> JSONResponse:
-    response = json_response(result, status_code)
-    response.set_cookie(
-        AUTH_COOKIE_NAME,
-        result["token"],
-        max_age=auth.TOKEN_TTL_SECONDS,
-        httponly=True,
-        secure=False,
-        samesite="lax",
-        path="/",
-    )
-    return response
-
-
-def clear_auth_cookie(response: JSONResponse) -> JSONResponse:
-    response.delete_cookie(AUTH_COOKIE_NAME, path="/")
-    return response
-
-
 @router.get("/api/health")
 def health() -> dict[str, Any]:
-    payload = {"ok": True, "time": now_text()}
+    payload = {"ok": True, "time": now_text(), "version": APP_VERSION}
     if not IS_PRODUCTION:
         payload["db"] = str(DB_PATH)
     return payload
-
-
-@router.get("/api/runtime-config")
-def runtime_config() -> dict[str, Any]:
-    return dev_tools.runtime_config()
 
 
 @router.get("/api/options")
@@ -86,32 +61,15 @@ def login(request: Request, data: LoginRequest) -> JSONResponse:
         result = auth.login(data.payload())
         _clear_login_failures(client_ip)
         logger.info("用户 %s 登录成功", data.payload().get("username", ""))
-        return auth_response(result)
+        return auth_cookie_response(result)
     except ApiError:
         _record_login_failure(client_ip)
         raise
 
 
-@router.post("/api/dev/login")
-def dev_login() -> JSONResponse:
-    credentials = dev_tools.dev_admin_credentials()
-    return auth_response(auth.login(credentials))
-
-
-@router.post("/api/dev/load-demo-db")
-def dev_load_demo_database(user: dict[str, Any] = Depends(require_user)) -> JSONResponse:
-    require_admin(user)
-    return json_response(dev_tools.load_demo_database())
-
-
 @router.post("/api/logout")
 def logout() -> JSONResponse:
     return clear_auth_cookie(json_response({"ok": True}))
-
-
-@router.get("/api/me")
-def me(user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
-    return {"user": user}
 
 
 @router.patch("/api/me/password")

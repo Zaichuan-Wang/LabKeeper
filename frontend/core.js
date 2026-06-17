@@ -6,13 +6,15 @@ const STATUS_DISABLED = '停用';
 const STATUS_CONSUMED = '已耗尽';
 const VALIDATION_UNVERIFIED = '未验证';
 const PHYSICAL_INVENTORY_STATUSES = new Set([STATUS_AVAILABLE, STATUS_DISABLED]);
+const DEFAULT_APP_VERSION = '1.0.0';
 
 const state = {
   // ── 会话 ──
   apiBase: getApiBase(),
   token: localStorage.getItem(SESSION_USER_KEY) ? 'cookie' : '',
   user: readStoredUser(),
-  runtime: { dev_tools_enabled: false, dev_admin_username: '', demo_database_available: false },
+  appVersion: DEFAULT_APP_VERSION,
+  runtime: { devtools_enabled: false, devtools_admin_username: '', demo_database_available: false },
   options: null,
   view: 'dashboard',
   tablePages: {},
@@ -121,6 +123,7 @@ const VIEW_TITLES = {
   registration: '登记入库',
   history: '流转记录',
   admin: '系统管理',
+  options: '选项配置',
   password: '账号密码',
   inventory: '库存空间',
 };

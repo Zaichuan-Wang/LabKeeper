@@ -149,7 +149,7 @@ async function loadInventory() {
   state.selectedNodeId = data.current.id;
   setInventoryTab(state.inventoryTab, false);
   renderInventoryWorkbench(data);
-  if (isVirtualUnplacedNode(data.current)) fillSpaceForm({}, 'new-root');
+  if (isVirtualOverviewNode(data.current)) fillSpaceForm({}, 'new-root');
   else fillSpaceForm(data.current);
   $('inventoryOverviewCount').textContent = `${data.stats.total} 件`;
   await loadInventoryTab(state.inventoryTab);
@@ -301,7 +301,6 @@ function currentBulkPayload(rows) {
   return {
     operation: data.operation,
     item_type: data.item_type || 'reagent',
-    mode: data.operation === 'import' ? 'insert' : 'update',
     rows,
   };
 }
@@ -501,7 +500,7 @@ async function closeLocationPicker() {
 async function browsePickerNode(kind, nodeId) {
   if (state.activeLocationPicker !== kind) return;
   state.locationPickerDraft = {
-    nodeId: isVirtualUnplacedId(nodeId) ? VIRTUAL_UNPLACED_NODE_ID : nodeId,
+    nodeId: isVirtualOverviewId(nodeId) ? String(nodeId) : nodeId,
     well: '',
   };
   await loadLocationPicker(kind);
@@ -511,6 +510,10 @@ async function applyPickerNode(kind, nodeId) {
   const cfg = pickerConfigs[kind];
   const form = cfg ? $(cfg.form) : null;
   if (!cfg || !form) return;
+  if (isVirtualFavoritesId(nodeId)) {
+    toast('常用位置是快捷入口，请选择其中的真实空间');
+    return;
+  }
   const selectedNodeId = isVirtualUnplacedId(nodeId) ? '' : nodeId;
   form.elements[cfg.nodeField].value = selectedNodeId;
   form.elements[cfg.positionField].value = '';
@@ -528,7 +531,7 @@ async function setPickerWell(kind, well) {
   const form = cfg ? $(cfg.form) : null;
   if (!cfg || !form) return;
   const draftNodeId = state.activeLocationPicker === kind ? state.locationPickerDraft?.nodeId : '';
-  const nodeId = isVirtualUnplacedId(draftNodeId) ? '' : (draftNodeId || form.elements[cfg.nodeField].value || '');
+  const nodeId = isVirtualOverviewId(draftNodeId) ? '' : (draftNodeId || form.elements[cfg.nodeField].value || '');
   if (!nodeId) return;
   form.elements[cfg.nodeField].value = nodeId;
   fillPositionSelect(form.elements[cfg.positionField], nodeId, well);
@@ -577,8 +580,8 @@ async function startNewRootSpace() {
 
 async function startNewChildSpace(parentId = state.selectedNodeId, gridRow = '', gridCol = '') {
   if (parentId) state.selectedNodeId = parentId;
-  if (isVirtualUnplacedId(parentId)) {
-    toast('未归位不是实际空间，请先选择真实空间');
+  if (isVirtualOverviewId(parentId)) {
+    toast('请先选择真实空间');
     return;
   }
   activateView('inventory');
@@ -589,8 +592,8 @@ async function startNewChildSpace(parentId = state.selectedNodeId, gridRow = '',
 
 async function openSpaceEditor(nodeId = state.selectedNodeId) {
   if (!nodeId) return;
-  if (isVirtualUnplacedId(nodeId)) {
-    toast('未归位不是实际空间，不能编辑');
+  if (isVirtualOverviewId(nodeId)) {
+    toast('请先选择真实空间再编辑');
     return;
   }
   state.selectedNodeId = nodeId;
@@ -614,8 +617,8 @@ async function deleteCurrentSpace(nodeId = state.selectedNodeId) {
   }
   await loadStorageTree();
   const node = nodeById(targetId);
-  if (isVirtualUnplacedId(targetId)) {
-    toast('未归位不是实际空间，不能删除');
+  if (isVirtualOverviewId(targetId)) {
+    toast('请先选择真实空间再删除');
     return;
   }
   const label = node?.path || node?.name || '当前空间';
@@ -630,12 +633,31 @@ async function deleteCurrentSpace(nodeId = state.selectedNodeId) {
   await loadInventory();
 }
 
+async function removeFavoriteSpace(nodeId) {
+  if (!canManageLocation()) {
+    toast('当前账号没有位置维护权限');
+    return;
+  }
+  if (!isRealStorageNodeId(nodeId)) return;
+  await api(`/api/storage/nodes/${nodeId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ is_favorite: false }),
+  });
+  state.selectedNodeId = VIRTUAL_FAVORITES_NODE_ID;
+  state.selectedWell = '';
+  state.selectedItemType = '';
+  state.selectedItemId = null;
+  toast('已从常用位置移除');
+  await loadStorageTree();
+  await loadInventory();
+}
+
 async function startMoveIntoSpace(nodeId = state.selectedNodeId, well = '') {
   if (!canManageLocation()) {
     toast('当前账号没有位置维护权限');
     return;
   }
-  state.moveTargetId = isVirtualUnplacedId(nodeId) ? '' : nodeId;
+  state.moveTargetId = isVirtualOverviewId(nodeId) ? '' : nodeId;
   state.moveWell = state.moveTargetId ? (well || '') : '';
   state.moveItemId = null;
   activateView('inventory');
@@ -662,7 +684,7 @@ function closeInventoryDetailDialog() {
 }
 
 async function startNewSampleAt(nodeId = state.selectedNodeId, well = '') {
-  const targetNodeId = isVirtualUnplacedId(nodeId) ? '' : nodeId;
+  const targetNodeId = isVirtualOverviewId(nodeId) ? '' : nodeId;
   state.selectedNodeId = nodeId;
   state.selectedWell = well || '';
   activateView('registration');
@@ -678,7 +700,7 @@ async function startNewSampleAt(nodeId = state.selectedNodeId, well = '') {
 }
 
 async function startNewReagentAt(nodeId = state.selectedNodeId, well = '') {
-  const targetNodeId = isVirtualUnplacedId(nodeId) ? '' : nodeId;
+  const targetNodeId = isVirtualOverviewId(nodeId) ? '' : nodeId;
   state.selectedNodeId = nodeId;
   state.selectedWell = well || '';
   activateView('registration');
@@ -693,8 +715,8 @@ async function startNewReagentAt(nodeId = state.selectedNodeId, well = '') {
 }
 
 function positionActionButtons({ nodeId, well = '', row = '', col = '', node }) {
-  const isVirtualUnplaced = isVirtualUnplacedNode(node || nodeId);
-  const childButton = canManageLocation() && row && col && !isVirtualUnplaced
+  const isVirtualNode = isVirtualOverviewNode(node || nodeId);
+  const childButton = canManageLocation() && row && col && !isVirtualNode
     ? `<button class="ghost mini-btn" type="button" data-action="new-child-space" data-id="${nodeId}" data-row="${esc(row)}" data-col="${esc(col)}">新建下级空间</button>`
     : '';
   const createButtons = [
@@ -893,6 +915,7 @@ function inventoryDetailBody(data, itemType, timeline = null) {
     ${inventoryDetailActions(item)}
     <h4>${esc(item.name)}</h4>
     <div class="detail-grid"><span>编号：${esc(item.code || item.id)}</span><span>来源：${esc(item.source_code || item.code || '-')}</span><span>货号：${esc(item.catalog_no || '-')}</span>${aliquotText ? `<span>管号：${esc(aliquotText)}</span>` : ''}<span>规格：${amountText(item)}</span><span>价格：${esc(orderPriceText(item.price))}</span><span>类型：${esc(item.category)}</span><span>状态：${esc(item.status)}</span><span>验证：${esc(item.validation_status)}</span><span>数量：${esc(item.quantity)}</span><span>位置：${esc(locationText(item.storage_location))}</span><span>备注：${esc(item.note || '-')}</span></div>
+    ${renderAntibodyMetadataBlock(data)}
     <div class="detail-timeline-stack">
       ${detailTimelineModule('时间线', timeline?.items || [], { open: true, actions: timelineEventActions })}
       <div id="detailOrderHistory" class="detail-timeline-placeholder">${detailTimelineModule('历史订购', [], { open: false })}</div>
@@ -928,23 +951,6 @@ async function showInventoryItemDetailDialog(itemType = 'reagent', id = '') {
     const events = await loadOrderHistoryEvents(data.item.catalog_no || '');
     const panel = $('detailOrderHistory');
     if (panel) panel.innerHTML = detailTimelineModule('历史订购', events, { open: false });
-  }
-}
-
-async function refreshOpenInventoryDetailDialog() {
-  if (!$('inventoryDetailDialog') || !state.detailItemId) return;
-  const type = state.detailItemType || 'reagent';
-  const id = state.detailItemId;
-  const [data, timeline] = await Promise.all([
-    api(inventoryObjectDetailPath(type, id)),
-    loadInventoryTimeline(type, id),
-  ]);
-  const panel = document.querySelector('#inventoryDetailDialog .detail-panel');
-  if (panel) panel.innerHTML = inventoryDetailBody(data, type, timeline);
-  if (type === 'reagent') {
-    const events = await loadOrderHistoryEvents(data.item.catalog_no || '');
-    const orderPanel = $('detailOrderHistory');
-    if (orderPanel) orderPanel.innerHTML = detailTimelineModule('历史订购', events, { open: false });
   }
 }
 

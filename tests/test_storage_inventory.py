@@ -1,7 +1,6 @@
 """空间网格计算核心逻辑测试。"""
 from services.storage_inventory import (
     assign_grid_positions,
-    coord_list,
     default_grid_for_node,
     grid_label,
     grid_position,
@@ -70,15 +69,6 @@ class TestDefaultGridForNode:
 
     def test_space_default(self):
         assert default_grid_for_node(None, None) == (1, 1)
-
-
-class TestCoordList:
-    def test_basic(self):
-        coords = coord_list(2, 3)
-        assert coords == ["A1", "A2", "A3", "B1", "B2", "B3"]
-
-    def test_single(self):
-        assert coord_list(1, 1) == ["A1"]
 
 
 class TestCleanPositiveInt:

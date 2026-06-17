@@ -1,5 +1,7 @@
 # LabKeeper 实验室库存管理系统 / Laboratory Inventory Management System
 
+当前版本：v1.0.0
+
 LabKeeper 是一个给实验室、课题组或小型平台使用的库存管理系统。它用浏览器操作，不需要安装数据库服务器；数据保存在一个 SQLite 文件里，方便备份、搬迁和在低性能服务器上部署。
 
 系统会把订购、到货、移动和出库统一记进流转记录，便于追溯；未订购、未到货、未归位和已出库则用系统位置节点表示。
@@ -16,6 +18,7 @@ Note: The English version is still under development. The interface and document
 - 临床标本、冻存管、分装样本
 - 冰箱、液氮罐、抽屉、带框架空间和格位/孔位
 - 订购、到货、验证、入库、移动、出库和备份记录
+- 抗体货号元信息，以及可选的 AI 辅助试剂信息提取
 
 ## 一句话理解
 
@@ -49,15 +52,29 @@ db/lab_inventory.sqlite3
 
 ### Windows 本机试用
 
-1. 安装 Python 3.10 或更高版本。
+1. 安装 Miniforge 或 Miniconda。项目推荐使用 Python 3.11。
 2. 下载并解压项目，例如放到 `D:\LabKeeper`。
-3. 在项目目录打开 PowerShell，安装依赖：
+3. 在项目目录打开 PowerShell，创建并进入 conda 环境：
 
 ```powershell
-pip install -r requirements.txt
+conda env create -f environment.yml
+conda activate labkeeper
 ```
 
-4. 运行：
+如果已经创建过环境，更新依赖可运行：
+
+```powershell
+conda env update -f environment.yml --prune
+conda activate labkeeper
+```
+
+没有 conda 时，也可以使用普通 Python 3.11：
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+4. 运行。脚本会优先使用名为 `labkeeper` 的 conda 环境：
 
 ```powershell
 .\start.ps1
@@ -87,7 +104,15 @@ http://127.0.0.1:5173
 ```bash
 git clone https://github.com/Zaichuan-Wang/LabKeeper.git
 cd LabKeeper
-pip install -r requirements.txt
+conda env create -f environment.yml
+conda activate labkeeper
+./start.sh --daemon
+```
+
+没有 conda 时，可使用 Python 3.11 和 `requirements.txt` 安装依赖：
+
+```bash
+python3.11 -m pip install -r requirements.txt
 ./start.sh --daemon
 ```
 
@@ -111,6 +136,8 @@ http://服务器IP:5173
 cp -r config.example config
 ```
 
+主要配置模板位于 `config.example/.env`。复制后请编辑 `config/.env`。
+
 至少修改这些项：
 
 ```env
@@ -122,6 +149,8 @@ LABKEEPER_CORS_ORIGINS=http://服务器IP:5173
 ```
 
 开发排查时可在非 `production` 环境启用 `LABKEEPER_ENABLE_DEVTOOLS=1`。开发接口集中在 `dev_tools/api.py`，正式部署不需要这些入口时可以不带 `dev_tools/` 目录。
+
+如需在订购或试剂入库页使用“AI 获取”按钮，可在 `config/.env` 中配置 `LABKEEPER_QWEN_API_KEY`。该功能只用于根据产品链接或文字生成待核对草稿，保存前仍需要人工确认。
 
 ### 推荐的服务器方式
 
@@ -231,20 +260,20 @@ tests/         自动化测试
 USER_MANUAL.md
 ```
 
-建议先阅读其中的“日常使用流程”“库存空间”“系统管理”和“常见问题”。
+建议先阅读其中的“日常使用流程”“库存空间”“选项配置”“系统管理”和“常见问题”。
 
 ## 给维护人员
 
 常用检查：
 
-```bash
-pytest tests/ -v
-python -m compileall backend
-LABKEEPER_ENV=test python backend/server.py --check
+```powershell
+conda run -n labkeeper python -m pytest tests -v
+conda run -n labkeeper python -m compileall backend
+$env:LABKEEPER_ENV='test'; conda run -n labkeeper python backend/server.py --check
 node --check frontend/app.js
 ```
 
-普通 Python、CI 和服务器部署使用 `requirements.txt`；conda 用户可使用 `environment.yml`。
+推荐用 `environment.yml` 创建 `labkeeper` 环境，当前固定 Python 3.11。普通 Python、CI 或不使用 conda 的服务器部署仍可使用 `requirements.txt`。
 
 ## 许可证
 

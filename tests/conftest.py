@@ -7,7 +7,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("LABKEEPER_ENV", "test")
-os.environ.setdefault("LABKEEPER_ENABLE_DEV_TOOLS", "1")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
@@ -54,7 +53,13 @@ def app_client(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", db_path)
     monkeypatch.setattr(config, "OPTIONS_CONFIG_PATH", options_path)
     monkeypatch.setattr(config, "BACKUP_SETTINGS_PATH", backup_settings_path)
+    monkeypatch.setattr(config, "INITIAL_ADMIN_USERNAME", "admin")
+    monkeypatch.setattr(config, "INITIAL_PASSWORD", "admin123")
+    monkeypatch.setattr(config, "INITIAL_ADMIN_DISPLAY_NAME", "管理员")
     monkeypatch.setattr(database, "DB_PATH", db_path)
+    monkeypatch.setattr(database, "INITIAL_ADMIN_USERNAME", "admin")
+    monkeypatch.setattr(database, "INITIAL_PASSWORD", "admin123")
+    monkeypatch.setattr(database, "INITIAL_ADMIN_DISPLAY_NAME", "管理员")
 
     # backup.py imports DB_PATH/BACKUP_SETTINGS_PATH at module import time, so
     # patch its module globals too when it has already been loaded.

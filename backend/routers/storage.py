@@ -16,8 +16,8 @@ router = APIRouter(prefix="/api")
 
 def clean_storage_visual_node_id(value: str) -> int | None:
     raw = str(value or "").strip()
-    if raw == str(storage_api.VIRTUAL_UNPLACED_NODE_ID):
-        return storage_api.VIRTUAL_UNPLACED_NODE_ID
+    if raw in {str(storage_api.VIRTUAL_UNPLACED_NODE_ID), str(storage_api.VIRTUAL_FAVORITES_NODE_ID)}:
+        return int(raw)
     return clean_optional_positive_int(raw)
 
 

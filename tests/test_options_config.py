@@ -38,6 +38,10 @@ def test_save_dropdown_options_persists_required_and_custom_status_options(monke
     assert saved["reagent_statuses"] == ["已订购", "可用", "停用", "已耗尽", "Available"]
     assert saved["validation_statuses"] == ["未验证", "通过", "不通过", "待复核", "Pending"]
     assert saved["sample_statuses"] == ["可用", "停用", "已耗尽", "Available"]
+    assert saved["antibody_conjugates"] == options_config.DEFAULT_DROPDOWN_SETTINGS["antibody_conjugates"]
+    assert saved["antibody_react_species"] == options_config.DEFAULT_DROPDOWN_SETTINGS["antibody_react_species"]
+    assert saved["antibody_host_species"] == options_config.DEFAULT_DROPDOWN_SETTINGS["antibody_host_species"]
+    assert saved["antibody_isotypes"] == options_config.DEFAULT_DROPDOWN_SETTINGS["antibody_isotypes"]
 
     persisted = json.loads(options_path.read_text(encoding="utf-8-sig"))
     assert persisted["reagent_statuses"] == ["已订购", "可用", "停用", "已耗尽", "Available"]
@@ -49,6 +53,23 @@ def test_movement_merge_window_is_numeric_and_clamped():
     assert options_config.normalize_dropdown_options({"movement_merge_window_minutes": "-5"})["movement_merge_window_minutes"] == 0
     assert options_config.normalize_dropdown_options({"movement_merge_window_minutes": "9999"})["movement_merge_window_minutes"] == 1440
     assert options_config.normalize_dropdown_options({"movement_merge_window_minutes": "bad"})["movement_merge_window_minutes"] == 30
+
+
+def test_antibody_dropdown_options_are_normalized_and_persisted(monkeypatch, tmp_path):
+    options_path = tmp_path / "dropdown_options.json"
+    monkeypatch.setattr(options_config, "OPTIONS_CONFIG_PATH", options_path)
+
+    saved = options_config.save_dropdown_options({
+        "antibody_conjugates": ["PE", "APC", "PE"],
+        "antibody_react_species": ["Mouse", "Human/Mouse"],
+        "antibody_host_species": ["Rat", "Rabbit"],
+        "antibody_isotypes": ["IgG1", "IgG2b κ"],
+    })
+
+    assert saved["antibody_conjugates"] == ["PE", "APC"]
+    assert saved["antibody_react_species"] == ["Mouse", "Human/Mouse"]
+    assert saved["antibody_host_species"] == ["Rat", "Rabbit"]
+    assert saved["antibody_isotypes"] == ["IgG1", "IgG2b κ"]
 
 
 def test_save_dropdown_options_preserves_hidden_status_groups(monkeypatch, tmp_path):

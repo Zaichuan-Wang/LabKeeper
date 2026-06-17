@@ -28,6 +28,10 @@ DEFAULT_DROPDOWN_SETTINGS = {
     "reagent_statuses": list(REAGENT_STATUSES),
     "validation_statuses": list(VALIDATION_STATUSES),
     "validation_methods": ["WB", "荧光", "流式", "IHC", "ELISA", "qPCR", "其他"],
+    "antibody_conjugates": ["FITC", "PE", "PerCP-Cy5.5", "APC", "APC-Cy7", "BV421", "BV510", "AF488", "AF647", "HRP", "Biotin", "Purified", "Unlabeled"],
+    "antibody_react_species": ["Human", "Mouse", "Rat", "Human/Mouse", "Mouse/Rat"],
+    "antibody_host_species": ["Mouse", "Rabbit", "Rat", "Goat", "Hamster", "Armenian Hamster", "Donkey", "Sheep"],
+    "antibody_isotypes": ["IgG1", "IgG2a", "IgG2b", "IgG2c", "IgG3", "IgM", "IgA", "IgG1 κ", "IgG2a κ", "IgG2b κ"],
     "sample_prefixes": ["SMP"],
     "sample_names": ["血清", "血浆", "全血", "细胞悬液", "组织", "灌洗液", "尿液", "其他", "细胞", "匀浆"],
     "amount_units": ["mL", "uL", "L", "g", "mg", "ug", "ng"],
@@ -154,6 +158,16 @@ def save_dropdown_options(data: Any) -> dict[str, Any]:
     tmp_path.write_text(json.dumps(clean, ensure_ascii=False, indent=2) + "\n", encoding="utf-8-sig")
     tmp_path.replace(OPTIONS_CONFIG_PATH)
     return clean
+
+
+def append_dropdown_option(key: str, value: Any) -> tuple[dict[str, Any], dict[str, Any], bool]:
+    text = str(value or "").strip()
+    old_options = load_dropdown_options()
+    current_values = clean_options(old_options.get(key, []))
+    if not text or any(existing.lower() == text.lower() for existing in current_values):
+        return old_options, old_options, False
+    new_options = {**old_options, key: current_values + [text]}
+    return old_options, save_dropdown_options(new_options), True
 
 
 def dropdown_values(key: str) -> list[str]:

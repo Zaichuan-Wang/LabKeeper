@@ -2,10 +2,10 @@ function renderInventoryWorkbench(data) {
   const grid = data.grid || { rows: data.current.rows || 1, cols: data.current.cols || 3, capacity: 0 };
   const capacityText = grid.is_framed === false ? '无框架' : `框架 ${grid.rows}x${grid.cols}`;
   const statText = `下级 ${data.stats.children} · 直接 ${data.stats.direct} · 总计 ${data.stats.total} · ${capacityText}`;
-  const isVirtualUnplaced = isVirtualUnplacedNode(data.current);
+  const isVirtualNode = isVirtualOverviewNode(data.current);
   const themeClass = currentSpaceThemeClass(data.current);
   const deleteAction = isAdmin() ? `<button class="danger" type="button" data-action="delete-current-space" data-id="${data.current.id}">删除当前</button>` : '';
-  const maintenanceActions = isVirtualUnplaced || !canManageLocation()
+  const maintenanceActions = isVirtualNode || !canManageLocation()
     ? ''
     : `<details class="overview-quick-actions">
               <summary>空间维护</summary>
@@ -52,8 +52,9 @@ function renderOverviewNavigation(data, options = {}) {
     cursor = parent;
     guard += 1;
   }
-  const realTree = tree.filter(node => !isVirtualUnplacedNode(node));
+  const realTree = tree.filter(node => !isVirtualOverviewNode(node));
   const virtualUnplaced = tree.find(isVirtualUnplacedNode);
+  const virtualFavorites = tree.find(isVirtualFavoritesNode);
   const rootNode = findOverviewRoot(realTree, current);
   const siblings = realTree.filter(node =>
     parentId
@@ -64,6 +65,7 @@ function renderOverviewNavigation(data, options = {}) {
   const entryButtons = [
     rootNode ? overviewNodeButton({ ...rootNode, name: '全部空间' }, 0, options) : '',
     virtualUnplaced ? overviewNodeButton(virtualUnplaced, 0, options) : '',
+    virtualFavorites ? overviewNodeButton(virtualFavorites, 0, options) : '',
   ].filter(Boolean).join('');
   const entryGroup = entryButtons ? `<div class="tree-group tree-group-entry"><h4>空间入口</h4>${entryButtons}</div>` : '';
   const pathButtons = ancestors.length
@@ -82,7 +84,7 @@ function findOverviewRoot(realTree, current) {
   const pathIds = new Set();
   let cursor = current;
   let guard = 0;
-  while (cursor && !isVirtualUnplacedNode(cursor) && guard < 50) {
+  while (cursor && !isVirtualOverviewNode(cursor) && guard < 50) {
     pathIds.add(Number(cursor.id));
     if (!cursor.parent_id) break;
     cursor = realTree.find(node => Number(node.id) === Number(cursor.parent_id));
@@ -93,12 +95,13 @@ function findOverviewRoot(realTree, current) {
 }
 
 function overviewNodeButton(node, depth = 0, options = {}) {
-  const virtual = isVirtualUnplacedNode(node);
+  const virtual = isVirtualOverviewNode(node);
+  const favorites = isVirtualFavoritesNode(node);
   const withDrop = options.drop !== false;
   const action = options.action || 'inventory-node';
   const kindAttr = options.kind ? ` data-kind="${esc(options.kind)}"` : '';
   const storageDrop = withDrop
-    ? (virtual ? ' data-drop-storage-parent="" data-drop-unplaced="1"' : ` data-drop-storage-parent="${node.id}"`)
+    ? (favorites ? ' data-drop-favorites="1"' : (virtual ? ' data-drop-storage-parent="" data-drop-unplaced="1"' : ` data-drop-storage-parent="${node.id}"`))
     : '';
   const dropNode = withDrop ? ` data-drop-node="${node.id}"` : '';
   const systemClass = virtual ? ' system-node' : '';
@@ -114,11 +117,6 @@ function inventoryDisplayName(item) {
 
 function inventoryItemType(item) {
   return (item?.item_type || 'reagent') === 'sample' ? 'sample' : 'reagent';
-}
-
-function inventoryTypeLabel(itemOrType) {
-  const type = typeof itemOrType === 'string' ? itemOrType : inventoryItemType(itemOrType);
-  return type === 'sample' ? '临床标本' : '试剂';
 }
 
 function inventorySubtypeText(item) {
@@ -176,25 +174,33 @@ function renderInventoryCell(item, coord = '', options = {}) {
   return `<${tag} class="frame-cell occupied ${inventoryItemClass(itemType)}${coordClass}${activeClass}"${typeAttr}${roleAttr}${actionAttr} data-type="${esc(itemType)}" data-id="${esc(actionId)}"${kindAttr}${dragAttrs}>${tileBody({ coord, name: inventoryDisplayName(item), sub: inventorySubtypeText(item) })}</${tag}>`;
 }
 
-function renderInventoryItemCard(r) {
+function renderInventoryItemTile(r) {
   const itemType = inventoryItemType(r);
   const active = state.selectedItemType === itemType && Number(r.id) === Number(state.selectedItemId);
   return renderInventoryCell(r, '', { action: 'inventory-item', active });
 }
 
-function renderStorageOverviewCard(c) {
+function renderStorageOverviewTile(c) {
   return renderSpaceCell(c, '', { action: 'inventory-node', drop: true, drag: true });
 }
 
-function renderPickerStorageCard(c, kind) {
+function renderFavoriteLocationTile(c) {
+  const removeButton = canManageLocation()
+    ? `<button class="mini-btn ghost favorite-remove-btn" type="button" data-action="remove-favorite-space" data-id="${c.id}">移除</button>`
+    : '';
+  return `<div class="favorite-space-tile">${renderSpaceCell(c, '', { action: 'inventory-node', drop: true, drag: true })}${removeButton}</div>`;
+}
+
+function renderPickerStorageTile(c, kind) {
   return renderSpaceCell(c, '', { action: 'picker-node', kind });
 }
 
-function renderPickerInventoryCard(item) {
+function renderPickerInventoryTile(item) {
   return renderInventoryCell(item, '', { tag: 'div', action: null, drag: false });
 }
 
 function renderInventoryCenter(data) {
+  if (isVirtualFavoritesNode(data.current)) return renderFavoriteLocations(data);
   const unplaced = data.grid?.is_framed === false ? '' : renderUnplacedInventory(data);
   return `${unplaced}${renderContainerGrid(data)}`;
 }
@@ -255,29 +261,37 @@ function positionedStorageChildren(data) {
 function renderUnplacedInventory(data) {
   const items = unplacedInventoryItems(data);
   const spaces = unplacedStorageChildren(data);
-  const cards = [...spaces.map(renderStorageOverviewCard), ...items.map(renderInventoryItemCard)];
+  const tiles = [...spaces.map(renderStorageOverviewTile), ...items.map(renderInventoryItemTile)];
   const globalUnplaced = isVirtualUnplacedNode(data.current);
-  const body = cards.length
-    ? `<div class="tile-grid unplaced-tile-grid">${cards.join('')}</div>`
+  const body = tiles.length
+    ? `<div class="tile-grid unplaced-tile-grid">${tiles.join('')}</div>`
     : '<p class="muted compact-empty">无未归位库存</p>';
   const storageDrop = globalUnplaced
     ? ' data-drop-storage-parent="" data-drop-unplaced="1"'
     : ` data-drop-storage-parent="${data.current.id}"`;
   const sectionTitle = globalUnplaced ? '未归位' : '未指定格位';
-  return `<section class="overview-section unplaced-section ${cards.length ? '' : 'is-empty'}" data-drop-node="${data.current.id}"${storageDrop}><div class="section-head"><h4>${sectionTitle}</h4></div>${body}</section>`;
+  return `<section class="overview-section unplaced-section ${tiles.length ? '' : 'is-empty'}" data-drop-node="${data.current.id}"${storageDrop}><div class="section-head"><h4>${sectionTitle}</h4></div>${body}</section>`;
+}
+
+function renderFavoriteLocations(data) {
+  const spaces = (data.children || []).sort(compareUnplacedSpace);
+  const body = spaces.length
+    ? `<div class="tile-grid mixed-inventory-grid">${spaces.map(renderFavoriteLocationTile).join('')}</div>`
+    : '<p class="muted compact-empty">暂无常用位置。可以把空间卡片拖到这里。</p>';
+  return `<section class="overview-section no-frame-section favorite-section" data-drop-node="${data.current.id}" data-drop-favorites="1"><div class="section-head"><h4>常用位置</h4><div class="section-actions"><span>${spaces.length} 个空间</span></div></div>${body}</section>`;
 }
 
 function renderPickerUnplacedSection(data, kind) {
   const items = unplacedInventoryItems(data);
   const spaces = unplacedStorageChildren(data);
-  const cards = [...spaces.map(space => renderPickerStorageCard(space, kind)), ...items.map(renderPickerInventoryCard)];
-  if (!cards.length && !isVirtualUnplacedNode(data.current)) return '';
+  const tiles = [...spaces.map(space => renderPickerStorageTile(space, kind)), ...items.map(renderPickerInventoryTile)];
+  if (!tiles.length && !isVirtualUnplacedNode(data.current)) return '';
   const sectionTitle = isVirtualUnplacedNode(data.current) ? '未归位' : '未指定格位';
   const emptyText = isVirtualUnplacedNode(data.current) ? '无未归位空间和库存' : '无未指定格位内容';
-  const body = cards.length
-    ? `<div class="tile-grid unplaced-tile-grid">${cards.join('')}</div>`
+  const body = tiles.length
+    ? `<div class="tile-grid unplaced-tile-grid">${tiles.join('')}</div>`
     : `<p class="muted compact-empty">${emptyText}</p>`;
-  return `<section class="overview-section unplaced-section ${cards.length ? '' : 'is-empty'}"><div class="section-head"><h4>${sectionTitle}</h4></div>${body}</section>`;
+  return `<section class="overview-section unplaced-section ${tiles.length ? '' : 'is-empty'}"><div class="section-head"><h4>${sectionTitle}</h4></div>${body}</section>`;
 }
 
 function renderContainerGrid(data) {
@@ -286,9 +300,9 @@ function renderContainerGrid(data) {
   if (grid.is_framed === false) {
     const children = data.children || [];
     const directItems = unplacedInventoryItems(data);
-    const mixedCards = [...children.map(renderStorageOverviewCard), ...directItems.map(renderInventoryItemCard)].join('');
-    const body = mixedCards
-      ? `<div class="storage-cards compact mixed-inventory-grid">${mixedCards}</div>`
+    const mixedTiles = [...children.map(renderStorageOverviewTile), ...directItems.map(renderInventoryItemTile)].join('');
+    const body = mixedTiles
+      ? `<div class="tile-grid mixed-inventory-grid">${mixedTiles}</div>`
       : '<p class="muted">当前空间没有下级空间和直接库存。需要分区时，把行列数改为大于 1 后保存。</p>';
     const storageDrop = isVirtualUnplacedNode(data.current)
       ? ' data-drop-storage-parent="" data-drop-unplaced="1"'
@@ -321,7 +335,7 @@ function renderFrameInventoryCell(item, label) {
 }
 
 function renderFrameActions(nodeId) {
-  if (isVirtualUnplacedId(nodeId)) return '';
+  if (isVirtualOverviewId(nodeId)) return '';
   const childButton = canManageLocation() ? `<button class="mini-btn ghost" type="button" data-action="new-child-space" data-id="${nodeId}">新建下级空间</button>` : '';
   const createButtons = canManageInventory() ? `<button class="mini-btn ghost" type="button" data-action="new-sample-at" data-node-id="${nodeId}">新建标本</button><button class="mini-btn ghost" type="button" data-action="new-reagent-at" data-node-id="${nodeId}">新建试剂</button>` : '';
   const moveButton = canManageLocation() ? `<button class="mini-btn ghost" type="button" data-action="move-into-space" data-id="${nodeId}">移入库存</button>` : '';
@@ -381,9 +395,9 @@ function renderPickerCenter(data, kind) {
   if (grid.is_framed === false) {
     const children = data.children || [];
     const directItems = unplacedInventoryItems(data);
-    const mixedCards = [...children.map(child => renderPickerStorageCard(child, kind)), ...directItems.map(renderPickerInventoryCard)].join('');
-    const body = mixedCards
-      ? `<div class="storage-cards compact mixed-inventory-grid">${mixedCards}</div>`
+    const mixedTiles = [...children.map(child => renderPickerStorageTile(child, kind)), ...directItems.map(renderPickerInventoryTile)].join('');
+    const body = mixedTiles
+      ? `<div class="tile-grid mixed-inventory-grid">${mixedTiles}</div>`
       : '<p class="muted">当前空间没有下级空间和直接库存。可以点上方“使用当前空间”。</p>';
     return `<section class="overview-section no-frame-section"><div class="section-head"><h4>空间与库存</h4><div class="section-actions"><span>下级 ${children.length} · 库存 ${directItems.length}</span></div></div>${body}</section>`;
   }
@@ -413,10 +427,13 @@ function renderLocationPicker(data, kind, title) {
 
 function renderLocationPickerDialog(data, kind, title) {
   const selectedText = data.selected_well ? `${data.current.path}；${data.selected_well}` : data.current.path;
+  const currentButton = isVirtualFavoritesNode(data.current)
+    ? '<button class="primary mini-btn" type="button" disabled>使用当前空间</button>'
+    : `<button class="primary mini-btn" type="button" data-action="picker-current" data-kind="${kind}" data-id="${data.current.id}">使用当前空间</button>`;
   return `
     <article class="detail-dialog location-dialog" role="dialog" aria-modal="true" aria-label="${esc(title)}">
       <div class="detail-dialog-head"><h3>${esc(title)}</h3><button class="ghost mini-btn" type="button" data-action="close-location-picker">关闭</button></div>
-      <div class="picker-head"><span>${esc(selectedText)}</span><button class="primary mini-btn" type="button" data-action="picker-current" data-kind="${kind}" data-id="${data.current.id}">使用当前空间</button></div>
+      <div class="picker-head"><span>${esc(selectedText)}</span>${currentButton}</div>
       <div class="location-picker-grid inventory-shell">
         <aside class="location-tree inventory-tree">${renderOverviewNavigation(data, { action: 'picker-node', kind, drop: false })}</aside>
         <main class="location-canvas inventory-main ${currentSpaceThemeClass(data.current)}">${renderPickerCenter(data, kind)}</main>
